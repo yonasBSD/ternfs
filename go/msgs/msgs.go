@@ -1916,6 +1916,15 @@ type AllBlockServicesResp struct {
 	BlockServices []BlockServiceInfo
 }
 
+type BlockServicesWithFlagChangeReq struct {
+	ChangedSince EggsTime
+}
+
+type BlockServicesWithFlagChangeResp struct {
+	LastChange    EggsTime
+	BlockServices []BlockService
+}
+
 type RegisterBlockServiceInfo struct {
 	Id             BlockServiceId
 	Addrs          AddrsInfo

@@ -120,6 +120,8 @@ func readShuckleRequest(
 		req = &msgs.ShardReplicasReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
+	case msgs.BLOCK_SERVICES_WITH_FLAG_CHANGE:
+		req = &msgs.BlockServicesWithFlagChangeReq{}
 	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
 		req = &msgs.SetBlockServiceDecommissionedReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:

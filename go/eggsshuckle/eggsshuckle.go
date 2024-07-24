@@ -172,12 +172,12 @@ func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 }
 
 // if flagsFilter&flags is non-zero, things won't be returned
-func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, minBytes uint64) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, minBytes uint64, flagsChangedSince msgs.EggsTime) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
 	n := sql.Named
 
 	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
-	q := "SELECT * FROM block_services WHERE (flags & :flags) = 0 AND available_bytes >= :min_bytes"
-	args := []any{n("flags", flagsFilter), n("min_bytes", minBytes)}
+	q := "SELECT * FROM block_services WHERE (flags & :flags) = 0 AND available_bytes >= :min_bytes AND flags_last_changed > :changed_since"
+	args := []any{n("flags", flagsFilter), n("min_bytes", minBytes), n("changed_since", uint64(flagsChangedSince))}
 	if id != nil {
 		q += " AND id = :id"
 		args = append(args, n("id", *id))
@@ -191,7 +191,7 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 	for rows.Next() {
 		bs := msgs.BlockServiceInfo{}
 		var ip1, ip2, fd, sk []byte
-		err = rows.Scan(&bs.Id, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles)
+		err = rows.Scan(&bs.Id, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles, &bs.FlagsLastChanged)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
@@ -225,7 +225,7 @@ func newState(
 		decommedBlockServices:   make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
 		decommedBlockServicesMu: sync.RWMutex{},
 	}
-	blockServices, err := st.selectBlockServices(nil, 0, 0)
+	blockServices, err := st.selectBlockServices(nil, 0, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (st *state) resetTimings() {
 
 func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
-	blockServices, err := s.selectBlockServices(nil, 0, 0)
+	blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -287,8 +287,32 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 	return &resp, nil
 }
 
+func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.BlockServicesWithFlagChangeReq) (*msgs.BlockServicesWithFlagChangeResp, error) {
+	resp := msgs.BlockServicesWithFlagChangeResp{}
+	blockServices, err := s.selectBlockServices(nil, 0, 0, req.ChangedSince)
+	if err != nil {
+		ll.RaiseAlert("error reading block services: %s", err)
+		return nil, err
+	}
+
+	resp.BlockServices = make([]msgs.BlockService, len(blockServices))
+	resp.LastChange = req.ChangedSince
+	i := 0
+	for _, bs := range blockServices {
+		resp.BlockServices[i].Id = bs.Id
+		resp.BlockServices[i].Addrs = bs.Addrs
+		resp.BlockServices[i].Flags = bs.Flags
+		if bs.FlagsLastChanged > resp.LastChange {
+			resp.LastChange = bs.FlagsLastChanged
+		}
+		i++
+	}
+
+	return &resp, nil
+}
+
 func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
-	blockServices, err := s.selectBlockServices(&req.Id, 0, 0)
+	blockServices, err := s.selectBlockServices(&req.Id, 0, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -330,15 +354,16 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 		}
 		res, err := tx.Exec(`
 				INSERT INTO block_services
-					(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files)
+					(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
 				VALUES
-					(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT DO UPDATE SET
 					flags = (flags & ~?) | (excluded.flags & ?),
 					capacity_bytes = excluded.capacity_bytes,
 					available_bytes = excluded.available_bytes,
 					blocks = excluded.blocks,
-					last_seen = excluded.last_seen
+					last_seen = excluded.last_seen,
+					flags_last_changed = IIF((flags & ~?) | (excluded.flags & ?) = flags, flags_last_changed, ?)
 				WHERE
 					ip1 = excluded.ip1 AND
 					port1 = excluded.port1 AND
@@ -353,9 +378,12 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 			bs.StorageClass, bs.FailureDomain.Name[:],
 			bs.SecretKey[:], bs.Flags,
 			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,
-			bs.Path, now, has_files,
+			bs.Path, now, has_files, now,
 			bs.FlagsMask|uint8(msgs.EGGSFS_BLOCK_SERVICE_STALE), // remove staleness -- we've just updated the BS
 			bs.FlagsMask,
+			bs.FlagsMask|uint8(msgs.EGGSFS_BLOCK_SERVICE_STALE),
+			bs.FlagsMask,
+			now,
 		)
 		if err != nil {
 			return nil, err
@@ -406,7 +434,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 	rand.Seed(time.Now().UnixNano())
 
 	for {
-		blockServices, err := s.selectBlockServices(nil, 0, 0)
+		blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
 		if err != nil {
 			ll.RaiseNC(blockServicesAlert, "error reading block services, will try again in %v: %s", sleepInterval, err)
 			time.Sleep(sleepInterval)
@@ -458,7 +486,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Set
 		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
 
-	blockServices, err := s.selectBlockServices(nil, 0, 0)
+	blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -499,8 +527,8 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 
 	n := sql.Named
 	res, err := s.db.Exec(
-		"UPDATE block_services SET flags = ((flags & ~:mask) | (:flags & :mask)) WHERE id = :id",
-		n("flags", req.Flags), n("mask", req.FlagsMask), n("id", req.Id),
+		"UPDATE block_services SET flags = ((flags & ~:mask) | (:flags & :mask)), flags_last_changed = :flags_last_changed WHERE id = :id",
+		n("flags", req.Flags), n("mask", req.FlagsMask), n("id", req.Id), n("flags_last_changed", uint64(msgs.Now())),
 	)
 	if err != nil {
 		ll.RaiseAlert("error setting flags for blockservice %d: %s", req.Id, err)
@@ -518,7 +546,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	if (req.FlagsMask&uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
 		s.decommedBlockServicesMu.Lock()
 		defer s.decommedBlockServicesMu.Unlock()
-		bs, err := s.selectBlockServices(&req.Id, 0, 0)
+		bs, err := s.selectBlockServices(&req.Id, 0, 0, 0)
 		if err != nil {
 			ll.RaiseAlert("couldnt select block service after decommissioning")
 		} else {
@@ -839,7 +867,7 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 
 func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
 	// only select block services we're willing to write
-	blockServicesMap, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, s.config.blockServiceMinFreeBytes)
+	blockServicesMap, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, s.config.blockServiceMinFreeBytes, 0)
 	if err != nil {
 		log.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -983,6 +1011,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleShardReplicas(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
 		resp, err = handleAllBlockServices(log, s, whichReq)
+	case *msgs.BlockServicesWithFlagChangeReq:
+		resp, err = handleBlockServicesWithFlagChange(log, s, whichReq)
 	case *msgs.CdcReq:
 		resp, err = handleCdc(log, s, whichReq)
 	case *msgs.CdcWithReplicasReq:
@@ -1137,6 +1167,8 @@ func readShuckleRequest(
 		req = &msgs.ShardReplicasReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
+	case msgs.BLOCK_SERVICES_WITH_FLAG_CHANGE:
+		req = &msgs.BlockServicesWithFlagChangeReq{}
 	case msgs.SET_BLOCK_SERVICE_DECOMMISSIONED:
 		req = &msgs.SetBlockServiceDecommissionedReq{}
 	case msgs.SET_BLOCK_SERVICE_FLAGS:
@@ -1402,7 +1434,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.selectBlockServices(nil, 0, 0)
+			blockServices, err := state.selectBlockServices(nil, 0, 0, 0)
 			if err != nil {
 				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
@@ -2154,8 +2186,9 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 
 		st.mutex.Lock()
 		_, err := st.db.Exec(
-			"UPDATE block_services SET flags = ((flags & ~:flag) | :flag) WHERE last_seen < :thresh",
+			"UPDATE block_services SET flags = ((flags & ~:flag) | :flag), flags_last_changed = :flags_last_changed WHERE last_seen < :thresh",
 			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE),
+			n("flags_last_changed", uint64(now)),
 			n("thresh", thresh),
 		)
 		st.mutex.Unlock()
@@ -2272,7 +2305,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	migrateDecommedAlert := log.NewNCAlert(0)
 	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
 	for {
-		blockServices, err := s.selectBlockServices(nil, 0, 0)
+		blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
 		if err != nil {
 			log.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)
@@ -2377,7 +2410,7 @@ func initDb(dbFile string) (*sql.DB, error) {
 }
 
 func initBlockServicesTable(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
+	blockServicesDefinition := `(
 		id INT NOT NULL PRIMARY KEY,
 		ip1 BLOB NOT NULL,
 		port1 INT NOT NULL,
@@ -2392,18 +2425,64 @@ func initBlockServicesTable(db *sql.DB) error {
 		blocks INT NOT NULL,
 		path TEXT NOT NULL,
 		last_seen INT NOT NULL,
-		has_files INT NOT NULL
-	)`)
+		has_files INT NOT NULL,
+		flags_last_changed INT NOT NULL
+	)`
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services` + blockServicesDefinition)
 	if err != nil {
 		return err
 	}
 
+	// detect and convert old cdc table format
+	row := db.QueryRow(`
+		SELECT IIF(sql LIKE '%flags_last_changed%', 1, 0)
+		FROM sqlite_schema
+		WHERE name = 'block_services'
+	`)
+
+	var hasNewBlockServiceFormat bool
+	err = row.Scan(&hasNewBlockServiceFormat)
+	if err != nil {
+		return err
+	}
+
+	if !hasNewBlockServiceFormat {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services_` + blockServicesDefinition)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`
+			INSERT INTO block_services_
+			SELECT id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, ?
+			FROM block_services
+		`, msgs.Now())
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`DROP TABLE block_services`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`ALTER TABLE block_services_ RENAME TO block_services`)
+		if err != nil {
+			return err
+		}
+	}
+
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("CREATE INDEX IF NOT EXISTS flags_last_changed_idx_b on block_services (flags_last_changed)")
+
 	return err
 }
 
 func initCDCTable(db *sql.DB) error {
-
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc(
 		replica_id INT PRIMARY KEY,
 		is_leader BOOL NOT NULL,

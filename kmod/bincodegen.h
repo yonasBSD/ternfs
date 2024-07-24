@@ -123,9 +123,10 @@ const char* eggsfs_cdc_kind_str(int kind);
 #define EGGSFS_SHUCKLE_CDC 0x7
 #define EGGSFS_SHUCKLE_INFO 0x8
 #define EGGSFS_SHUCKLE_SHUCKLE 0xF
-#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" }, { 8, "INFO" }, { 15, "SHUCKLE" })
-#define EGGSFS_SHUCKLE_KIND_MAX 4
-static const u8 __eggsfs_shuckle_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+#define EGGSFS_SHUCKLE_BLOCK_SERVICES_WITH_FLAG_CHANGE 0x22
+#define __print_eggsfs_shuckle_kind(k) __print_symbolic(k, { 3, "SHARDS" }, { 7, "CDC" }, { 8, "INFO" }, { 15, "SHUCKLE" }, { 34, "BLOCK_SERVICES_WITH_FLAG_CHANGE" })
+#define EGGSFS_SHUCKLE_KIND_MAX 5
+static const u8 __eggsfs_shuckle_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* eggsfs_shuckle_kind_str(int kind);
 
 #define EGGSFS_BLOCKS_FETCH_BLOCK 0x2
@@ -6049,6 +6050,125 @@ static inline void eggsfs_shuckle_resp_get_finish(struct eggsfs_bincode_get_ctx*
 #define eggsfs_shuckle_resp_put_end(ctx, prev, next) \
     { struct eggsfs_shuckle_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_shuckle_resp_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_BLOCK_SERVICES_WITH_FLAG_CHANGE_REQ_SIZE 8
+struct eggsfs_block_services_with_flag_change_req_start;
+#define eggsfs_block_services_with_flag_change_req_get_start(ctx, start) struct eggsfs_block_services_with_flag_change_req_start* start = NULL
+
+struct eggsfs_block_services_with_flag_change_req_changed_since { u64 x; };
+static inline void _eggsfs_block_services_with_flag_change_req_get_changed_since(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_req_start** prev, struct eggsfs_block_services_with_flag_change_req_changed_since* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_block_services_with_flag_change_req_get_changed_since(ctx, prev, next) \
+    struct eggsfs_block_services_with_flag_change_req_changed_since next; \
+    _eggsfs_block_services_with_flag_change_req_get_changed_since(ctx, &(prev), &(next))
+
+struct eggsfs_block_services_with_flag_change_req_end;
+#define eggsfs_block_services_with_flag_change_req_get_end(ctx, prev, next) \
+    { struct eggsfs_block_services_with_flag_change_req_changed_since* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_block_services_with_flag_change_req_end* next = NULL
+
+static inline void eggsfs_block_services_with_flag_change_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_block_services_with_flag_change_req_put_start(ctx, start) struct eggsfs_block_services_with_flag_change_req_start* start = NULL
+
+static inline void _eggsfs_block_services_with_flag_change_req_put_changed_since(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_services_with_flag_change_req_start** prev, struct eggsfs_block_services_with_flag_change_req_changed_since* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_block_services_with_flag_change_req_put_changed_since(ctx, prev, next, x) \
+    struct eggsfs_block_services_with_flag_change_req_changed_since next; \
+    _eggsfs_block_services_with_flag_change_req_put_changed_since(ctx, &(prev), &(next), x)
+
+#define eggsfs_block_services_with_flag_change_req_put_end(ctx, prev, next) \
+    { struct eggsfs_block_services_with_flag_change_req_changed_since* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_block_services_with_flag_change_req_end* next __attribute__((unused)) = NULL
+
+struct eggsfs_block_services_with_flag_change_resp_start;
+#define eggsfs_block_services_with_flag_change_resp_get_start(ctx, start) struct eggsfs_block_services_with_flag_change_resp_start* start = NULL
+
+struct eggsfs_block_services_with_flag_change_resp_last_change { u64 x; };
+static inline void _eggsfs_block_services_with_flag_change_resp_get_last_change(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_start** prev, struct eggsfs_block_services_with_flag_change_resp_last_change* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_block_services_with_flag_change_resp_get_last_change(ctx, prev, next) \
+    struct eggsfs_block_services_with_flag_change_resp_last_change next; \
+    _eggsfs_block_services_with_flag_change_resp_get_last_change(ctx, &(prev), &(next))
+
+struct eggsfs_block_services_with_flag_change_resp_block_services { u16 len; };
+static inline void _eggsfs_block_services_with_flag_change_resp_get_block_services(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_last_change* prev, struct eggsfs_block_services_with_flag_change_resp_block_services* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->len = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    } else {
+        next->len = 0;
+    }
+}
+#define eggsfs_block_services_with_flag_change_resp_get_block_services(ctx, prev, next) \
+    struct eggsfs_block_services_with_flag_change_resp_block_services next; \
+    _eggsfs_block_services_with_flag_change_resp_get_block_services(ctx, &(prev), &(next))
+
+struct eggsfs_block_services_with_flag_change_resp_end;
+#define eggsfs_block_services_with_flag_change_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_block_services_with_flag_change_resp_block_services* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_block_services_with_flag_change_resp_end* next = NULL
+
+static inline void eggsfs_block_services_with_flag_change_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_block_services_with_flag_change_resp_put_start(ctx, start) struct eggsfs_block_services_with_flag_change_resp_start* start = NULL
+
+static inline void _eggsfs_block_services_with_flag_change_resp_put_last_change(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_start** prev, struct eggsfs_block_services_with_flag_change_resp_last_change* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_block_services_with_flag_change_resp_put_last_change(ctx, prev, next, x) \
+    struct eggsfs_block_services_with_flag_change_resp_last_change next; \
+    _eggsfs_block_services_with_flag_change_resp_put_last_change(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_block_services_with_flag_change_resp_put_block_services(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_block_services_with_flag_change_resp_last_change* prev, struct eggsfs_block_services_with_flag_change_resp_block_services* next, int len) {
+    next = NULL;
+    BUG_ON(len < 0 || len >= 1<<16);
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(len, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_block_services_with_flag_change_resp_put_block_services(ctx, prev, next, len) \
+    struct eggsfs_block_services_with_flag_change_resp_block_services next; \
+    _eggsfs_block_services_with_flag_change_resp_put_block_services(ctx, &(prev), &(next), len)
+
+#define eggsfs_block_services_with_flag_change_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_block_services_with_flag_change_resp_block_services* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_block_services_with_flag_change_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_FETCH_BLOCK_REQ_SIZE 16
 struct eggsfs_fetch_block_req_start;

@@ -126,6 +126,7 @@ const char* eggsfs_shuckle_kind_str(int kind) {
     case 7: return "CDC";
     case 8: return "INFO";
     case 15: return "SHUCKLE";
+    case 34: return "BLOCK_SERVICES_WITH_FLAG_CHANGE";
     default: return "UNKNOWN";
     }
 }

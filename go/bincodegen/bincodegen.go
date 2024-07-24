@@ -1799,6 +1799,11 @@ func main() {
 			reflect.TypeOf(msgs.ShuckleReq{}),
 			reflect.TypeOf(msgs.ShuckleResp{}),
 		},
+		{
+			0x22,
+			reflect.TypeOf(msgs.BlockServicesWithFlagChangeReq{}),
+			reflect.TypeOf(msgs.BlockServicesWithFlagChangeResp{}),
+		},
 	}
 
 	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{

@@ -304,6 +304,7 @@ enum class ShuckleMessageKind : uint8_t {
     CDC = 7,
     INFO = 8,
     SHUCKLE = 15,
+    BLOCK_SERVICES_WITH_FLAG_CHANGE = 34,
     REGISTER_SHARD = 4,
     REGISTER_CDC = 6,
     SET_BLOCK_SERVICE_FLAGS = 9,
@@ -330,6 +331,7 @@ const std::vector<ShuckleMessageKind> allShuckleMessageKind {
     ShuckleMessageKind::CDC,
     ShuckleMessageKind::INFO,
     ShuckleMessageKind::SHUCKLE,
+    ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE,
     ShuckleMessageKind::REGISTER_SHARD,
     ShuckleMessageKind::REGISTER_CDC,
     ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS,
@@ -350,7 +352,7 @@ const std::vector<ShuckleMessageKind> allShuckleMessageKind {
     ShuckleMessageKind::ALL_BLOCK_SERVICES,
 };
 
-constexpr int maxShuckleMessageKind = 33;
+constexpr int maxShuckleMessageKind = 34;
 
 std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind);
 
@@ -3331,6 +3333,46 @@ struct ShuckleResp {
 
 std::ostream& operator<<(std::ostream& out, const ShuckleResp& x);
 
+struct BlockServicesWithFlagChangeReq {
+    EggsTime changedSince;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // changedSince
+
+    BlockServicesWithFlagChangeReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // changedSince
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const BlockServicesWithFlagChangeReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeReq& x);
+
+struct BlockServicesWithFlagChangeResp {
+    EggsTime lastChange;
+    BincodeList<BlockService> blockServices;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
+
+    BlockServicesWithFlagChangeResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // lastChange
+        _size += blockServices.packedSize(); // blockServices
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const BlockServicesWithFlagChangeResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeResp& x);
+
 struct RegisterShardReq {
     ShardId id;
     AddrsInfo addrs;
@@ -4835,9 +4877,9 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 
 struct ShuckleReqContainer {
 private:
-    static constexpr std::array<size_t,22> _staticSizes = {ShardsReq::STATIC_SIZE, CdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, ShuckleReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, BlockServiceReq::STATIC_SIZE, ShardReq::STATIC_SIZE, RegisterShardReplicaReq::STATIC_SIZE, ShardReplicasReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, RegisterCdcReplicaReq::STATIC_SIZE, CdcReplicasReq::STATIC_SIZE, ShardsWithReplicasReq::STATIC_SIZE, SetBlockServiceDecommissionedReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, CdcWithReplicasReq::STATIC_SIZE, EraseDecommissionedBlockReq::STATIC_SIZE, AllBlockServicesReq::STATIC_SIZE};
+    static constexpr std::array<size_t,23> _staticSizes = {ShardsReq::STATIC_SIZE, CdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, ShuckleReq::STATIC_SIZE, BlockServicesWithFlagChangeReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, BlockServiceReq::STATIC_SIZE, ShardReq::STATIC_SIZE, RegisterShardReplicaReq::STATIC_SIZE, ShardReplicasReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, RegisterCdcReplicaReq::STATIC_SIZE, CdcReplicasReq::STATIC_SIZE, ShardsWithReplicasReq::STATIC_SIZE, SetBlockServiceDecommissionedReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, CdcWithReplicasReq::STATIC_SIZE, EraseDecommissionedBlockReq::STATIC_SIZE, AllBlockServicesReq::STATIC_SIZE};
     ShuckleMessageKind _kind = ShuckleMessageKind::EMPTY;
-    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, RegisterShardReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, ShardReq, RegisterShardReplicaReq, ShardReplicasReq, ShardBlockServicesReq, RegisterCdcReplicaReq, CdcReplicasReq, ShardsWithReplicasReq, SetBlockServiceDecommissionedReq, MoveShardLeaderReq, ClearShardInfoReq, RegisterBlockServicesReq, CdcWithReplicasReq, EraseDecommissionedBlockReq, AllBlockServicesReq> _data;
+    std::variant<ShardsReq, CdcReq, InfoReq, ShuckleReq, BlockServicesWithFlagChangeReq, RegisterShardReq, RegisterCdcReq, SetBlockServiceFlagsReq, BlockServiceReq, ShardReq, RegisterShardReplicaReq, ShardReplicasReq, ShardBlockServicesReq, RegisterCdcReplicaReq, CdcReplicasReq, ShardsWithReplicasReq, SetBlockServiceDecommissionedReq, MoveShardLeaderReq, ClearShardInfoReq, RegisterBlockServicesReq, CdcWithReplicasReq, EraseDecommissionedBlockReq, AllBlockServicesReq> _data;
 public:
     ShuckleReqContainer();
     ShuckleReqContainer(const ShuckleReqContainer& other);
@@ -4855,6 +4897,8 @@ public:
     InfoReq& setInfo();
     const ShuckleReq& getShuckle() const;
     ShuckleReq& setShuckle();
+    const BlockServicesWithFlagChangeReq& getBlockServicesWithFlagChange() const;
+    BlockServicesWithFlagChangeReq& setBlockServicesWithFlagChange();
     const RegisterShardReq& getRegisterShard() const;
     RegisterShardReq& setRegisterShard();
     const RegisterCdcReq& getRegisterCdc() const;
@@ -4905,9 +4949,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 
 struct ShuckleRespContainer {
 private:
-    static constexpr std::array<size_t,23> _staticSizes = {sizeof(EggsError), ShardsResp::STATIC_SIZE, CdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, BlockServiceResp::STATIC_SIZE, ShardResp::STATIC_SIZE, RegisterShardReplicaResp::STATIC_SIZE, ShardReplicasResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, RegisterCdcReplicaResp::STATIC_SIZE, CdcReplicasResp::STATIC_SIZE, ShardsWithReplicasResp::STATIC_SIZE, SetBlockServiceDecommissionedResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, CdcWithReplicasResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesResp::STATIC_SIZE};
+    static constexpr std::array<size_t,24> _staticSizes = {sizeof(EggsError), ShardsResp::STATIC_SIZE, CdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, BlockServicesWithFlagChangeResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, BlockServiceResp::STATIC_SIZE, ShardResp::STATIC_SIZE, RegisterShardReplicaResp::STATIC_SIZE, ShardReplicasResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, RegisterCdcReplicaResp::STATIC_SIZE, CdcReplicasResp::STATIC_SIZE, ShardsWithReplicasResp::STATIC_SIZE, SetBlockServiceDecommissionedResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, CdcWithReplicasResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesResp::STATIC_SIZE};
     ShuckleMessageKind _kind = ShuckleMessageKind::EMPTY;
-    std::variant<EggsError, ShardsResp, CdcResp, InfoResp, ShuckleResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, ShardResp, RegisterShardReplicaResp, ShardReplicasResp, ShardBlockServicesResp, RegisterCdcReplicaResp, CdcReplicasResp, ShardsWithReplicasResp, SetBlockServiceDecommissionedResp, MoveShardLeaderResp, ClearShardInfoResp, RegisterBlockServicesResp, CdcWithReplicasResp, EraseDecommissionedBlockResp, AllBlockServicesResp> _data;
+    std::variant<EggsError, ShardsResp, CdcResp, InfoResp, ShuckleResp, BlockServicesWithFlagChangeResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, BlockServiceResp, ShardResp, RegisterShardReplicaResp, ShardReplicasResp, ShardBlockServicesResp, RegisterCdcReplicaResp, CdcReplicasResp, ShardsWithReplicasResp, SetBlockServiceDecommissionedResp, MoveShardLeaderResp, ClearShardInfoResp, RegisterBlockServicesResp, CdcWithReplicasResp, EraseDecommissionedBlockResp, AllBlockServicesResp> _data;
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
@@ -4927,6 +4971,8 @@ public:
     InfoResp& setInfo();
     const ShuckleResp& getShuckle() const;
     ShuckleResp& setShuckle();
+    const BlockServicesWithFlagChangeResp& getBlockServicesWithFlagChange() const;
+    BlockServicesWithFlagChangeResp& setBlockServicesWithFlagChange();
     const RegisterShardResp& getRegisterShard() const;
     RegisterShardResp& setRegisterShard();
     const RegisterCdcResp& getRegisterCdc() const;

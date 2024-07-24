@@ -451,6 +451,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::SHUCKLE:
         out << "SHUCKLE";
         break;
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        out << "BLOCK_SERVICES_WITH_FLAG_CHANGE";
+        break;
     case ShuckleMessageKind::REGISTER_SHARD:
         out << "REGISTER_SHARD";
         break;
@@ -3641,6 +3644,46 @@ bool ShuckleResp::operator==(const ShuckleResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const ShuckleResp& x) {
     out << "ShuckleResp(" << "Addrs=" << x.addrs << ")";
+    return out;
+}
+
+void BlockServicesWithFlagChangeReq::pack(BincodeBuf& buf) const {
+    changedSince.pack(buf);
+}
+void BlockServicesWithFlagChangeReq::unpack(BincodeBuf& buf) {
+    changedSince.unpack(buf);
+}
+void BlockServicesWithFlagChangeReq::clear() {
+    changedSince = EggsTime();
+}
+bool BlockServicesWithFlagChangeReq::operator==(const BlockServicesWithFlagChangeReq& rhs) const {
+    if ((EggsTime)this->changedSince != (EggsTime)rhs.changedSince) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeReq& x) {
+    out << "BlockServicesWithFlagChangeReq(" << "ChangedSince=" << x.changedSince << ")";
+    return out;
+}
+
+void BlockServicesWithFlagChangeResp::pack(BincodeBuf& buf) const {
+    lastChange.pack(buf);
+    buf.packList<BlockService>(blockServices);
+}
+void BlockServicesWithFlagChangeResp::unpack(BincodeBuf& buf) {
+    lastChange.unpack(buf);
+    buf.unpackList<BlockService>(blockServices);
+}
+void BlockServicesWithFlagChangeResp::clear() {
+    lastChange = EggsTime();
+    blockServices.clear();
+}
+bool BlockServicesWithFlagChangeResp::operator==(const BlockServicesWithFlagChangeResp& rhs) const {
+    if ((EggsTime)this->lastChange != (EggsTime)rhs.lastChange) { return false; };
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeResp& x) {
+    out << "BlockServicesWithFlagChangeResp(" << "LastChange=" << x.lastChange << ", " << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -7536,166 +7579,175 @@ ShuckleReq& ShuckleReqContainer::setShuckle() {
     auto& x = _data.emplace<3>();
     return x;
 }
+const BlockServicesWithFlagChangeReq& ShuckleReqContainer::getBlockServicesWithFlagChange() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE);
+    return std::get<4>(_data);
+}
+BlockServicesWithFlagChangeReq& ShuckleReqContainer::setBlockServicesWithFlagChange() {
+    _kind = ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE;
+    auto& x = _data.emplace<4>();
+    return x;
+}
 const RegisterShardReq& ShuckleReqContainer::getRegisterShard() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
-    return std::get<4>(_data);
+    return std::get<5>(_data);
 }
 RegisterShardReq& ShuckleReqContainer::setRegisterShard() {
     _kind = ShuckleMessageKind::REGISTER_SHARD;
-    auto& x = _data.emplace<4>();
+    auto& x = _data.emplace<5>();
     return x;
 }
 const RegisterCdcReq& ShuckleReqContainer::getRegisterCdc() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
-    return std::get<5>(_data);
+    return std::get<6>(_data);
 }
 RegisterCdcReq& ShuckleReqContainer::setRegisterCdc() {
     _kind = ShuckleMessageKind::REGISTER_CDC;
-    auto& x = _data.emplace<5>();
+    auto& x = _data.emplace<6>();
     return x;
 }
 const SetBlockServiceFlagsReq& ShuckleReqContainer::getSetBlockServiceFlags() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS);
-    return std::get<6>(_data);
+    return std::get<7>(_data);
 }
 SetBlockServiceFlagsReq& ShuckleReqContainer::setSetBlockServiceFlags() {
     _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS;
-    auto& x = _data.emplace<6>();
+    auto& x = _data.emplace<7>();
     return x;
 }
 const BlockServiceReq& ShuckleReqContainer::getBlockService() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICE, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICE);
-    return std::get<7>(_data);
+    return std::get<8>(_data);
 }
 BlockServiceReq& ShuckleReqContainer::setBlockService() {
     _kind = ShuckleMessageKind::BLOCK_SERVICE;
-    auto& x = _data.emplace<7>();
+    auto& x = _data.emplace<8>();
     return x;
 }
 const ShardReq& ShuckleReqContainer::getShard() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD, "%s != %s", _kind, ShuckleMessageKind::SHARD);
-    return std::get<8>(_data);
+    return std::get<9>(_data);
 }
 ShardReq& ShuckleReqContainer::setShard() {
     _kind = ShuckleMessageKind::SHARD;
-    auto& x = _data.emplace<8>();
+    auto& x = _data.emplace<9>();
     return x;
 }
 const RegisterShardReplicaReq& ShuckleReqContainer::getRegisterShardReplica() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD_REPLICA, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD_REPLICA);
-    return std::get<9>(_data);
+    return std::get<10>(_data);
 }
 RegisterShardReplicaReq& ShuckleReqContainer::setRegisterShardReplica() {
     _kind = ShuckleMessageKind::REGISTER_SHARD_REPLICA;
-    auto& x = _data.emplace<9>();
+    auto& x = _data.emplace<10>();
     return x;
 }
 const ShardReplicasReq& ShuckleReqContainer::getShardReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::SHARD_REPLICAS);
-    return std::get<10>(_data);
+    return std::get<11>(_data);
 }
 ShardReplicasReq& ShuckleReqContainer::setShardReplicas() {
     _kind = ShuckleMessageKind::SHARD_REPLICAS;
-    auto& x = _data.emplace<10>();
+    auto& x = _data.emplace<11>();
     return x;
 }
 const ShardBlockServicesReq& ShuckleReqContainer::getShardBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
-    return std::get<11>(_data);
+    return std::get<12>(_data);
 }
 ShardBlockServicesReq& ShuckleReqContainer::setShardBlockServices() {
     _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
-    auto& x = _data.emplace<11>();
+    auto& x = _data.emplace<12>();
     return x;
 }
 const RegisterCdcReplicaReq& ShuckleReqContainer::getRegisterCdcReplica() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC_REPLICA, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC_REPLICA);
-    return std::get<12>(_data);
+    return std::get<13>(_data);
 }
 RegisterCdcReplicaReq& ShuckleReqContainer::setRegisterCdcReplica() {
     _kind = ShuckleMessageKind::REGISTER_CDC_REPLICA;
-    auto& x = _data.emplace<12>();
+    auto& x = _data.emplace<13>();
     return x;
 }
 const CdcReplicasReq& ShuckleReqContainer::getCdcReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::CDC_REPLICAS);
-    return std::get<13>(_data);
+    return std::get<14>(_data);
 }
 CdcReplicasReq& ShuckleReqContainer::setCdcReplicas() {
     _kind = ShuckleMessageKind::CDC_REPLICAS;
-    auto& x = _data.emplace<13>();
+    auto& x = _data.emplace<14>();
     return x;
 }
 const ShardsWithReplicasReq& ShuckleReqContainer::getShardsWithReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::SHARDS_WITH_REPLICAS);
-    return std::get<14>(_data);
+    return std::get<15>(_data);
 }
 ShardsWithReplicasReq& ShuckleReqContainer::setShardsWithReplicas() {
     _kind = ShuckleMessageKind::SHARDS_WITH_REPLICAS;
-    auto& x = _data.emplace<14>();
+    auto& x = _data.emplace<15>();
     return x;
 }
 const SetBlockServiceDecommissionedReq& ShuckleReqContainer::getSetBlockServiceDecommissioned() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED);
-    return std::get<15>(_data);
+    return std::get<16>(_data);
 }
 SetBlockServiceDecommissionedReq& ShuckleReqContainer::setSetBlockServiceDecommissioned() {
     _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED;
-    auto& x = _data.emplace<15>();
+    auto& x = _data.emplace<16>();
     return x;
 }
 const MoveShardLeaderReq& ShuckleReqContainer::getMoveShardLeader() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, ShuckleMessageKind::MOVE_SHARD_LEADER);
-    return std::get<16>(_data);
+    return std::get<17>(_data);
 }
 MoveShardLeaderReq& ShuckleReqContainer::setMoveShardLeader() {
     _kind = ShuckleMessageKind::MOVE_SHARD_LEADER;
-    auto& x = _data.emplace<16>();
+    auto& x = _data.emplace<17>();
     return x;
 }
 const ClearShardInfoReq& ShuckleReqContainer::getClearShardInfo() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_SHARD_INFO);
-    return std::get<17>(_data);
+    return std::get<18>(_data);
 }
 ClearShardInfoReq& ShuckleReqContainer::setClearShardInfo() {
     _kind = ShuckleMessageKind::CLEAR_SHARD_INFO;
-    auto& x = _data.emplace<17>();
+    auto& x = _data.emplace<18>();
     return x;
 }
 const RegisterBlockServicesReq& ShuckleReqContainer::getRegisterBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
-    return std::get<18>(_data);
+    return std::get<19>(_data);
 }
 RegisterBlockServicesReq& ShuckleReqContainer::setRegisterBlockServices() {
     _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
-    auto& x = _data.emplace<18>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const CdcWithReplicasReq& ShuckleReqContainer::getCdcWithReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::CDC_WITH_REPLICAS);
-    return std::get<19>(_data);
+    return std::get<20>(_data);
 }
 CdcWithReplicasReq& ShuckleReqContainer::setCdcWithReplicas() {
     _kind = ShuckleMessageKind::CDC_WITH_REPLICAS;
-    auto& x = _data.emplace<19>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const EraseDecommissionedBlockReq& ShuckleReqContainer::getEraseDecommissionedBlock() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK);
-    return std::get<20>(_data);
+    return std::get<21>(_data);
 }
 EraseDecommissionedBlockReq& ShuckleReqContainer::setEraseDecommissionedBlock() {
     _kind = ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<21>(_data);
+    return std::get<22>(_data);
 }
 AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
     _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 ShuckleReqContainer::ShuckleReqContainer() {
@@ -7726,6 +7778,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
         break;
     case ShuckleMessageKind::SHUCKLE:
         setShuckle() = other.getShuckle();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        setBlockServicesWithFlagChange() = other.getBlockServicesWithFlagChange();
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         setRegisterShard() = other.getRegisterShard();
@@ -7802,42 +7857,44 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<2>(_data).packedSize();
     case ShuckleMessageKind::SHUCKLE:
         return sizeof(ShuckleMessageKind) + std::get<3>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
         return sizeof(ShuckleMessageKind) + std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::REGISTER_SHARD:
         return sizeof(ShuckleMessageKind) + std::get<5>(_data).packedSize();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case ShuckleMessageKind::REGISTER_CDC:
         return sizeof(ShuckleMessageKind) + std::get<6>(_data).packedSize();
-    case ShuckleMessageKind::BLOCK_SERVICE:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         return sizeof(ShuckleMessageKind) + std::get<7>(_data).packedSize();
-    case ShuckleMessageKind::SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICE:
         return sizeof(ShuckleMessageKind) + std::get<8>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
+    case ShuckleMessageKind::SHARD:
         return sizeof(ShuckleMessageKind) + std::get<9>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_REPLICAS:
+    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
         return sizeof(ShuckleMessageKind) + std::get<10>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<11>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         return sizeof(ShuckleMessageKind) + std::get<12>(_data).packedSize();
-    case ShuckleMessageKind::CDC_REPLICAS:
+    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
         return sizeof(ShuckleMessageKind) + std::get<13>(_data).packedSize();
-    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+    case ShuckleMessageKind::CDC_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<14>(_data).packedSize();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<15>(_data).packedSize();
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
         return sizeof(ShuckleMessageKind) + std::get<16>(_data).packedSize();
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case ShuckleMessageKind::MOVE_SHARD_LEADER:
         return sizeof(ShuckleMessageKind) + std::get<17>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return sizeof(ShuckleMessageKind) + std::get<18>(_data).packedSize();
-    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         return sizeof(ShuckleMessageKind) + std::get<19>(_data).packedSize();
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -7858,59 +7915,62 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::SHUCKLE:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case ShuckleMessageKind::REGISTER_CDC:
         std::get<6>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICE:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<7>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICE:
         std::get<8>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
+    case ShuckleMessageKind::SHARD:
         std::get<9>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_REPLICAS:
+    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
         std::get<10>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_REPLICAS:
         std::get<11>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         std::get<12>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS:
+    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
         std::get<13>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+    case ShuckleMessageKind::CDC_REPLICAS:
         std::get<14>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         std::get<15>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
         std::get<16>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case ShuckleMessageKind::MOVE_SHARD_LEADER:
         std::get<17>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
         std::get<18>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<19>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
         std::get<20>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<21>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        std::get<22>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -7932,59 +7992,62 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::SHUCKLE:
         _data.emplace<3>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
         _data.emplace<4>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::REGISTER_SHARD:
         _data.emplace<5>().unpack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case ShuckleMessageKind::REGISTER_CDC:
         _data.emplace<6>().unpack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICE:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         _data.emplace<7>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICE:
         _data.emplace<8>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
+    case ShuckleMessageKind::SHARD:
         _data.emplace<9>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_REPLICAS:
+    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
         _data.emplace<10>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_REPLICAS:
         _data.emplace<11>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<12>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS:
+    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
         _data.emplace<13>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+    case ShuckleMessageKind::CDC_REPLICAS:
         _data.emplace<14>().unpack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         _data.emplace<15>().unpack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
         _data.emplace<16>().unpack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case ShuckleMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<21>().unpack(buf);
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        _data.emplace<22>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8003,6 +8066,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getInfo() == other.getInfo();
     case ShuckleMessageKind::SHUCKLE:
         return getShuckle() == other.getShuckle();
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        return getBlockServicesWithFlagChange() == other.getBlockServicesWithFlagChange();
     case ShuckleMessageKind::REGISTER_SHARD:
         return getRegisterShard() == other.getRegisterShard();
     case ShuckleMessageKind::REGISTER_CDC:
@@ -8057,6 +8122,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::SHUCKLE:
         out << x.getShuckle();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        out << x.getBlockServicesWithFlagChange();
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
@@ -8166,166 +8234,175 @@ ShuckleResp& ShuckleRespContainer::setShuckle() {
     auto& x = _data.emplace<4>();
     return x;
 }
+const BlockServicesWithFlagChangeResp& ShuckleRespContainer::getBlockServicesWithFlagChange() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE);
+    return std::get<5>(_data);
+}
+BlockServicesWithFlagChangeResp& ShuckleRespContainer::setBlockServicesWithFlagChange() {
+    _kind = ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE;
+    auto& x = _data.emplace<5>();
+    return x;
+}
 const RegisterShardResp& ShuckleRespContainer::getRegisterShard() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
-    return std::get<5>(_data);
+    return std::get<6>(_data);
 }
 RegisterShardResp& ShuckleRespContainer::setRegisterShard() {
     _kind = ShuckleMessageKind::REGISTER_SHARD;
-    auto& x = _data.emplace<5>();
+    auto& x = _data.emplace<6>();
     return x;
 }
 const RegisterCdcResp& ShuckleRespContainer::getRegisterCdc() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
-    return std::get<6>(_data);
+    return std::get<7>(_data);
 }
 RegisterCdcResp& ShuckleRespContainer::setRegisterCdc() {
     _kind = ShuckleMessageKind::REGISTER_CDC;
-    auto& x = _data.emplace<6>();
+    auto& x = _data.emplace<7>();
     return x;
 }
 const SetBlockServiceFlagsResp& ShuckleRespContainer::getSetBlockServiceFlags() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS);
-    return std::get<7>(_data);
+    return std::get<8>(_data);
 }
 SetBlockServiceFlagsResp& ShuckleRespContainer::setSetBlockServiceFlags() {
     _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS;
-    auto& x = _data.emplace<7>();
+    auto& x = _data.emplace<8>();
     return x;
 }
 const BlockServiceResp& ShuckleRespContainer::getBlockService() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::BLOCK_SERVICE, "%s != %s", _kind, ShuckleMessageKind::BLOCK_SERVICE);
-    return std::get<8>(_data);
+    return std::get<9>(_data);
 }
 BlockServiceResp& ShuckleRespContainer::setBlockService() {
     _kind = ShuckleMessageKind::BLOCK_SERVICE;
-    auto& x = _data.emplace<8>();
+    auto& x = _data.emplace<9>();
     return x;
 }
 const ShardResp& ShuckleRespContainer::getShard() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD, "%s != %s", _kind, ShuckleMessageKind::SHARD);
-    return std::get<9>(_data);
+    return std::get<10>(_data);
 }
 ShardResp& ShuckleRespContainer::setShard() {
     _kind = ShuckleMessageKind::SHARD;
-    auto& x = _data.emplace<9>();
+    auto& x = _data.emplace<10>();
     return x;
 }
 const RegisterShardReplicaResp& ShuckleRespContainer::getRegisterShardReplica() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD_REPLICA, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD_REPLICA);
-    return std::get<10>(_data);
+    return std::get<11>(_data);
 }
 RegisterShardReplicaResp& ShuckleRespContainer::setRegisterShardReplica() {
     _kind = ShuckleMessageKind::REGISTER_SHARD_REPLICA;
-    auto& x = _data.emplace<10>();
+    auto& x = _data.emplace<11>();
     return x;
 }
 const ShardReplicasResp& ShuckleRespContainer::getShardReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::SHARD_REPLICAS);
-    return std::get<11>(_data);
+    return std::get<12>(_data);
 }
 ShardReplicasResp& ShuckleRespContainer::setShardReplicas() {
     _kind = ShuckleMessageKind::SHARD_REPLICAS;
-    auto& x = _data.emplace<11>();
+    auto& x = _data.emplace<12>();
     return x;
 }
 const ShardBlockServicesResp& ShuckleRespContainer::getShardBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
-    return std::get<12>(_data);
+    return std::get<13>(_data);
 }
 ShardBlockServicesResp& ShuckleRespContainer::setShardBlockServices() {
     _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
-    auto& x = _data.emplace<12>();
+    auto& x = _data.emplace<13>();
     return x;
 }
 const RegisterCdcReplicaResp& ShuckleRespContainer::getRegisterCdcReplica() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC_REPLICA, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC_REPLICA);
-    return std::get<13>(_data);
+    return std::get<14>(_data);
 }
 RegisterCdcReplicaResp& ShuckleRespContainer::setRegisterCdcReplica() {
     _kind = ShuckleMessageKind::REGISTER_CDC_REPLICA;
-    auto& x = _data.emplace<13>();
+    auto& x = _data.emplace<14>();
     return x;
 }
 const CdcReplicasResp& ShuckleRespContainer::getCdcReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::CDC_REPLICAS);
-    return std::get<14>(_data);
+    return std::get<15>(_data);
 }
 CdcReplicasResp& ShuckleRespContainer::setCdcReplicas() {
     _kind = ShuckleMessageKind::CDC_REPLICAS;
-    auto& x = _data.emplace<14>();
+    auto& x = _data.emplace<15>();
     return x;
 }
 const ShardsWithReplicasResp& ShuckleRespContainer::getShardsWithReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::SHARDS_WITH_REPLICAS);
-    return std::get<15>(_data);
+    return std::get<16>(_data);
 }
 ShardsWithReplicasResp& ShuckleRespContainer::setShardsWithReplicas() {
     _kind = ShuckleMessageKind::SHARDS_WITH_REPLICAS;
-    auto& x = _data.emplace<15>();
+    auto& x = _data.emplace<16>();
     return x;
 }
 const SetBlockServiceDecommissionedResp& ShuckleRespContainer::getSetBlockServiceDecommissioned() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED);
-    return std::get<16>(_data);
+    return std::get<17>(_data);
 }
 SetBlockServiceDecommissionedResp& ShuckleRespContainer::setSetBlockServiceDecommissioned() {
     _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED;
-    auto& x = _data.emplace<16>();
+    auto& x = _data.emplace<17>();
     return x;
 }
 const MoveShardLeaderResp& ShuckleRespContainer::getMoveShardLeader() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, ShuckleMessageKind::MOVE_SHARD_LEADER);
-    return std::get<17>(_data);
+    return std::get<18>(_data);
 }
 MoveShardLeaderResp& ShuckleRespContainer::setMoveShardLeader() {
     _kind = ShuckleMessageKind::MOVE_SHARD_LEADER;
-    auto& x = _data.emplace<17>();
+    auto& x = _data.emplace<18>();
     return x;
 }
 const ClearShardInfoResp& ShuckleRespContainer::getClearShardInfo() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_SHARD_INFO);
-    return std::get<18>(_data);
+    return std::get<19>(_data);
 }
 ClearShardInfoResp& ShuckleRespContainer::setClearShardInfo() {
     _kind = ShuckleMessageKind::CLEAR_SHARD_INFO;
-    auto& x = _data.emplace<18>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const RegisterBlockServicesResp& ShuckleRespContainer::getRegisterBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
-    return std::get<19>(_data);
+    return std::get<20>(_data);
 }
 RegisterBlockServicesResp& ShuckleRespContainer::setRegisterBlockServices() {
     _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
-    auto& x = _data.emplace<19>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const CdcWithReplicasResp& ShuckleRespContainer::getCdcWithReplicas() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_WITH_REPLICAS, "%s != %s", _kind, ShuckleMessageKind::CDC_WITH_REPLICAS);
-    return std::get<20>(_data);
+    return std::get<21>(_data);
 }
 CdcWithReplicasResp& ShuckleRespContainer::setCdcWithReplicas() {
     _kind = ShuckleMessageKind::CDC_WITH_REPLICAS;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const EraseDecommissionedBlockResp& ShuckleRespContainer::getEraseDecommissionedBlock() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK);
-    return std::get<21>(_data);
+    return std::get<22>(_data);
 }
 EraseDecommissionedBlockResp& ShuckleRespContainer::setEraseDecommissionedBlock() {
     _kind = ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<22>(_data);
+    return std::get<23>(_data);
 }
 AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
     _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 ShuckleRespContainer::ShuckleRespContainer() {
@@ -8359,6 +8436,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
         break;
     case ShuckleMessageKind::SHUCKLE:
         setShuckle() = other.getShuckle();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        setBlockServicesWithFlagChange() = other.getBlockServicesWithFlagChange();
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         setRegisterShard() = other.getRegisterShard();
@@ -8437,42 +8517,44 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<3>(_data).packedSize();
     case ShuckleMessageKind::SHUCKLE:
         return sizeof(ShuckleMessageKind) + std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
         return sizeof(ShuckleMessageKind) + std::get<5>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::REGISTER_SHARD:
         return sizeof(ShuckleMessageKind) + std::get<6>(_data).packedSize();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case ShuckleMessageKind::REGISTER_CDC:
         return sizeof(ShuckleMessageKind) + std::get<7>(_data).packedSize();
-    case ShuckleMessageKind::BLOCK_SERVICE:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         return sizeof(ShuckleMessageKind) + std::get<8>(_data).packedSize();
-    case ShuckleMessageKind::SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICE:
         return sizeof(ShuckleMessageKind) + std::get<9>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
+    case ShuckleMessageKind::SHARD:
         return sizeof(ShuckleMessageKind) + std::get<10>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_REPLICAS:
+    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
         return sizeof(ShuckleMessageKind) + std::get<11>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<12>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         return sizeof(ShuckleMessageKind) + std::get<13>(_data).packedSize();
-    case ShuckleMessageKind::CDC_REPLICAS:
+    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
         return sizeof(ShuckleMessageKind) + std::get<14>(_data).packedSize();
-    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+    case ShuckleMessageKind::CDC_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<15>(_data).packedSize();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<16>(_data).packedSize();
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
         return sizeof(ShuckleMessageKind) + std::get<17>(_data).packedSize();
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case ShuckleMessageKind::MOVE_SHARD_LEADER:
         return sizeof(ShuckleMessageKind) + std::get<18>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return sizeof(ShuckleMessageKind) + std::get<19>(_data).packedSize();
-    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
         return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8496,59 +8578,62 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::SHUCKLE:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::REGISTER_SHARD:
         std::get<6>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case ShuckleMessageKind::REGISTER_CDC:
         std::get<7>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICE:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<8>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICE:
         std::get<9>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
+    case ShuckleMessageKind::SHARD:
         std::get<10>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_REPLICAS:
+    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
         std::get<11>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_REPLICAS:
         std::get<12>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         std::get<13>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS:
+    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
         std::get<14>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+    case ShuckleMessageKind::CDC_REPLICAS:
         std::get<15>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         std::get<16>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
         std::get<17>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case ShuckleMessageKind::MOVE_SHARD_LEADER:
         std::get<18>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
         std::get<19>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<20>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
         std::get<21>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<22>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        std::get<23>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8573,59 +8658,62 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::SHUCKLE:
         _data.emplace<4>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
         _data.emplace<5>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case ShuckleMessageKind::REGISTER_SHARD:
         _data.emplace<6>().unpack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case ShuckleMessageKind::REGISTER_CDC:
         _data.emplace<7>().unpack(buf);
         break;
-    case ShuckleMessageKind::BLOCK_SERVICE:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
         _data.emplace<8>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD:
+    case ShuckleMessageKind::BLOCK_SERVICE:
         _data.emplace<9>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
+    case ShuckleMessageKind::SHARD:
         _data.emplace<10>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_REPLICAS:
+    case ShuckleMessageKind::REGISTER_SHARD_REPLICA:
         _data.emplace<11>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_REPLICAS:
         _data.emplace<12>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<13>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS:
+    case ShuckleMessageKind::REGISTER_CDC_REPLICA:
         _data.emplace<14>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
+    case ShuckleMessageKind::CDC_REPLICAS:
         _data.emplace<15>().unpack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
+    case ShuckleMessageKind::SHARDS_WITH_REPLICAS:
         _data.emplace<16>().unpack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case ShuckleMessageKind::SET_BLOCK_SERVICE_DECOMMISSIONED:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case ShuckleMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case ShuckleMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_WITH_REPLICAS:
+    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case ShuckleMessageKind::CDC_WITH_REPLICAS:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<22>().unpack(buf);
+        break;
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+        _data.emplace<23>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8646,6 +8734,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getInfo() == other.getInfo();
     case ShuckleMessageKind::SHUCKLE:
         return getShuckle() == other.getShuckle();
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        return getBlockServicesWithFlagChange() == other.getBlockServicesWithFlagChange();
     case ShuckleMessageKind::REGISTER_SHARD:
         return getRegisterShard() == other.getRegisterShard();
     case ShuckleMessageKind::REGISTER_CDC:
@@ -8703,6 +8793,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::SHUCKLE:
         out << x.getShuckle();
+        break;
+    case ShuckleMessageKind::BLOCK_SERVICES_WITH_FLAG_CHANGE:
+        out << x.getBlockServicesWithFlagChange();
         break;
     case ShuckleMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();

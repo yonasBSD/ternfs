@@ -9,8 +9,7 @@ on:
         default: true
 
 jobs:
-
-  build_hostmon:
+  build_kmod:
     runs-on: [self-hosted, restech]
 
     steps:

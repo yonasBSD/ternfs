@@ -1,0 +1,57 @@
+name: Build Kmod
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+
+  build_hostmon:
+    runs-on: [self-hosted, restech]
+
+    steps:
+    - name: Checkout Eggs Repo
+      uses: actions/checkout@v3
+      with:
+        repository: XTX/eggsfs
+        path: 'eggs_repo'
+
+    - name: Set Build Number
+      shell: bash
+      run: echo "BUILD_NUMBER=$((${{ github.run_number }} + 1000))" >> "$GITHUB_ENV"
+
+    - name: Set Build Hash From Eggs
+      shell: bash
+      working-directory: eggs_repo
+      run: echo "BUILD_HASH=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+    - name: Build Kmod
+      shell: bash
+      working-directory: eggs_repo/kmod
+      run: |
+        make kmod
+
+    - name: Build Kmod Deb package
+      shell: bash
+      working-directory: eggs_repo/kmod
+      run: |
+        bash build_deb.sh ${{ env.BUILD_NUMBER }}-${{ env.BUILD_HASH }}
+
+    - name: Publish Debian kmod package
+      if: ${{ inputs.publish == true }}
+      working-directory: eggs_repo/kmod
+      shell: bash
+      run: |
+        export PACKAGE="$(ls eggsfs-client-${{ env.BUILD_NUMBER }}-*.deb)" ; \
+        echo "Debian Package name: ${PACKAGE}"; \
+        /bin/curl -v --fail -k -XPUT \
+        -H "X-Checksum-Sha1: `sha1sum ${PACKAGE} | awk '{print $1}'`" \
+        -H "X-Checksum: `md5sum ${PACKAGE} | awk '{print $1}'`" \
+        -H "X-Checksum-Sha256: `sha256sum ${PACKAGE} | awk '{print $1}'`" \
+        -u REDACTED  \
+        "https://REDACTED`basename ${PACKAGE}`;deb.distribution=focal;deb.component=main;deb.architecture=amd64" \
+        -T ${PACKAGE}

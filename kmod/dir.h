@@ -16,7 +16,7 @@ int eggsfs_dir_readdir_entry_cb(void* ptr, u64 name_hash, const char* name, int 
 void eggsfs_dir_drop_cache(struct eggsfs_inode* enode);
 
 static inline int eggsfs_dir_revalidate(struct eggsfs_inode* enode) {
-    return eggsfs_do_getattr(enode, true);
+    return eggsfs_do_getattr(enode, ATTR_CACHE_DIR_TIMEOUT);
 }
 
 static inline int eggsfs_dir_needs_reval(struct eggsfs_inode* dir, struct dentry* dentry) {

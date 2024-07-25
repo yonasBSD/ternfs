@@ -214,7 +214,7 @@ static void getattr_async_complete(struct work_struct* work) {
     iput(&enode->inode);
 }
 
-int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation) {
+int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
     int err;
     s64 seqno;
 
@@ -229,11 +229,19 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation) {
 
         if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
             u64 ts = get_jiffies_64();
-            if (for_dir_revalidation) {
+            switch (cache_timeout_type) {
+            case ATTR_CACHE_NORM_TIMEOUT:
+                if (smp_load_acquire(&enode->getattr_expiry) > ts) { err = 0; goto out; }
+                break;
+            case ATTR_CACHE_DIR_TIMEOUT:
                 BUG_ON(!S_ISDIR(enode->inode.i_mode));
                 if (smp_load_acquire(&enode->dir.mtime_expiry) > ts) { err = 0; goto out; }
-            } else {
-                if (smp_load_acquire(&enode->getattr_expiry) > ts) { err = 0; goto out; }
+                break;
+            case ATTR_CACHE_NO_TIMEOUT:
+                break;
+            default:
+                eggsfs_error("unknown cache timeout type %d", cache_timeout_type);
+                BUG();
             }
 
             u64 mtime;
@@ -271,7 +279,7 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation) {
                     eggsfs_debug("updating getattr for reading file");
                     u64 size;
                     err = eggsfs_shard_getattr_file(
-                        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, 
+                        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
                         enode->inode.i_ino,
                         &mtime,
                         &atime,
@@ -416,7 +424,7 @@ static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 reque
 
         // dentry refcount also protects the inode (e.g. d_delete will not turn used dentry into a negative one),
         // so no need to grab anything before we start waiting for stuff
-        err = eggsfs_do_getattr(enode, false);
+        err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
         if (err) {
             trace_eggsfs_vfs_getattr_exit(inode, err);
             return err;

@@ -222,7 +222,8 @@ void eggsfs_inode_evict(struct inode* inode);
 void eggsfs_inode_free(struct inode* inode);
 
 // inode ops
-int eggsfs_do_getattr(struct eggsfs_inode* enode, bool for_dir_revalidation);
+enum { ATTR_CACHE_NORM_TIMEOUT, ATTR_CACHE_DIR_TIMEOUT, ATTR_CACHE_NO_TIMEOUT };
+int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type);
 // 0: not started
 // 1: started
 // -n: error

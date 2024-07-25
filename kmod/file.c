@@ -84,7 +84,7 @@ static int file_open(struct inode* inode, struct file* filp) {
                 // we might have cached data and another client updated atime.
                 // eggsfs_do_getattr is orders of magnitude cheaper than eggsfs_shard_set_time,
                 // so we might as well refresh and re-check
-                int err = eggsfs_do_getattr(enode, false);
+                int err = eggsfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
                 if (err) {
                     inode_unlock(inode);
                     return err;
@@ -945,7 +945,7 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     if (unlikely(iocb->ki_flags & IOCB_DIRECT)) { return -ENOSYS; }
 
     // make sure we have size information
-    int err = eggsfs_do_getattr(enode, false);
+    int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return err; }
 
     // Three-level loop:
@@ -1104,7 +1104,7 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
     BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
 
     // make sure we have size information
-    int err = eggsfs_do_getattr(enode, false);
+    int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return ERR_PTR(err); }
 
     BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
@@ -1163,7 +1163,7 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
 
     if (likely(smp_load_acquire(&enode->file.status) == EGGSFS_FILE_STATUS_READING)) {
         // make sure we have size information
-        int err = eggsfs_do_getattr(enode, false);
+        int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
         if (err) { return err; }
         return generic_file_llseek(file, offset, whence);
     }

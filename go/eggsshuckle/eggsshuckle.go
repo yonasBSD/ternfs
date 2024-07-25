@@ -339,7 +339,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	lastBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 	for {
 		newBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
-		location_id := msgs.Location(0)
+		location_id := msgs.Location(DEFAULT_LOCATION)
 		blockServicesMap, err := s.selectBlockServices(&location_id, nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
@@ -602,9 +602,9 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 
 		res, err := tx.Exec(`
 				INSERT INTO block_services
-					(id, location_id,ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
+					(id, location_id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
 				VALUES
-					(?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT DO UPDATE SET
 					flags =
 						IIF(
@@ -637,7 +637,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 					path = excluded.path AND
 					secret_key = excluded.secret_key
 			`,
-			bs.Id, bs.Addrs.Addr1.Addrs[:], bs.Addrs.Addr1.Port, bs.Addrs.Addr2.Addrs[:], bs.Addrs.Addr2.Port,
+			bs.Id, bs.LocationId, bs.Addrs.Addr1.Addrs[:], bs.Addrs.Addr1.Port, bs.Addrs.Addr2.Addrs[:], bs.Addrs.Addr2.Port,
 			bs.StorageClass, bs.FailureDomain.Name[:],
 			bs.SecretKey[:], bs.Flags,
 			bs.CapacityBytes, bs.AvailableBytes, bs.Blocks,

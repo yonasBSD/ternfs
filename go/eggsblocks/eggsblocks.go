@@ -224,6 +224,7 @@ func updateBlockServiceInfoBlocks(
 
 func initBlockServicesInfo(
 	log *lib.Logger,
+	locationId msgs.Location,
 	addrs msgs.AddrsInfo,
 	failureDomain [16]byte,
 	blockServices map[msgs.BlockServiceId]*blockService,
@@ -235,6 +236,7 @@ func initBlockServicesInfo(
 	alert := log.NewNCAlert(0)
 	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
+		bs.cachedInfo.LocationId = locationId
 		bs.cachedInfo.Id = id
 		bs.cachedInfo.Addrs = addrs
 		bs.cachedInfo.SecretKey = bs.key
@@ -265,10 +267,9 @@ var maximumRegisterInterval time.Duration = time.Minute * 2
 func registerPeriodically(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
-	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	shuckleAddress string,
 ) {
-	req := msgs.RegisterBlockServicesDEPRECATEDReq{}
+	req := msgs.RegisterBlockServicesReq{}
 	alert := log.NewNCAlert(10 * time.Second)
 	for {
 		req.BlockServices = req.BlockServices[:0]
@@ -277,9 +278,6 @@ func registerPeriodically(
 				continue
 			}
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
-		}
-		for _, bs := range deadBlockServices {
-			req.BlockServices = append(req.BlockServices, bs.info)
 		}
 		log.Trace("registering with %+v", req)
 		_, err := client.ShuckleRequest(log, nil, shuckleAddress, &req)
@@ -290,7 +288,7 @@ func registerPeriodically(
 		}
 		log.ClearNC(alert)
 		waitFor := time.Duration(mrand.Uint64() % uint64(maximumRegisterInterval.Nanoseconds()))
-		log.Info("registered with %v (%v alive, %v dead), waiting %v", shuckleAddress, len(blockServices), len(deadBlockServices), waitFor)
+		log.Info("registered with %v (%v alive), waiting %v", shuckleAddress, len(blockServices), waitFor)
 		time.Sleep(waitFor)
 	}
 }
@@ -1024,11 +1022,7 @@ func handleRequestError(
 	}
 }
 
-type deadBlockService struct {
-	cipher cipher.Block
-	// we store the last seen data from shuckle so that we keep registering that
-	info msgs.RegisterBlockServiceInfoDEPRECATED
-}
+type deadBlockService struct {}
 
 func readBlocksRequest(
 	log *lib.Logger,
@@ -1117,22 +1111,6 @@ func handleSingleRequest(
 	}
 	blockService, found := blockServices[blockServiceId]
 	if !found {
-		// Special case: we're erasing a block in a dead block service. Always
-		// succeeds.
-		if deadBlockService, isDead := deadBlockServices[blockServiceId]; isDead {
-			if whichReq, isErase := req.(*msgs.EraseBlockReq); isErase {
-				log.Debug("servicing erase block request for dead block service from %v", conn.RemoteAddr())
-				resp := msgs.EraseBlockResp{
-					Proof: certificate.BlockEraseProof(blockServiceId, whichReq.BlockId, deadBlockService.cipher),
-				}
-				if err := writeBlocksResponse(log, conn, &resp); err != nil {
-					log.Info("could not send blocks response to %v: %v", conn.RemoteAddr(), err)
-					return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
-				}
-				atomic.AddUint64(&env.stats[blockServiceId].blocksErased, 1)
-				return true
-			}
-		}
 		// In general, refuse to service requests for block services that we
 		// don't have.
 		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
@@ -1443,7 +1421,7 @@ type blockService struct {
 	key                             [16]byte
 	cipher                          cipher.Block
 	storageClass                    msgs.StorageClass
-	cachedInfo                      msgs.RegisterBlockServiceInfoDEPRECATED
+	cachedInfo                      msgs.RegisterBlockServiceInfo
 	extraCachedInfo                 blockServiceExtraInfo
 	couldNotUpdateInfoBlocks        bool
 	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
@@ -1475,32 +1453,6 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 	return ret, nil
 }
 
-func normalBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfoDEPRECATED {
-	// Everything else is filled in by `initBlockServicesInfo`
-	return &msgs.RegisterBlockServiceInfoDEPRECATED{
-		CapacityBytes:  info.CapacityBytes,
-		AvailableBytes: info.AvailableBytes,
-		Blocks:         info.Blocks,
-	}
-}
-
-func deadBlockServiceInfo(info *msgs.BlockServiceInfo) *msgs.RegisterBlockServiceInfoDEPRECATED {
-	// We just replicate everything from the cached one, forever -- but no flags.
-	return &msgs.RegisterBlockServiceInfoDEPRECATED{
-		Id:             info.Id,
-		Addrs:          info.Addrs,
-		StorageClass:   info.StorageClass,
-		FailureDomain:  info.FailureDomain,
-		SecretKey:      info.SecretKey,
-		CapacityBytes:  info.CapacityBytes,
-		AvailableBytes: info.AvailableBytes,
-		Blocks:         info.Blocks,
-		Path:           info.Path,
-		// just to be explicit about it
-		Flags:     0,
-		FlagsMask: 0,
-	}
-}
 
 func main() {
 	flag.Usage = usage
@@ -1519,6 +1471,7 @@ func main() {
 	connectionTimeout := flag.Duration("connection-timeout", 10*time.Minute, "")
 	reservedStorage := flag.Uint64("reserved-storage", 100<<30, "How many bytes to reserve and under-report capacity")
 	metrics := flag.Bool("metrics", false, "")
+	locationId := flag.Uint("location", 10000, "Location ID")
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {
@@ -1538,6 +1491,14 @@ func main() {
 	if len(addresses) == 0 || len(addresses) > 2 {
 		fmt.Fprintf(os.Stderr, "at least one -addr and no more than two needs to be provided\n")
 		flagErrors = true
+	}
+
+	if *locationId > 255 {
+		fmt.Fprintf(os.Stderr, "Provide valid location id\n")
+		flagErrors = true
+	}
+
+	if *failureDomainStr == "" {
 	}
 
 	if flagErrors {
@@ -1624,6 +1585,7 @@ func main() {
 	}
 
 	log.Info("Running block service with options:")
+	log.Info("  locationId = %v", *locationId)
 	log.Info("  failureDomain = %v", *failureDomainStr)
 	log.Info("  futureCutoff = %v", *futureCutoff)
 	log.Info("  addr = '%v'", *&addresses)
@@ -1707,29 +1669,18 @@ func main() {
 				if !isDecommissioned {
 					panic(fmt.Errorf("Shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned.", bs.Id, failureDomain))
 				}
-				cipher, err := aes.NewCipher(bs.SecretKey[:])
-				if err != nil {
-					panic(fmt.Errorf("could not create AES-128 key: %w", err))
-				}
-				log.Info("will service erase block requests for decommissioned block service %v", bs.Id)
-				deadBlockServices[bs.Id] = deadBlockService{
-					cipher: cipher,
-					info:   *deadBlockServiceInfo(bs),
-				}
+				deadBlockServices[bs.Id] = deadBlockService{}
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
 				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
 				delete(blockServices, bs.Id)
-				deadBlockServices[bs.Id] = deadBlockService{
-					cipher: ourBs.cipher,
-					info:   *deadBlockServiceInfo(bs),
-				}
+				deadBlockServices[bs.Id] = deadBlockService{}
 			}
 			// fill in information from shuckle, if it's recent enough
 			if weHaveBs && time.Since(bs.LastSeen.Time()) < maximumRegisterInterval*2 {
 				// everything else is filled in by initBlockServicesInfo
-				ourBs.cachedInfo = msgs.RegisterBlockServiceInfoDEPRECATED{
+				ourBs.cachedInfo = msgs.RegisterBlockServiceInfo{
 					CapacityBytes:  bs.CapacityBytes,
 					AvailableBytes: bs.AvailableBytes,
 					Blocks:         bs.Blocks,
@@ -1760,7 +1711,7 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(log, msgs.AddrsInfo{msgs.IpPort{ownIp1, actualPort1}, msgs.IpPort{ownIp2, actualPort2}}, failureDomain, blockServices, *reservedStorage)
+	initBlockServicesInfo(log, msgs.Location(*locationId), msgs.AddrsInfo{msgs.IpPort{ownIp1, actualPort1}, msgs.IpPort{ownIp2, actualPort2}}, failureDomain, blockServices, *reservedStorage)
 	log.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)
@@ -1790,7 +1741,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		registerPeriodically(log, blockServices, deadBlockServices, *shuckleAddress)
+		registerPeriodically(log, blockServices, *shuckleAddress)
 	}()
 
 	go func() {

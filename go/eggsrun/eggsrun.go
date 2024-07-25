@@ -137,6 +137,7 @@ func main() {
 		Addr1:     "127.0.0.1:10001",
 	})
 
+	numLocations := 1
 	if *multiLocation {
 		// Waiting for shuckle
 		err := client.WaitForShuckle(log, shuckleAddress, 10*time.Second)
@@ -151,6 +152,11 @@ func main() {
 				panic(fmt.Errorf("failed to create location %v", err))
 			}
 		}
+		numLocations = 2
+	}
+	replicaCount := 5
+	if *leaderOnly {
+		replicaCount = 1
 	}
 
 	// Start block services
@@ -162,25 +168,32 @@ func main() {
 			storageClasses[i] = msgs.FLASH_STORAGE
 		}
 	}
-	for i := uint(0); i < *failureDomains; i++ {
-		opts := managedprocess.BlockServiceOpts{
-			Exe:              goExes.BlocksExe,
-			Path:             path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			StorageClasses:   storageClasses,
-			FailureDomain:    fmt.Sprintf("%d", i),
-			LogLevel:         level,
-			ShuckleAddress:   fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
-			Profile:          *profile,
-			Xmon:             *xmon,
-			ReserverdStorage: 10 << 30, // 10GB
+	for loc := uint(0); loc < uint(numLocations); loc++ {
+		for i := uint(0); i < *failureDomains; i++ {
+			dirName := fmt.Sprintf("bs_%d", i)
+			if loc > 0 {
+				dirName = fmt.Sprintf("%s_loc%d", dirName, loc)
+			}
+			opts := managedprocess.BlockServiceOpts{
+				Exe:              goExes.BlocksExe,
+				Path:             path.Join(*dataDir, dirName),
+				StorageClasses:   storageClasses,
+				FailureDomain:    fmt.Sprintf("%d_%d", i, loc),
+				Location: 		  msgs.Location(loc),
+				LogLevel:         level,
+				ShuckleAddress:   fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
+				Profile:          *profile,
+				Xmon:             *xmon,
+				ReserverdStorage: 10 << 30, // 10GB
+			}
+			if *startingPort != 0 {
+				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+257*uint16(replicaCount)+uint16(loc**failureDomains)+uint16(i))
+			} else {
+				opts.Addr1 = "127.0.0.1:0"
+				opts.Addr2 = "127.0.0.1:0"
+			}
+			procs.StartBlockService(log, &opts)
 		}
-		if *startingPort != 0 {
-			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+257+uint16(i))
-		} else {
-			opts.Addr1 = "127.0.0.1:0"
-			opts.Addr2 = "127.0.0.1:0"
-		}
-		procs.StartBlockService(log, &opts)
 	}
 
 	waitShuckleFor := 10 * time.Second
@@ -188,11 +201,11 @@ func main() {
 		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	client.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), true, waitShuckleFor)
+	client.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices*uint(numLocations)), true, waitShuckleFor)
 
 	// Start CDC
 	{
-		for r := uint8(0); r < 5; r++ {
+		for r := uint8(0); r < uint8(replicaCount); r++ {
 			dir := path.Join(*dataDir, fmt.Sprintf("cdc_%d", r))
 			if r == 0 {
 				dir = path.Join(*dataDir, "cdc")
@@ -206,9 +219,6 @@ func main() {
 				ShuckleAddress: shuckleAddress,
 				Perf:           *profile,
 				Xmon:           *xmon,
-			}
-			if *leaderOnly && r > 0 {
-				continue
 			}
 			if r == 0 {
 				if *leaderOnly {
@@ -227,13 +237,9 @@ func main() {
 	}
 
 	// Start shards
-	numLocations := 1
-	if *multiLocation {
-		numLocations = 2
-	}
 	for loc := 0; loc < numLocations; loc++ {
 		for i := 0; i < 256; i++ {
-			for r := uint8(0); r < 5; r++ {
+			for r := uint8(0); r < uint8(replicaCount); r++ {
 				shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
 				dirName := fmt.Sprintf("shard_%03d_%d", i, r)
 				if loc > 0 {
@@ -251,9 +257,6 @@ func main() {
 					Location:       msgs.Location(loc),
 					LogsDBFlags:    nil,
 				}
-				if *leaderOnly && r > 0 {
-					continue
-				}
 				if r == 0 {
 					if *leaderOnly {
 						opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
@@ -262,7 +265,7 @@ func main() {
 					}
 				}
 				if *startingPort != 0 {
-					opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+5+uint16(i)+uint16(r)*256+5*256*uint16(loc))
+					opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+5+uint16(replicaCount)*256*uint16(loc)+uint16(r)*256+uint16(i))
 				} else {
 					opts.Addr1 = "127.0.0.1:0"
 				}

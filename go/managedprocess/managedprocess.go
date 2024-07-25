@@ -267,6 +267,7 @@ type BlockServiceOpts struct {
 	Addr2            string
 	StorageClasses   []msgs.StorageClass
 	FailureDomain    string
+	Location         msgs.Location
 	FutureCutoff     *time.Duration
 	LogLevel         lib.LogLevel
 	ShuckleAddress   string
@@ -287,6 +288,7 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
+		"-location", fmt.Sprintf("%d",opts.Location),
 		"-addr", opts.Addr1,
 		"-log-file", path.Join(opts.Path, "log"),
 	}

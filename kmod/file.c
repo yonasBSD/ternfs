@@ -385,6 +385,7 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
             .ip2 = block->ip2,
             .port2 = block->port2,
         };
+        hold_transient_span(span); // for the callback when block is done
         int err = eggsfs_write_block(
             &write_block_done,
             span,
@@ -395,7 +396,6 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
             block_crc,
             &span->blocks[i]
         );
-        hold_transient_span(span); // for the callback when block is done
         if (err) { // "finish" immediately, we've errored out
             write_block_finalize(span, i, 0, err);
         }

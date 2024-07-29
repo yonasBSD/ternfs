@@ -20,7 +20,7 @@ func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsT
 	// check that there is at most one current edge
 	for i := len(edges) - 1; i >= 0; i-- {
 		if edges[i].Current && i < len(edges)-1 {
-			panic(fmt.Errorf("found non-trailing current edge"))
+			panic(fmt.Errorf("found non-trailing current edge for dir %v", dir))
 		}
 	}
 	// check that it's all the same name

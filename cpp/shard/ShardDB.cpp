@@ -4,18 +4,17 @@
 #include <bit>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <limits>
+#include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/snapshot.h>
 #include <rocksdb/statistics.h>
-#include <rocksdb/write_batch.h>
 #include <rocksdb/table.h>
+#include <rocksdb/write_batch.h>
 #include <system_error>
-#include <xxhash.h>
 #include <type_traits>
-#include <fstream>
-#include <memory>
 
 #include "Assert.hpp"
 #include "AssertiveLock.hpp"
@@ -89,15 +88,6 @@
 // TODO fill in results
 
 static constexpr uint64_t EGGSFS_PAGE_SIZE = 4096;
-
-static uint64_t computeHash(HashMode mode, const BincodeBytesRef& bytes) {
-    switch (mode) {
-    case HashMode::XXH3_63:
-        return XXH3_64bits(bytes.data(), bytes.size()) & ~(1ull<<63);
-    default:
-        throw EGGS_EXCEPTION("bad hash mode %s", (int)mode);
-    }
-}
 
 static bool validName(const BincodeBytesRef& name) {
     if (name.size() == 0) {
@@ -458,7 +448,7 @@ struct ShardDBImpl {
     EggsError _fullReadDirSameName(const FullReadDirReq& req, rocksdb::ReadOptions& options, HashMode hashMode, FullReadDirResp& resp) {
         bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
 
-        uint64_t nameHash = computeHash(hashMode, req.startName.ref());
+        uint64_t nameHash = EdgeKey::computeNameHash(hashMode, req.startName.ref());
 
         int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - FullReadDirResp::STATIC_SIZE;
 
@@ -555,7 +545,7 @@ struct ShardDBImpl {
         startKey().setNameHash(
             req.startName.size() == 0 ?
                 (forwards ? 0 : ~(uint64_t)0) :
-                computeHash(hashMode, req.startName.ref())
+                EdgeKey::computeNameHash(hashMode, req.startName.ref())
         );
         startKey().setName(req.startName.ref());
         if (!current) {
@@ -1845,7 +1835,7 @@ struct ShardDBImpl {
         if (err != EggsError::NO_ERROR) {
             return err;
         }
-        nameHash = computeHash(dir().hashMode(), name);
+        nameHash = EdgeKey::computeNameHash(dir().hashMode(), name);
         return EggsError::NO_ERROR;
     }
 
@@ -2161,7 +2151,7 @@ struct ShardDBImpl {
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name.ref());
+            nameHash = EdgeKey::computeNameHash(dir().hashMode(), entry.name.ref());
         }
 
         StaticValue<EdgeKey> currentKey;
@@ -2217,7 +2207,7 @@ struct ShardDBImpl {
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
-            nameHash = computeHash(dir().hashMode(), entry.name.ref());
+            nameHash = EdgeKey::computeNameHash(dir().hashMode(), entry.name.ref());
         }
 
         StaticValue<EdgeKey> currentKey;
@@ -2518,7 +2508,7 @@ struct ShardDBImpl {
             ExternalValue<DirectoryBody> dir;
             // allowSnapshot=true since GC needs to be able to do this in snapshot dirs
             EggsError err = _initiateDirectoryModification(time, true, batch, entry.ownerId, dirValue, dir);
-            nameHash = computeHash(dir().hashMode(), entry.name.ref());
+            nameHash = EdgeKey::computeNameHash(dir().hashMode(), entry.name.ref());
         }
 
         // We need to check that the edge is still there, and that it still owns the
@@ -3622,7 +3612,7 @@ struct ShardDBImpl {
         if (err != EggsError::NO_ERROR) {
             return err;
         }
-        nameHash = computeHash(dir().hashMode(), name);
+        nameHash = EdgeKey::computeNameHash(dir().hashMode(), name);
         return EggsError::NO_ERROR;
     }
 

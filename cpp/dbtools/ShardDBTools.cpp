@@ -4,8 +4,11 @@
 #include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/slice.h>
+#include <rocksdb/write_batch.h>
 #include <vector>
 
+#include "Bincode.hpp"
+#include "BlockServicesCacheDB.hpp"
 #include "Common.hpp"
 #include "Env.hpp"
 #include "LogsDB.hpp"
@@ -178,14 +181,6 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         LOG_INFO(env, "Analyzed %s directories", analyzedDirs);
     }
 
-    // no duplicate ownership of any kind in edges -- currently broken in shard 0
-    // because of the outage which lead to the fork
-    bool checkEdgeOrdering = dbPath.find("000") == std::string::npos;
-
-    if (!checkEdgeOrdering) {
-        LOG_INFO(env, "Will not check edge ordering since we think this is shard 0");
-    }
-
     {
         LOG_INFO(env, "Edges pass");
         const rocksdb::ReadOptions options;
@@ -234,7 +229,11 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 thisDirHasCurrentEdges = false;
                 thisDirMaxTime = 0;
             }
+            auto nameHash = edgeK().nameHash();
             std::string name(edgeK().name().data(), edgeK().name().size());
+            if (nameHash != EdgeKey::computeNameHash(HashMode::XXH3_63, BincodeBytesRef(edgeK().name().data(), edgeK().name().size()))) {
+                ERROR("Edge %s has mismatch between name and nameHash", edgeK());
+            }
             InodeId ownedTargetId = NULL_INODE_ID;
             EggsTime creationTime;
             std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
@@ -296,23 +295,17 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                         (prevCreationTime > creationTime) ||
                         (prevCreationTime == creationTime && !(snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID))
                     ) {
-                        if (checkEdgeOrdering) {
-                            ERROR("Name %s in directory %s has overlapping edges (%s >= %s).", name, edgeK().dirId(), prevCreationTime, creationTime);
-                        }
+                        ERROR("Name %s in directory %s has overlapping edges (%s >= %s).", name, edgeK().dirId(), prevCreationTime, creationTime);
                     }
                     // Deletion edges are not preceded by another deletion edge
                     if (snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID && prevEdge->second.second().targetIdWithOwned().id() == NULL_INODE_ID) {
-                        if (checkEdgeOrdering) {
-                            ERROR("Deletion edge with name %s creation time %s is preceded by another deletion edge in directory %s", name, edgeK().creationTime(), thisDir);
-                        }
+                        ERROR("Deletion edge with name %s creation time %s is preceded by another deletion edge in directory %s", name, edgeK().creationTime(), thisDir);
                     }
                 } else {
                     // Deletion edges are preceded by something not -- this is actually not enforced
                     // by the schema, but by GC. So it's not a huge deal if it's wrong.
                     if (snapshotEdge && (*snapshotEdge)().targetIdWithOwned().id() == NULL_INODE_ID) {
-                        if (checkEdgeOrdering) {
-                            ERROR("Deletion edge with name %s creation time %s is not preceded by anything in directory %s", name, edgeK().creationTime(), thisDir);
-                        }
+                        ERROR("Deletion edge with name %s creation time %s is not preceded by anything in directory %s", name, edgeK().creationTime(), thisDir);
                     }
                 }
             }
@@ -451,4 +444,70 @@ void ShardDBTools::fsck(const std::string& dbPath) {
     ALWAYS_ASSERT(!anyErrors, "Some errors detected, check log");
 
 #undef ERROR
+}
+
+void ShardDBTools::fixNameHashMismatch(const std::string& dbPath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.open(rocksDBOptions);
+    auto db = sharedDb.db();
+
+    {
+        auto edgesCf = sharedDb.getCF("edges");
+        const rocksdb::ReadOptions options;
+        std::vector<std::string> keysToDelete;
+        std::vector<std::pair<std::string,std::string>> keyValuesToInsert;
+
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
+            if (!edgeK().current()) {
+                continue;
+            }
+            auto nameHash = edgeK().nameHash();
+            std::string name(edgeK().name().data(), edgeK().name().size());
+            auto computedHash = EdgeKey::computeNameHash(HashMode::XXH3_63, BincodeBytesRef(edgeK().name().data(), edgeK().name().size()));
+            if (nameHash == computedHash) {
+                continue;
+            }
+            const std::string suffix = ".resurrected";
+            if (name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+                LOG_ERROR(env, "found an edge with name hash mismatch not ending in '.ressurected': %s", edgeK());
+                continue;
+            }
+            keysToDelete.emplace_back(it->key().ToString());
+            StaticValue<EdgeKey> newEdgeKey;
+            newEdgeKey().setDirIdWithCurrentU64(edgeK().dirIdWithCurrentU64());
+            newEdgeKey().setName(edgeK().name());
+            newEdgeKey().setNameHash(computedHash);
+            keyValuesToInsert.emplace_back(newEdgeKey.toSlice().ToString(),it->value().ToString());
+        }
+        ROCKS_DB_CHECKED(it->status());
+        if (keysToDelete.size() != keyValuesToInsert.size()) {
+            LOG_ERROR(env, "bug keys to delete different than keys to insert");
+            return;
+        }
+        if (keysToDelete.size() != 105) {
+            LOG_ERROR(env, "unexpected number of keys to delete %s", keysToDelete.size());
+            return;
+        }
+
+        rocksdb::WriteBatch batch;
+        for (const auto& key : keysToDelete) {
+            batch.Delete(edgesCf, key);
+        }
+        for (const auto& [key, value] : keyValuesToInsert) {
+            batch.Put(edgesCf, key, value);
+        }
+        ROCKS_DB_CHECKED(db->Write(rocksdb::WriteOptions(), &batch));
+    }
+    sharedDb.close();
 }

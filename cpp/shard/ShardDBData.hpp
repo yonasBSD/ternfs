@@ -326,6 +326,8 @@ struct EdgeKey {
         ALWAYS_ASSERT(snapshot());
         setCreationTimeUnchecked(creationTime);
     }
+
+    static uint64_t computeNameHash(HashMode mode, const BincodeBytesRef& bytes);
 };
 
 std::ostream& operator<<(std::ostream& out, const EdgeKey& edgeKey);

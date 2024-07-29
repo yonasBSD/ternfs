@@ -1,5 +1,7 @@
 #include "ShardDBData.hpp"
 
+#include <xxhash.h>
+
 std::ostream& operator<<(std::ostream& out, SpanState state) {
     switch (state) {
     case SpanState::CLEAN:
@@ -25,4 +27,13 @@ std::ostream& operator<<(std::ostream& out, const EdgeKey& edgeKey) {
     }
     out << ")";
     return out;
+}
+
+uint64_t EdgeKey::computeNameHash(HashMode mode, const BincodeBytesRef& bytes) {
+    switch (mode) {
+    case HashMode::XXH3_63:
+        return XXH3_64bits(bytes.data(), bytes.size()) & ~(1ull<<63);
+    default:
+        throw EGGS_EXCEPTION("bad hash mode %s", (int)mode);
+    }
 }

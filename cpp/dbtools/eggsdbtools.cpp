@@ -49,9 +49,6 @@ int main(int argc, char** argv) {
         } else if (arg == "fsck") {
             std::string dbPath = getNextArg();
             ShardDBTools::fsck(dbPath);
-        } else if (arg == "fix-name-hash-mismatch") {
-            std::string dbPath = getNextArg();
-            ShardDBTools::fixNameHashMismatch(dbPath);
         } else {
             dieWithUsage();
         }

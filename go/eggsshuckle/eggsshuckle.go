@@ -2603,6 +2603,7 @@ func main() {
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	minDecomInterval := flag.Duration("min-decom-interval", 2*time.Hour, "Minimum interval between calls to decommission blockservices by automation")
 	maxDecommedWithFiles := flag.Int("max-decommed-with-files", 3, "Maximum number of migrating decommissioned blockservices before rejecting further automated decommissions")
+	maxFailureDomainsPerShard := flag.Int("max-failure-domains-per-shard", 28, "Maximum number of failure domains per storage class that shards use for assigning blocks at a single point in time")
 	scriptsJs := flag.String("scripts-js", "", "")
 
 	flag.Parse()
@@ -2610,6 +2611,10 @@ func main() {
 
 	if *addr1 == "" {
 		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n")
+		os.Exit(2)
+	}
+	if *maxFailureDomainsPerShard < 28 {
+		fmt.Fprintf(os.Stderr, "-max-failure-domains-per-shard should not be less than 28. (double the minimum)")
 		os.Exit(2)
 	}
 
@@ -2711,7 +2716,7 @@ func main() {
 		blockServiceMinFreeBytes:  *bsMinBytes,
 		minAutoDecomInterval:      *minDecomInterval,
 		maxDecommedWithFiles:      *maxDecommedWithFiles,
-		maxFailureDomainsPerShard: 28, // 2x what we need
+		maxFailureDomainsPerShard: *maxFailureDomainsPerShard,
 	}
 	state, err := newState(log, db, config)
 	if err != nil {

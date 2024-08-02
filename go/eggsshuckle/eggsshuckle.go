@@ -2186,7 +2186,14 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 
 		st.mutex.Lock()
 		_, err := st.db.Exec(
-			"UPDATE block_services SET flags = ((flags & ~:flag) | :flag), flags_last_changed = :flags_last_changed WHERE last_seen < :thresh",
+			`UPDATE
+				block_services
+			SET
+				flags = ((flags & ~:flag) | :flag),
+				flags_last_changed = :flags_last_changed
+			WHERE
+				last_seen < :thresh
+				AND flags <> ((flags & ~:flag) | :flag)`,
 			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE),
 			n("flags_last_changed", uint64(now)),
 			n("thresh", thresh),

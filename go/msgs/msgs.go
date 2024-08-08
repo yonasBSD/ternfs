@@ -99,7 +99,8 @@ const (
 )
 
 const (
-	EGGS_PAGE_SIZE uint32 = 1 << 12 // 4KB
+	EGGS_PAGE_SIZE          uint32 = 1 << 12 // 4KB
+	EGGS_PAGE_WITH_CRC_SIZE uint32 = EGGS_PAGE_SIZE + 4
 )
 
 func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {

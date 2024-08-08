@@ -443,38 +443,26 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			return err
 		}
 		pageCount := count / msgs.EGGS_PAGE_SIZE
-		var page [msgs.EGGS_PAGE_SIZE]byte
-		var crcTotal uint32 = 0
-		bytesWritten := 0
+		var page [msgs.EGGS_PAGE_WITH_CRC_SIZE]byte
 		for i := uint32(0); i < pageCount; i++ {
-			bytesRead := 0
-			for bytesRead < len(page) {
-				read, err := f.Read(page[bytesRead:])
+			bytesRead := uint32(0)
+			for bytesRead < msgs.EGGS_PAGE_SIZE {
+				read, err := f.Read(page[bytesRead:msgs.EGGS_PAGE_SIZE])
 				if err != nil {
 					log.RaiseAlert("could not read file %v: %v", blockPath, err)
 					return err
 				}
-				bytesRead += read
+				bytesRead += uint32(read)
 			}
-			crcTotal = crc32c.Sum(crcTotal, page[:])
-
-			bytesWritten = 0
-			for bytesWritten < len(page) {
+			binary.LittleEndian.PutUint32(page[msgs.EGGS_PAGE_SIZE:], crc32c.Sum(0, page[:msgs.EGGS_PAGE_SIZE]))
+			bytesWritten := uint32(0)
+			for bytesWritten < msgs.EGGS_PAGE_WITH_CRC_SIZE {
 				written, err := conn.Write(page[bytesWritten:])
 				if err != nil {
 					return err
 				}
-				bytesWritten += written
+				bytesWritten += uint32(written)
 			}
-		}
-		binary.LittleEndian.PutUint32(page[:], crcTotal)
-		bytesWritten = 0
-		for bytesWritten < 4 {
-			written, err := conn.Write(page[bytesWritten:4])
-			if err != nil {
-				return err
-			}
-			bytesWritten += written
 		}
 	} else {
 		if _, err := f.Seek(int64(offset), 0); err != nil {

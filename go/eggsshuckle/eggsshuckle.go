@@ -1550,6 +1550,12 @@ func readShuckleRequest(
 		req = &msgs.LocationsReq{}
 	case msgs.REGISTER_BLOCK_SERVICES:
 		req = &msgs.RegisterBlockServicesReq{}
+	case msgs.CDC_AT_LOCATION:
+		req = &msgs.CdcAtLocationReq{}
+	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:
+		req = &msgs.ChangedBlockServicesAtLocationReq{}
+	case msgs.SHARDS_AT_LOCATION:
+		req = &msgs.ShardsAtLocationReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

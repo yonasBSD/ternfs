@@ -884,7 +884,7 @@ struct SoftUnlinkDirectoryStateMachine {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR, "Could not find directory %s when removing owner, edge from %s name=%s creationTime=%s", req.targetId, req.ownerId, GoLangQuotedStringFmt(req.name.ref().data(), req.name.ref().size()), req.creationTime);
             unlockEdge();
         }
     }

@@ -116,3 +116,43 @@ func (fs *FetchedSpan) Unpack(r io.Reader) error {
 	}
 	return nil
 }
+
+func (fs *FetchedFullSpan) Pack(w io.Writer) error {
+	if err := fs.Header.Pack(w); err != nil {
+		return err
+	}
+	switch b := fs.Body.(type) {
+	case *FetchedLocations:
+		if fs.Header.IsInline {
+			return fmt.Errorf("got INLINE storage class with blocks body")
+		}
+		if err := b.Pack(w); err != nil {
+			return err
+		}
+	case *FetchedInlineSpan:
+		if !fs.Header.IsInline {
+			return fmt.Errorf("got non-INLINE storage (%v) with inline body", fs.Header)
+		}
+		if err := b.Pack(w); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unexpected FetchedFullSpan body of type %T", b)
+	}
+	return nil
+}
+
+func (fs *FetchedFullSpan) Unpack(r io.Reader) error {
+	if err := fs.Header.Unpack(r); err != nil {
+		return err
+	}
+	if fs.Header.IsInline {
+		fs.Body = &FetchedInlineSpan{}
+	} else {
+		fs.Body = &FetchedLocations{}
+	}
+	if err := fs.Body.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}

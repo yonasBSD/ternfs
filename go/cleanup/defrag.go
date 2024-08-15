@@ -79,11 +79,11 @@ func defragFileInternal(
 	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, parent, &stripePolicy); err != nil {
 		return err
 	}
-	fileSpansReq := msgs.FileSpansReq{
+	fileSpansReq := msgs.LocalFileSpansReq{
 		FileId:     fileId,
 		ByteOffset: 0,
 	}
-	fileSpansResp := msgs.FileSpansResp{}
+	fileSpansResp := msgs.LocalFileSpansResp{}
 	sf := scratch.NewScratchFile(log, c, fileId.Shard(), fmt.Sprintf("defrag %v", fileId))
 	for {
 		if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
@@ -270,11 +270,11 @@ func defragFileReplace(
 	fileSize := uint64(0)
 	{
 		largestSpanSize := spanPolicy.Entries[len(spanPolicy.Entries)-1].MaxSize
-		fileSpansReq := msgs.FileSpansReq{
+		fileSpansReq := msgs.LocalFileSpansReq{
 			FileId:     fileId,
 			ByteOffset: 0,
 		}
-		fileSpansResp := msgs.FileSpansResp{}
+		fileSpansResp := msgs.LocalFileSpansResp{}
 		for {
 			if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 				return err

@@ -203,8 +203,8 @@ func scrubScraper(
 		}
 		log.Debug("will migrate %d files", len(fileResp.Ids))
 		for _, file := range fileResp.Ids {
-			spansReq := msgs.FileSpansReq{FileId: file}
-			spansResp := msgs.FileSpansResp{}
+			spansReq := msgs.LocalFileSpansReq{FileId: file}
+			spansResp := msgs.LocalFileSpansResp{}
 			for {
 				if err := c.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
 					log.Info("could not get spans: %v", err)

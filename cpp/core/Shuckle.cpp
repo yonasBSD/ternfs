@@ -153,7 +153,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     // current block services
     {
         ShuckleReqContainer reqContainer;
-        auto& req = reqContainer.setShardBlockServices();
+        auto& req = reqContainer.setShardBlockServicesDEPRECATED();
         req.shardId = shid;
         {
             const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
@@ -166,7 +166,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
             if (err) { FAIL(err, errStr); }
         }
 
-        currentBlockServices = respContainer.getShardBlockServices().blockServices.els;
+        currentBlockServices = respContainer.getShardBlockServicesDEPRECATED().blockServices.els;
     }
 
     // check that all current block services are known -- there's a small race here

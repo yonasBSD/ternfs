@@ -116,6 +116,46 @@ func (fs *FetchedSpan) Unpack(r io.Reader) error {
 	}
 	return nil
 }
+
+func (fs *FetchedFullSpan) Pack(w io.Writer) error {
+	if err := fs.Header.Pack(w); err != nil {
+		return err
+	}
+	switch b := fs.Body.(type) {
+	case *FetchedLocations:
+		if fs.Header.IsInline {
+			return fmt.Errorf("got INLINE storage class with blocks body")
+		}
+		if err := b.Pack(w); err != nil {
+			return err
+		}
+	case *FetchedInlineSpan:
+		if !fs.Header.IsInline {
+			return fmt.Errorf("got non-INLINE storage (%v) with inline body", fs.Header)
+		}
+		if err := b.Pack(w); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unexpected FetchedFullSpan body of type %T", b)
+	}
+	return nil
+}
+
+func (fs *FetchedFullSpan) Unpack(r io.Reader) error {
+	if err := fs.Header.Unpack(r); err != nil {
+		return err
+	}
+	if fs.Header.IsInline {
+		fs.Body = &FetchedInlineSpan{}
+	} else {
+		fs.Body = &FetchedLocations{}
+	}
+	if err := fs.Body.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
 const (
 	INTERNAL_ERROR EggsError = 10
 	FATAL_ERROR EggsError = 11
@@ -402,7 +442,7 @@ func (k ShardMessageKind) String() string {
 	case 10:
 		return "SOFT_UNLINK_FILE"
 	case 11:
-		return "FILE_SPANS"
+		return "LOCAL_FILE_SPANS"
 	case 12:
 		return "SAME_DIRECTORY_RENAME"
 	case 16:
@@ -421,6 +461,10 @@ func (k ShardMessageKind) String() string {
 		return "STAT_TRANSIENT_FILE"
 	case 18:
 		return "SHARD_SNAPSHOT"
+	case 20:
+		return "FILE_SPANS"
+	case 21:
+		return "ADD_SPAN_LOCATION"
 	case 13:
 		return "SET_DIRECTORY_INFO"
 	case 112:
@@ -447,6 +491,8 @@ func (k ShardMessageKind) String() string {
 		return "SWAP_SPANS"
 	case 127:
 		return "SAME_DIRECTORY_RENAME_SNAPSHOT"
+	case 19:
+		return "ADD_SPAN_AT_LOCATION_INITIATE"
 	case 128:
 		return "CREATE_DIRECTORY_INODE"
 	case 129:
@@ -479,7 +525,7 @@ const (
 	ADD_SPAN_CERTIFY ShardMessageKind = 0x8
 	LINK_FILE ShardMessageKind = 0x9
 	SOFT_UNLINK_FILE ShardMessageKind = 0xA
-	FILE_SPANS ShardMessageKind = 0xB
+	LOCAL_FILE_SPANS ShardMessageKind = 0xB
 	SAME_DIRECTORY_RENAME ShardMessageKind = 0xC
 	ADD_INLINE_SPAN ShardMessageKind = 0x10
 	SET_TIME ShardMessageKind = 0x11
@@ -489,6 +535,8 @@ const (
 	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
 	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
 	SHARD_SNAPSHOT ShardMessageKind = 0x12
+	FILE_SPANS ShardMessageKind = 0x14
+	ADD_SPAN_LOCATION ShardMessageKind = 0x15
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
 	VISIT_DIRECTORIES ShardMessageKind = 0x70
 	VISIT_FILES ShardMessageKind = 0x71
@@ -502,6 +550,7 @@ const (
 	REMOVE_ZERO_BLOCK_SERVICE_FILES ShardMessageKind = 0x7D
 	SWAP_SPANS ShardMessageKind = 0x7E
 	SAME_DIRECTORY_RENAME_SNAPSHOT ShardMessageKind = 0x7F
+	ADD_SPAN_AT_LOCATION_INITIATE ShardMessageKind = 0x13
 	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
 	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
 	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
@@ -522,7 +571,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	ADD_SPAN_CERTIFY,
 	LINK_FILE,
 	SOFT_UNLINK_FILE,
-	FILE_SPANS,
+	LOCAL_FILE_SPANS,
 	SAME_DIRECTORY_RENAME,
 	ADD_INLINE_SPAN,
 	SET_TIME,
@@ -532,6 +581,8 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	SAME_SHARD_HARD_FILE_UNLINK,
 	STAT_TRANSIENT_FILE,
 	SHARD_SNAPSHOT,
+	FILE_SPANS,
+	ADD_SPAN_LOCATION,
 	SET_DIRECTORY_INFO,
 	VISIT_DIRECTORIES,
 	VISIT_FILES,
@@ -545,6 +596,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	REMOVE_ZERO_BLOCK_SERVICE_FILES,
 	SWAP_SPANS,
 	SAME_DIRECTORY_RENAME_SNAPSHOT,
+	ADD_SPAN_AT_LOCATION_INITIATE,
 	CREATE_DIRECTORY_INODE,
 	SET_DIRECTORY_OWNER,
 	REMOVE_DIRECTORY_OWNER,
@@ -577,8 +629,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &LinkFileReq{}, &LinkFileResp{}, nil
 	case k == "SOFT_UNLINK_FILE":
 		return &SoftUnlinkFileReq{}, &SoftUnlinkFileResp{}, nil
-	case k == "FILE_SPANS":
-		return &FileSpansReq{}, &FileSpansResp{}, nil
+	case k == "LOCAL_FILE_SPANS":
+		return &LocalFileSpansReq{}, &LocalFileSpansResp{}, nil
 	case k == "SAME_DIRECTORY_RENAME":
 		return &SameDirectoryRenameReq{}, &SameDirectoryRenameResp{}, nil
 	case k == "ADD_INLINE_SPAN":
@@ -597,6 +649,10 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &StatTransientFileReq{}, &StatTransientFileResp{}, nil
 	case k == "SHARD_SNAPSHOT":
 		return &ShardSnapshotReq{}, &ShardSnapshotResp{}, nil
+	case k == "FILE_SPANS":
+		return &FileSpansReq{}, &FileSpansResp{}, nil
+	case k == "ADD_SPAN_LOCATION":
+		return &AddSpanLocationReq{}, &AddSpanLocationResp{}, nil
 	case k == "SET_DIRECTORY_INFO":
 		return &SetDirectoryInfoReq{}, &SetDirectoryInfoResp{}, nil
 	case k == "VISIT_DIRECTORIES":
@@ -623,6 +679,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &SwapSpansReq{}, &SwapSpansResp{}, nil
 	case k == "SAME_DIRECTORY_RENAME_SNAPSHOT":
 		return &SameDirectoryRenameSnapshotReq{}, &SameDirectoryRenameSnapshotResp{}, nil
+	case k == "ADD_SPAN_AT_LOCATION_INITIATE":
+		return &AddSpanAtLocationInitiateReq{}, &AddSpanAtLocationInitiateResp{}, nil
 	case k == "CREATE_DIRECTORY_INODE":
 		return &CreateDirectoryInodeReq{}, &CreateDirectoryInodeResp{}, nil
 	case k == "SET_DIRECTORY_OWNER":
@@ -742,7 +800,7 @@ func (k ShuckleMessageKind) String() string {
 	case 13:
 		return "CDC_AT_LOCATION"
 	case 17:
-		return "SHARD_BLOCK_SERVICES"
+		return "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED"
 	case 19:
 		return "CDC_REPLICAS_DE_PR_EC_AT_ED"
 	case 20:
@@ -754,7 +812,7 @@ func (k ShuckleMessageKind) String() string {
 	case 23:
 		return "CLEAR_SHARD_INFO"
 	case 24:
-		return "REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED"
+		return "SHARD_BLOCK_SERVICES"
 	case 25:
 		return "ALL_CDC"
 	case 32:
@@ -787,13 +845,13 @@ const (
 	CHANGED_BLOCK_SERVICES_AT_LOCATION ShuckleMessageKind = 0xB
 	SHARDS_AT_LOCATION ShuckleMessageKind = 0xC
 	CDC_AT_LOCATION ShuckleMessageKind = 0xD
-	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x11
+	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED ShuckleMessageKind = 0x11
 	CDC_REPLICAS_DE_PR_EC_AT_ED ShuckleMessageKind = 0x13
 	ALL_SHARDS ShuckleMessageKind = 0x14
 	DECOMMISSION_BLOCK_SERVICE ShuckleMessageKind = 0x15
 	MOVE_SHARD_LEADER ShuckleMessageKind = 0x16
 	CLEAR_SHARD_INFO ShuckleMessageKind = 0x17
-	REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED ShuckleMessageKind = 0x18
+	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x18
 	ALL_CDC ShuckleMessageKind = 0x19
 	ERASE_DECOMMISSIONED_BLOCK ShuckleMessageKind = 0x20
 	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x21
@@ -817,13 +875,13 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	CHANGED_BLOCK_SERVICES_AT_LOCATION,
 	SHARDS_AT_LOCATION,
 	CDC_AT_LOCATION,
-	SHARD_BLOCK_SERVICES,
+	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED,
 	CDC_REPLICAS_DE_PR_EC_AT_ED,
 	ALL_SHARDS,
 	DECOMMISSION_BLOCK_SERVICE,
 	MOVE_SHARD_LEADER,
 	CLEAR_SHARD_INFO,
-	REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED,
+	SHARD_BLOCK_SERVICES,
 	ALL_CDC,
 	ERASE_DECOMMISSIONED_BLOCK,
 	ALL_BLOCK_SERVICES,
@@ -865,8 +923,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &ShardsAtLocationReq{}, &ShardsAtLocationResp{}, nil
 	case k == "CDC_AT_LOCATION":
 		return &CdcAtLocationReq{}, &CdcAtLocationResp{}, nil
-	case k == "SHARD_BLOCK_SERVICES":
-		return &ShardBlockServicesReq{}, &ShardBlockServicesResp{}, nil
+	case k == "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED":
+		return &ShardBlockServicesDEPRECATEDReq{}, &ShardBlockServicesDEPRECATEDResp{}, nil
 	case k == "CDC_REPLICAS_DE_PR_EC_AT_ED":
 		return &CdcReplicasDEPRECATEDReq{}, &CdcReplicasDEPRECATEDResp{}, nil
 	case k == "ALL_SHARDS":
@@ -877,8 +935,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &MoveShardLeaderReq{}, &MoveShardLeaderResp{}, nil
 	case k == "CLEAR_SHARD_INFO":
 		return &ClearShardInfoReq{}, &ClearShardInfoResp{}, nil
-	case k == "REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED":
-		return &RegisterBlockServicesDEPRECATEDReq{}, &RegisterBlockServicesDEPRECATEDResp{}, nil
+	case k == "SHARD_BLOCK_SERVICES":
+		return &ShardBlockServicesReq{}, &ShardBlockServicesResp{}, nil
 	case k == "ALL_CDC":
 		return &AllCdcReq{}, &AllCdcResp{}, nil
 	case k == "ERASE_DECOMMISSIONED_BLOCK":
@@ -1587,11 +1645,11 @@ func (v *SoftUnlinkFileResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *FileSpansReq) ShardRequestKind() ShardMessageKind {
-	return FILE_SPANS
+func (v *LocalFileSpansReq) ShardRequestKind() ShardMessageKind {
+	return LOCAL_FILE_SPANS
 }
 
-func (v *FileSpansReq) Pack(w io.Writer) error {
+func (v *LocalFileSpansReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.FileId)); err != nil {
 		return err
 	}
@@ -1607,7 +1665,7 @@ func (v *FileSpansReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *FileSpansReq) Unpack(r io.Reader) error {
+func (v *LocalFileSpansReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId)); err != nil {
 		return err
 	}
@@ -1623,11 +1681,11 @@ func (v *FileSpansReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *FileSpansResp) ShardResponseKind() ShardMessageKind {
-	return FILE_SPANS
+func (v *LocalFileSpansResp) ShardResponseKind() ShardMessageKind {
+	return LOCAL_FILE_SPANS
 }
 
-func (v *FileSpansResp) Pack(w io.Writer) error {
+func (v *LocalFileSpansResp) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.NextOffset)); err != nil {
 		return err
 	}
@@ -1652,7 +1710,7 @@ func (v *FileSpansResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *FileSpansResp) Unpack(r io.Reader) error {
+func (v *LocalFileSpansResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextOffset)); err != nil {
 		return err
 	}
@@ -2169,6 +2227,165 @@ func (v *ShardSnapshotResp) Pack(w io.Writer) error {
 }
 
 func (v *ShardSnapshotResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *FileSpansReq) ShardRequestKind() ShardMessageKind {
+	return FILE_SPANS
+}
+
+func (v *FileSpansReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Limit)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint16(v.Mtu)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FileSpansReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Limit)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Mtu)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FileSpansResp) ShardResponseKind() ShardMessageKind {
+	return FILE_SPANS
+}
+
+func (v *FileSpansResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.NextOffset)); err != nil {
+		return err
+	}
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	len2 := len(v.Spans)
+	if err := bincode.PackLength(w, len2); err != nil {
+		return err
+	}
+	for i := 0; i < len2; i++ {
+		if err := v.Spans[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *FileSpansResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NextOffset)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	var len2 int
+	if err := bincode.UnpackLength(r, &len2); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Spans, len2)
+	for i := 0; i < len2; i++ {
+		if err := v.Spans[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AddSpanLocationReq) ShardRequestKind() ShardMessageKind {
+	return ADD_SPAN_LOCATION
+}
+
+func (v *AddSpanLocationReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.FileId1)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset1)); err != nil {
+		return err
+	}
+	len1 := len(v.Blocks1)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := bincode.PackScalar(w, uint64(v.Blocks1[i])); err != nil {
+			return err
+		}
+	}
+	if err := bincode.PackScalar(w, uint64(v.FileId2)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset2)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanLocationReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId1)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset1)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Blocks1, len1)
+	for i := 0; i < len1; i++ {
+		if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks1[i])); err != nil {
+			return err
+		}
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId2)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset2)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanLocationResp) ShardResponseKind() ShardMessageKind {
+	return ADD_SPAN_LOCATION
+}
+
+func (v *AddSpanLocationResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *AddSpanLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
@@ -2895,6 +3112,48 @@ func (v *SameDirectoryRenameSnapshotResp) Pack(w io.Writer) error {
 
 func (v *SameDirectoryRenameSnapshotResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.NewCreationTime)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanAtLocationInitiateReq) ShardRequestKind() ShardMessageKind {
+	return ADD_SPAN_AT_LOCATION_INITIATE
+}
+
+func (v *AddSpanAtLocationInitiateReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
+		return err
+	}
+	if err := v.Req.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanAtLocationInitiateReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
+		return err
+	}
+	if err := v.Req.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanAtLocationInitiateResp) ShardResponseKind() ShardMessageKind {
+	return ADD_SPAN_AT_LOCATION_INITIATE
+}
+
+func (v *AddSpanAtLocationInitiateResp) Pack(w io.Writer) error {
+	if err := v.Resp.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AddSpanAtLocationInitiateResp) Unpack(r io.Reader) error {
+	if err := v.Resp.Unpack(r); err != nil {
 		return err
 	}
 	return nil
@@ -4027,6 +4286,141 @@ func (v *FetchedBlocksSpan) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *FetchedBlockServices) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.StorageClass)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Parity)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Stripes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.CellSize)); err != nil {
+		return err
+	}
+	len1 := len(v.Blocks)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Blocks[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	len2 := len(v.StripesCrc)
+	if err := bincode.PackLength(w, len2); err != nil {
+		return err
+	}
+	for i := 0; i < len2; i++ {
+		if err := bincode.PackScalar(w, uint32(v.StripesCrc[i])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *FetchedBlockServices) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.StorageClass)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Parity)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Stripes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.CellSize)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Blocks, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Blocks[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	var len2 int
+	if err := bincode.UnpackLength(r, &len2); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.StripesCrc, len2)
+	for i := 0; i < len2; i++ {
+		if err := bincode.UnpackScalar(r, (*uint32)(&v.StripesCrc[i])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *FetchedLocations) Pack(w io.Writer) error {
+	len1 := len(v.Locations)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Locations[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *FetchedLocations) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Locations, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Locations[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *FetchedSpanHeaderFull) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Size)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.Crc)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsInline)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FetchedSpanHeaderFull) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Size)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Crc)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsInline)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *BlacklistEntry) Pack(w io.Writer) error {
 	if err := v.FailureDomain.Pack(w); err != nil {
 		return err
@@ -4243,6 +4637,38 @@ func (v *BlockServiceInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *BlockServiceInfoShort) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
+		return err
+	}
+	if err := v.FailureDomain.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.StorageClass)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceInfoShort) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
+		return err
+	}
+	if err := v.FailureDomain.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.StorageClass)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *SpanPolicy) Pack(w io.Writer) error {
 	len1 := len(v.Entries)
 	if err := bincode.PackLength(w, len1); err != nil {
@@ -4350,80 +4776,6 @@ func (v *FullShardInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RegisterBlockServiceInfoDEPRECATED) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
-		return err
-	}
-	if err := v.Addrs.Pack(w); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint8(v.StorageClass)); err != nil {
-		return err
-	}
-	if err := v.FailureDomain.Pack(w); err != nil {
-		return err
-	}
-	if err := bincode.PackFixedBytes(w, 16, v.SecretKey[:]); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint8(v.Flags)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint8(v.FlagsMask)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.CapacityBytes)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.AvailableBytes)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint64(v.Blocks)); err != nil {
-		return err
-	}
-	if err := bincode.PackBytes(w, []byte(v.Path)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RegisterBlockServiceInfoDEPRECATED) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
-		return err
-	}
-	if err := v.Addrs.Unpack(r); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.StorageClass)); err != nil {
-		return err
-	}
-	if err := v.FailureDomain.Unpack(r); err != nil {
-		return err
-	}
-	if err := bincode.UnpackFixedBytes(r, 16, v.SecretKey[:]); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.Flags)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.FlagsMask)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.CapacityBytes)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.AvailableBytes)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackString(r, &v.Path); err != nil {
 		return err
 	}
 	return nil
@@ -5273,29 +5625,29 @@ func (v *CdcAtLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
-	return SHARD_BLOCK_SERVICES
+func (v *ShardBlockServicesDEPRECATEDReq) ShuckleRequestKind() ShuckleMessageKind {
+	return SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED
 }
 
-func (v *ShardBlockServicesReq) Pack(w io.Writer) error {
+func (v *ShardBlockServicesDEPRECATEDReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint8(v.ShardId)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *ShardBlockServicesReq) Unpack(r io.Reader) error {
+func (v *ShardBlockServicesDEPRECATEDReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint8)(&v.ShardId)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *ShardBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
-	return SHARD_BLOCK_SERVICES
+func (v *ShardBlockServicesDEPRECATEDResp) ShuckleResponseKind() ShuckleMessageKind {
+	return SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED
 }
 
-func (v *ShardBlockServicesResp) Pack(w io.Writer) error {
+func (v *ShardBlockServicesDEPRECATEDResp) Pack(w io.Writer) error {
 	len1 := len(v.BlockServices)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -5308,7 +5660,7 @@ func (v *ShardBlockServicesResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *ShardBlockServicesResp) Unpack(r io.Reader) error {
+func (v *ShardBlockServicesDEPRECATEDResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -5510,11 +5862,29 @@ func (v *ClearShardInfoResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterBlockServicesDEPRECATEDReq) ShuckleRequestKind() ShuckleMessageKind {
-	return REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED
+func (v *ShardBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+	return SHARD_BLOCK_SERVICES
 }
 
-func (v *RegisterBlockServicesDEPRECATEDReq) Pack(w io.Writer) error {
+func (v *ShardBlockServicesReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.ShardId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardBlockServicesReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.ShardId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+	return SHARD_BLOCK_SERVICES
+}
+
+func (v *ShardBlockServicesResp) Pack(w io.Writer) error {
 	len1 := len(v.BlockServices)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -5527,7 +5897,7 @@ func (v *RegisterBlockServicesDEPRECATEDReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *RegisterBlockServicesDEPRECATEDReq) Unpack(r io.Reader) error {
+func (v *ShardBlockServicesResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -5538,18 +5908,6 @@ func (v *RegisterBlockServicesDEPRECATEDReq) Unpack(r io.Reader) error {
 			return err
 		}
 	}
-	return nil
-}
-
-func (v *RegisterBlockServicesDEPRECATEDResp) ShuckleResponseKind() ShuckleMessageKind {
-	return REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED
-}
-
-func (v *RegisterBlockServicesDEPRECATEDResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *RegisterBlockServicesDEPRECATEDResp) Unpack(r io.Reader) error {
 	return nil
 }
 

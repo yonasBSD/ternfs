@@ -639,8 +639,8 @@ func findBlockServiceToPurge(log *lib.Logger, client *client.Client) msgs.BlockS
 	for {
 		shardReq(log, client, 0, &filesReq, &filesResp)
 		for _, file := range filesResp.Ids {
-			spansReq := msgs.FileSpansReq{FileId: file}
-			spansResp := msgs.FileSpansResp{}
+			spansReq := msgs.LocalFileSpansReq{FileId: file}
+			spansResp := msgs.LocalFileSpansResp{}
 			for {
 				shardReq(log, client, 0, &spansReq, &spansResp)
 				if len(spansResp.BlockServices) > 0 {
@@ -689,11 +689,11 @@ func corruptFiles(
 			if rand.Float64() > opts.corruptFileProb {
 				continue
 			}
-			fileSpansReq := msgs.FileSpansReq{
+			fileSpansReq := msgs.LocalFileSpansReq{
 				FileId:     file,
 				ByteOffset: 0,
 			}
-			fileSpansResp := msgs.FileSpansResp{}
+			fileSpansResp := msgs.LocalFileSpansResp{}
 			for {
 				if err := c.ShardRequest(log, file.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 					panic(err)
@@ -969,11 +969,11 @@ func fsTestInternal[Id comparable](
 					return nil
 				}
 				path := path.Join(parentPath, name)
-				fileSpansReq := msgs.FileSpansReq{
+				fileSpansReq := msgs.LocalFileSpansReq{
 					FileId:     fileId,
 					ByteOffset: 0,
 				}
-				fileSpansResp := msgs.FileSpansResp{}
+				fileSpansResp := msgs.LocalFileSpansResp{}
 				for {
 					if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 						panic(err)

@@ -287,11 +287,11 @@ func migrateBlocksInFileGeneric(
 			return err
 		}
 	}
-	fileSpansReq := msgs.FileSpansReq{
+	fileSpansReq := msgs.LocalFileSpansReq{
 		FileId:     fileId,
 		ByteOffset: 0,
 	}
-	fileSpansResp := msgs.FileSpansResp{}
+	fileSpansResp := msgs.LocalFileSpansResp{}
 	for {
 		if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 			return err

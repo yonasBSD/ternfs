@@ -107,8 +107,6 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	var err error
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
-	case *msgs.RegisterBlockServicesDEPRECATEDReq:
-		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.DecommissionBlockServiceReq:
@@ -135,7 +133,7 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ShuckleReq:
 		resp, err = handleShuckle(log, s)
-	case *msgs.ShardBlockServicesReq:
+	case *msgs.ShardBlockServicesDEPRECATEDReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.MoveShardLeaderReq:
 		resp, err = handleProxyRequest(log, s, req)
@@ -160,6 +158,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	case *msgs.ChangedBlockServicesAtLocationReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ShardsAtLocationReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.ShardBlockServicesReq:
 		resp, err = handleProxyRequest(log, s, req)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
@@ -277,8 +277,6 @@ func readShuckleRequest(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		req = &msgs.RegisterBlockServicesDEPRECATEDReq{}
 	case msgs.LOCAL_SHARDS:
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
@@ -301,8 +299,8 @@ func readShuckleRequest(
 		req = &msgs.InfoReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
-	case msgs.SHARD_BLOCK_SERVICES:
-		req = &msgs.ShardBlockServicesReq{}
+	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		req = &msgs.ShardBlockServicesDEPRECATEDReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
 	case msgs.ALL_CDC:
@@ -325,6 +323,14 @@ func readShuckleRequest(
 		req = &msgs.LocationsReq{}
 	case msgs.REGISTER_BLOCK_SERVICES:
 		req = &msgs.RegisterBlockServicesReq{}
+	case msgs.CDC_AT_LOCATION:
+		req = &msgs.CdcAtLocationReq{}
+	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:
+		req = &msgs.ChangedBlockServicesAtLocationReq{}
+	case msgs.SHARDS_AT_LOCATION:
+		req = &msgs.ShardsAtLocationReq{}
+	case msgs.SHARD_BLOCK_SERVICES:
+		req = &msgs.ShardBlockServicesReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

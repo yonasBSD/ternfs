@@ -914,32 +914,32 @@ int eggsfs_shard_file_spans(struct eggsfs_fs_info* info, u64 file, u64 offset, u
     u32 attempts;
 
     u64 req_id = alloc_request_id();
-    u8 kind = EGGSFS_SHARD_FILE_SPANS;
+    u8 kind = EGGSFS_SHARD_LOCAL_FILE_SPANS;
     {
-        PREPARE_SHARD_REQ_CTX(EGGSFS_FILE_SPANS_REQ_SIZE);
-        eggsfs_file_spans_req_put_start(&ctx, start);
-        eggsfs_file_spans_req_put_file_id(&ctx, start, file_id, file);
-        eggsfs_file_spans_req_put_byte_offset(&ctx, file_id, byte_offset, offset);
-        eggsfs_file_spans_req_put_limit(&ctx, byte_offset, limit, 0);
-        eggsfs_file_spans_req_put_mtu(&ctx, limit, mtu, eggsfs_mtu);
-        eggsfs_file_spans_req_put_end(&ctx, mtu, end);
+        PREPARE_SHARD_REQ_CTX(EGGSFS_LOCAL_FILE_SPANS_REQ_SIZE);
+        eggsfs_local_file_spans_req_put_start(&ctx, start);
+        eggsfs_local_file_spans_req_put_file_id(&ctx, start, file_id, file);
+        eggsfs_local_file_spans_req_put_byte_offset(&ctx, file_id, byte_offset, offset);
+        eggsfs_local_file_spans_req_put_limit(&ctx, byte_offset, limit, 0);
+        eggsfs_local_file_spans_req_put_mtu(&ctx, limit, mtu, eggsfs_mtu);
+        eggsfs_local_file_spans_req_put_end(&ctx, mtu, end);
         skb = eggsfs_send_shard_req(info, eggsfs_inode_shard(file), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 
     {
         PREPARE_SHARD_RESP_CTX();
-        eggsfs_file_spans_resp_get_start(&ctx, start);
-        eggsfs_file_spans_resp_get_next_offset(&ctx, start, resp_next_offset);
+        eggsfs_local_file_spans_resp_get_start(&ctx, start);
+        eggsfs_local_file_spans_resp_get_next_offset(&ctx, start, resp_next_offset);
         if (likely(ctx.err == 0)) {
             *next_offset = resp_next_offset.x;
         }
-        eggsfs_file_spans_resp_get_block_services(&ctx, resp_next_offset, block_services);
+        eggsfs_local_file_spans_resp_get_block_services(&ctx, resp_next_offset, block_services);
         char* bs_offset = ctx.buf;
         if (likely(ctx.err == 0)) {
             ctx.buf += EGGSFS_BLOCK_SERVICE_SIZE*block_services.len;
         }
-        eggsfs_file_spans_resp_get_spans(&ctx, block_services, spans);
+        eggsfs_local_file_spans_resp_get_spans(&ctx, block_services, spans);
         int i;
         for (i = 0; i < spans.len; i++) {
             eggsfs_fetched_span_header_get_start(&ctx, header_start);

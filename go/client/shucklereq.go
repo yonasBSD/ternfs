@@ -63,8 +63,6 @@ func readShuckleResponse(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var resp msgs.ShuckleResponse
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		resp = &msgs.RegisterBlockServicesDEPRECATEDResp{}
 	case msgs.LOCAL_SHARDS:
 		resp = &msgs.LocalShardsResp{}
 	case msgs.REGISTER_SHARD:
@@ -83,8 +81,8 @@ func readShuckleResponse(
 		resp = &msgs.CdcReplicasDEPRECATEDResp{}
 	case msgs.INFO:
 		resp = &msgs.InfoResp{}
-	case msgs.SHARD_BLOCK_SERVICES:
-		resp = &msgs.ShardBlockServicesResp{}
+	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		resp = &msgs.ShardBlockServicesDEPRECATEDResp{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		resp = &msgs.EraseDecommissionedBlockResp{}
 	case msgs.ALL_CDC:

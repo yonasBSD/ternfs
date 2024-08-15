@@ -808,6 +808,13 @@ type AddSpanInitiateReq struct {
 	Crcs []Crc
 }
 
+// Same as above but used internally to create span at specific location.
+// Spans can not be created at multiple locations but can be merged to contain multiple locations.
+type AddSpanAtLocationInitiateReq struct {
+	LocationId     Location
+	Req AddSpanInitiateWithReferenceReq
+}
+
 type AddSpanInitiateBlockInfo struct {
 	BlockServiceAddrs         AddrsInfo
 	BlockServiceId            BlockServiceId
@@ -820,6 +827,11 @@ type AddSpanInitiateBlockInfo struct {
 type AddSpanInitiateResp struct {
 	// Left empty for inline/zero-filled spans
 	Blocks []AddSpanInitiateBlockInfo
+}
+
+type AddSpanAtLocationInitiateResp struct {
+	// Left empty for inline/zero-filled spans
+	Resp AddSpanInitiateResp
 }
 
 // The only reason why this isn't the same as AddSpanInitiateReq is
@@ -917,7 +929,7 @@ type SoftUnlinkFileResp struct {
 // Starts from the first span with byte offset <= than the provided
 // ByteOffset (this is so that you can just start reading a file
 // somewhere without hunting for the right span).
-type FileSpansReq struct {
+type LocalFileSpansReq struct {
 	FileId     InodeId
 	ByteOffset uint64
 	// if 0, no limit.
@@ -981,11 +993,55 @@ type BlockService struct {
 	Flags BlockServiceFlags
 }
 
-type FileSpansResp struct {
+type LocalFileSpansResp struct {
 	NextOffset    uint64
 	BlockServices []BlockService
 	Spans         []FetchedSpan
 }
+
+type FileSpansReq struct {
+	FileId     InodeId
+	ByteOffset uint64
+	// if 0, no limit.
+	Limit uint32
+	// if  0, a conservative MTU will be used
+	Mtu uint16
+}
+
+type FetchedSpanHeaderFull struct {
+	ByteOffset   uint64
+	Size         uint32
+	Crc          Crc
+	IsInline     bool
+}
+
+type FetchedBlockServices struct {
+	LocationId Location
+	StorageClass StorageClass
+	Parity     rs.Parity
+	Stripes    uint8 // [0, 16)
+	CellSize   uint32
+	Blocks     []FetchedBlock
+	StripesCrc []Crc
+}
+
+type FetchedLocations struct {
+	Locations []FetchedBlockServices
+}
+
+// if Header.IsInline is true, then the `Body` will be `FetchedInlineSpan`.
+// Otherwise it'll be `FetchedLocations`.
+type FetchedFullSpan struct {
+	Header FetchedSpanHeaderFull
+	Body   IsFetchedSpanBody
+}
+
+type FileSpansResp struct {
+	NextOffset    uint64
+	BlockServices []BlockService
+	Spans         []FetchedFullSpan
+}
+
 
 type SameDirectoryRenameReq struct {
 	TargetId InodeId
@@ -1311,6 +1367,23 @@ type SwapSpansReq struct {
 }
 
 type SwapSpansResp struct{}
+
+
+// Adds a span location from transient file to non transient file used for
+// replicating to multiple locations
+
+// We need the list of block ids to make the request idempotent.
+// The block ids are enough since each block
+// id is referenced from exactly one span.
+type AddSpanLocationReq struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	Blocks1     []BlockId
+	FileId2     InodeId
+	ByteOffset2 uint64
+}
+
+type AddSpanLocationResp struct{}
 
 type BlockServiceFilesReq struct {
 	BlockServiceId BlockServiceId
@@ -1806,6 +1879,22 @@ type EntryNewBlockInfo struct {
 	Crc            Crc
 }
 
+type AddSpanAtLocationInitiateEntry struct {
+	LocationId    Location
+	WithReference bool
+	FileId        InodeId
+	ByteOffset    uint64
+	Size          uint32
+	Crc           Crc
+	StorageClass  StorageClass
+	Parity        rs.Parity
+	Stripes       uint8 // [1, 16]
+	CellSize      uint32
+	BodyBlocks    []EntryNewBlockInfo
+	BodyStripes   []Crc // the CRCs
+}
+
+
 type AddSpanInitiateEntry struct {
 	WithReference bool
 	FileId        InodeId
@@ -1860,6 +1949,14 @@ type SwapSpansEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	Blocks2     []BlockId
+}
+
+type AddSpanLocationEntry struct {
+	FileId1     InodeId
+	ByteOffset1 uint64
+	Blocks1     []BlockId
+	FileId2     InodeId
+	ByteOffset2 uint64
 }
 
 type MoveSpanEntry struct {
@@ -2026,8 +2123,15 @@ type ShardBlockServicesReq struct {
 	ShardId ShardId
 }
 
+type BlockServiceInfoShort struct {
+	LocationId Location
+	FailureDomain FailureDomain
+	Id   BlockServiceId
+	StorageClass StorageClass
+}
+
 type ShardBlockServicesResp struct {
-	BlockServices []BlockServiceId
+	BlockServices []BlockServiceInfoShort
 }
 
 type AllShardsReq struct{}
@@ -2143,25 +2247,13 @@ type CdcReplicasDEPRECATEDResp struct {
 	Replicas []AddrsInfo
 }
 
-type RegisterBlockServiceInfoDEPRECATED struct {
-	Id             BlockServiceId
-	Addrs          AddrsInfo
-	StorageClass   StorageClass
-	FailureDomain  FailureDomain
-	SecretKey      [16]byte
-	Flags          BlockServiceFlags
-	FlagsMask      uint8
-	CapacityBytes  uint64
-	AvailableBytes uint64
-	Blocks         uint64 // how many blocks we have
-	Path           string
+type ShardBlockServicesDEPRECATEDReq struct {
+	ShardId ShardId
 }
 
-type RegisterBlockServicesDEPRECATEDReq struct {
-	BlockServices []RegisterBlockServiceInfoDEPRECATED
+type ShardBlockServicesDEPRECATEDResp struct {
+	BlockServices []BlockServiceId
 }
-
-type RegisterBlockServicesDEPRECATEDResp struct{}
 
 // --------------------------------------------------------------------
 // block service requests/responses

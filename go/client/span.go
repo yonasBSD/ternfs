@@ -751,8 +751,8 @@ func (c *Client) FetchSpans(
 	log *lib.Logger,
 	fileId msgs.InodeId,
 ) (blockServices []msgs.BlockService, spans []msgs.FetchedSpan, err error) {
-	req := msgs.FileSpansReq{FileId: fileId}
-	resp := msgs.FileSpansResp{}
+	req := msgs.LocalFileSpansReq{FileId: fileId}
+	resp := msgs.LocalFileSpansResp{}
 	for {
 		if err := c.ShardRequest(log, fileId.Shard(), &req, &resp); err != nil {
 			return nil, nil, err

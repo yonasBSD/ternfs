@@ -93,7 +93,7 @@ type state struct {
 	decommedBlockServices   map[msgs.BlockServiceId]msgs.BlockServiceInfo
 	decommedBlockServicesMu sync.RWMutex
 	// periodically calculated evenly spread writable block services across all shards
-	currentShardBlockServices   map[msgs.ShardId][]msgs.BlockServiceId
+	currentShardBlockServices   map[msgs.ShardId][]msgs.BlockServiceInfoShort
 	currentShardBlockServicesMu sync.RWMutex
 }
 
@@ -160,13 +160,18 @@ func (s *state) selectShards(locationId msgs.Location) (*[256]msgs.ShardInfo, er
 	return &ret, nil
 }
 
+type BlockServiceInfoWithLocation struct {
+	msgs.BlockServiceInfo
+	LocationId msgs.Location
+}
+
 // if flagsFilter&flags is non-zero, things won't be returned
-func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, filterWithSpaceAvailable bool) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, filterWithSpaceAvailable bool) (map[msgs.BlockServiceId]BlockServiceInfoWithLocation, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	n := sql.Named
 
-	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
+	ret := make(map[msgs.BlockServiceId]BlockServiceInfoWithLocation)
 	q := "SELECT * FROM block_services WHERE (flags & :flags) = 0 AND flags_last_changed > :changed_since"
 	if filterWithSpaceAvailable {
 		q += " AND available_bytes > 0"
@@ -187,10 +192,9 @@ func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockSer
 	defer rows.Close()
 
 	for rows.Next() {
-		bs := msgs.BlockServiceInfo{}
+		bs := BlockServiceInfoWithLocation{}
 		var ip1, ip2, fd, sk []byte
-		var location msgs.Location
-		err = rows.Scan(&bs.Id, &location, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles, &bs.FlagsLastChanged)
+		err = rows.Scan(&bs.Id, &bs.LocationId, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles, &bs.FlagsLastChanged)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
@@ -227,7 +231,7 @@ func newState(
 		config:                      conf,
 		decommedBlockServices:       make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
 		decommedBlockServicesMu:     sync.RWMutex{},
-		currentShardBlockServices:   make(map[msgs.ShardId][]msgs.BlockServiceId),
+		currentShardBlockServices:   make(map[msgs.ShardId][]msgs.BlockServiceInfoShort),
 		currentShardBlockServicesMu: sync.RWMutex{},
 	}
 
@@ -239,7 +243,7 @@ func newState(
 		if bs.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == 0 {
 			continue
 		}
-		st.decommedBlockServices[id] = bs
+		st.decommedBlockServices[id] = bs.BlockServiceInfo
 	}
 	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
 	for _, k := range msgs.AllShuckleMessageKind {
@@ -300,7 +304,7 @@ type currentBlockServicesStats struct {
 type failureDomainInfo struct {
 	id            msgs.FailureDomain
 	bsIdx         int
-	blockServices []msgs.BlockServiceId
+	blockServices []msgs.BlockServiceInfoShort
 	shuffleHash   uint64
 }
 
@@ -339,8 +343,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	lastBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 	for {
 		newBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
-		location_id := msgs.Location(DEFAULT_LOCATION)
-		blockServicesMap, err := s.selectBlockServices(&location_id, nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
+		blockServicesMap, err := s.selectBlockServices(nil, nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
 		}
@@ -371,130 +374,153 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 		lastBlockServicesUsed = newBlockServicesUsed
 		updatesSkipped = 0
 
-		currentShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceId{}
+		currentShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceInfoShort{}
 
-		for _, storageClass := range []msgs.StorageClass{msgs.FLASH_STORAGE, msgs.HDD_STORAGE} {
-			// divide them by failure domain
-			blockServicesByFailureDomain := make(map[msgs.FailureDomain][]msgs.BlockServiceId)
-			failureDomains := []msgs.FailureDomain{}
-			stats := currentBlockServicesStats{
-				minBlockServicesPerShard:   len(blockServicesMap),
-				minTimesBlockServicePicked: 256,
-				maxTimesBlockServicePicked: 1,
+		locations := func() []msgs.Location {
+			var res []msgs.Location
+			rows, err := s.db.Query("SELECT id, name FROM location")
+			if err != nil {
+				return nil
 			}
-			pq := &failureDomainPQ{}
-			for _, bs := range blockServicesMap {
-				if bs.StorageClass != storageClass {
+			defer rows.Close()
+			for rows.Next() {
+				loc := msgs.LocationInfo{}
+				err = rows.Scan(&loc.Id, &loc.Name)
+				if err != nil {
+					return nil
+				}
+				res = append(res, loc.Id)
+			}
+			return res
+		}()
+		for _, locId := range locations {
+			for _, storageClass := range []msgs.StorageClass{msgs.FLASH_STORAGE, msgs.HDD_STORAGE} {
+				// divide them by failure domain
+				blockServicesByFailureDomain := make(map[msgs.FailureDomain][]msgs.BlockServiceInfoShort)
+				failureDomains := []msgs.FailureDomain{}
+				stats := currentBlockServicesStats{
+					minBlockServicesPerShard:   len(blockServicesMap),
+					minTimesBlockServicePicked: 256,
+					maxTimesBlockServicePicked: 1,
+				}
+				pq := &failureDomainPQ{}
+				for _, bs := range blockServicesMap {
+					if bs.StorageClass != storageClass || bs.LocationId != locId {
+						continue
+					}
+					blockServices, ok := blockServicesByFailureDomain[bs.FailureDomain]
+					if !ok {
+						failureDomains = append(failureDomains, bs.FailureDomain)
+					}
+					blockServicesByFailureDomain[bs.FailureDomain] = append(blockServices, msgs.BlockServiceInfoShort{locId, bs.FailureDomain, bs.Id, storageClass})
+					stats.blockServicesConsidered++
+				}
+
+				// check minimum number of failure domainsavailable.  we try to get at least 28 different if available
+				// we hard fail if there are less than 14
+				minFailureDomains := 28
+				if minFailureDomains > len(blockServicesByFailureDomain) {
+					minFailureDomains = len(blockServicesByFailureDomain)
+				}
+
+				if len(blockServicesByFailureDomain) < 14 {
+					if locId == DEFAULT_LOCATION {
+						log.RaiseAlert("could not pick block services for storage class %v. there are only %d failure domains and we need at least 14", storageClass, len(blockServicesByFailureDomain))
+					} else {
+						log.Info("could not pick block services for location %v and storage class %v. there are only %d failure domains and we need at least 14", locId, storageClass, len(blockServicesByFailureDomain))
+					}
 					continue
 				}
-				blockServices, ok := blockServicesByFailureDomain[bs.FailureDomain]
-				if !ok {
-					failureDomains = append(failureDomains, bs.FailureDomain)
-				}
-				blockServicesByFailureDomain[bs.FailureDomain] = append(blockServices, bs.Id)
-				stats.blockServicesConsidered++
-			}
 
-			// check minimum number of failure domainsavailable.  we try to get at least 28 different if available
-			// we hard fail if there are less than 14
-			minFailureDomains := 28
-			if minFailureDomains > len(blockServicesByFailureDomain) {
-				minFailureDomains = len(blockServicesByFailureDomain)
-			}
-
-			if len(blockServicesByFailureDomain) < 14 {
-				log.RaiseAlert("could not pick block services for storage class %v. there are only %d failure domains and we need at least 14", storageClass, len(blockServicesByFailureDomain))
-				continue
-			}
-
-			for _, failureDomain := range failureDomains {
-				blockServices := blockServicesByFailureDomain[failureDomain]
-				rand.Shuffle(len(blockServices), func(i, j int) {
-					blockServices[i], blockServices[j] = blockServices[j], blockServices[i]
-				})
-				pq.Push(&failureDomainInfo{failureDomain, 0, blockServices, rand.Uint64()})
-			}
-			heap.Init(pq)
-			perStorageClassShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceId{}
-			shardFailureDomainSet := map[shardFailureDomain]struct{}{}
-			blockServiceSet := map[msgs.BlockServiceId]int{}
-
-			// first populate all shards with minimum number of failure domains
-			for i := 0; i < 256; i++ {
-				currentBlockServices := []msgs.BlockServiceId{}
-				usedBlockServices := &failureDomainPQ{}
-				for j := 0; j < minFailureDomains; j++ {
-					failureDomain := heap.Pop(pq).(*failureDomainInfo)
-					blockServiceId := failureDomain.blockServices[failureDomain.bsIdx%len(failureDomain.blockServices)]
-					failureDomain.bsIdx++
-					currentBlockServices = append(currentBlockServices, blockServiceId)
-					shardFailureDomainSet[shardFailureDomain{msgs.ShardId(i), failureDomain.id}] = struct{}{}
-					usedBlockServices.Push(failureDomain)
-					if _, ok := blockServiceSet[blockServiceId]; !ok {
-						blockServiceSet[blockServiceId] = 1
-					} else {
-						blockServiceSet[blockServiceId] += 1
-						stats.maxTimesBlockServicePicked = max(blockServiceSet[blockServiceId], stats.maxTimesBlockServicePicked)
-						stats.duplicateBlockServicesAssigned++
-					}
-				}
-				perStorageClassShardBlockServices[msgs.ShardId(i)] = currentBlockServices
-				for usedBlockServices.Len() > 0 {
-					pq.Push(usedBlockServices.Pop())
+				for _, failureDomain := range failureDomains {
+					blockServices := blockServicesByFailureDomain[failureDomain]
+					rand.Shuffle(len(blockServices), func(i, j int) {
+						blockServices[i], blockServices[j] = blockServices[j], blockServices[i]
+					})
+					pq.Push(&failureDomainInfo{failureDomain, 0, blockServices, rand.Uint64()})
 				}
 				heap.Init(pq)
-			}
-			for _, failureDomain := range *pq {
-				blockServices := failureDomain.blockServices
-				candidateBsIdx := failureDomain.bsIdx
-				if candidateBsIdx >= len(blockServices) {
-					continue
-				}
-				candidateShards := []shardBlockServiceCount{}
+				perStorageClassShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceInfoShort{}
+				shardFailureDomainSet := map[shardFailureDomain]struct{}{}
+				blockServiceSet := map[msgs.BlockServiceId]int{}
+
+				// first populate all shards with minimum number of failure domains
 				for i := 0; i < 256; i++ {
-					if _, ok := shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain.id}]; !ok && len(perStorageClassShardBlockServices[msgs.ShardId(i)]) < s.config.maxFailureDomainsPerShard {
-						candidateShards = append(candidateShards, shardBlockServiceCount{shard: msgs.ShardId(i), count: len(perStorageClassShardBlockServices[msgs.ShardId(i)])})
+					currentBlockServices := []msgs.BlockServiceInfoShort{}
+					usedBlockServices := &failureDomainPQ{}
+					for j := 0; j < minFailureDomains; j++ {
+						failureDomain := heap.Pop(pq).(*failureDomainInfo)
+						blockServiceInfo := failureDomain.blockServices[failureDomain.bsIdx%len(failureDomain.blockServices)]
+						failureDomain.bsIdx++
+						currentBlockServices = append(currentBlockServices, blockServiceInfo)
+						shardFailureDomainSet[shardFailureDomain{msgs.ShardId(i), failureDomain.id}] = struct{}{}
+						usedBlockServices.Push(failureDomain)
+						if _, ok := blockServiceSet[blockServiceInfo.Id]; !ok {
+							blockServiceSet[blockServiceInfo.Id] = 1
+						} else {
+							blockServiceSet[blockServiceInfo.Id] += 1
+							stats.maxTimesBlockServicePicked = max(blockServiceSet[blockServiceInfo.Id], stats.maxTimesBlockServicePicked)
+							stats.duplicateBlockServicesAssigned++
+						}
 					}
+					perStorageClassShardBlockServices[msgs.ShardId(i)] = currentBlockServices
+					for usedBlockServices.Len() > 0 {
+						pq.Push(usedBlockServices.Pop())
+					}
+					heap.Init(pq)
 				}
-				sort.Slice(candidateShards, func(i, j int) bool { return candidateShards[i].count < candidateShards[j].count })
-
-				for _, shard := range candidateShards {
+				for _, failureDomain := range *pq {
+					blockServices := failureDomain.blockServices
+					candidateBsIdx := failureDomain.bsIdx
 					if candidateBsIdx >= len(blockServices) {
-						break
+						continue
 					}
-					blockServiceId := blockServices[candidateBsIdx]
-					if _, ok := blockServiceSet[blockServiceId]; !ok {
-						blockServiceSet[blockServiceId] = 1
-					} else {
-						panic(fmt.Sprintf("duplicate block service %s, this should not happen in this part of assigment", blockServiceId))
+					candidateShards := []shardBlockServiceCount{}
+					for i := 0; i < 256; i++ {
+						if _, ok := shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain.id}]; !ok && len(perStorageClassShardBlockServices[msgs.ShardId(i)]) < s.config.maxFailureDomainsPerShard {
+							candidateShards = append(candidateShards, shardBlockServiceCount{shard: msgs.ShardId(i), count: len(perStorageClassShardBlockServices[msgs.ShardId(i)])})
+						}
 					}
-					perStorageClassShardBlockServices[shard.shard] = append(perStorageClassShardBlockServices[shard.shard], blockServices[candidateBsIdx])
-					candidateBsIdx++
-					shardFailureDomainSet[shardFailureDomain{shard: shard.shard, domain: failureDomain.id}] = struct{}{}
-				}
-			}
-			for shard, blockServices := range perStorageClassShardBlockServices {
-				if len(blockServices) > stats.maxBlockServicesPerShard {
-					stats.maxBlockServicesPerShard = len(blockServices)
-				}
-				if len(blockServices) < stats.minBlockServicesPerShard {
-					stats.minBlockServicesPerShard = len(blockServices)
-				}
-				currentShardBlockServices[shard] = append(currentShardBlockServices[shard], blockServices...)
-			}
+					sort.Slice(candidateShards, func(i, j int) bool { return candidateShards[i].count < candidateShards[j].count })
 
-			for _, count := range blockServiceSet {
-				stats.minTimesBlockServicePicked = min(count, stats.minTimesBlockServicePicked)
-			}
-			if stats.minTimesBlockServicePicked *5 < stats.maxTimesBlockServicePicked {
-				log.RaiseAlert("hot spotting block services in storage class %v. Min times picked: %d, max times picked: %d", storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
-			}
-			if stats.minTimesBlockServicePicked > 10 {
-				log.RaiseAlert("high load on block services in storage class %v. Min times picked: %d", storageClass, stats.minTimesBlockServicePicked)
-			}
+					for _, shard := range candidateShards {
+						if candidateBsIdx >= len(blockServices) {
+							break
+						}
+						blockServiceInfo := blockServices[candidateBsIdx]
+						if _, ok := blockServiceSet[blockServiceInfo.Id]; !ok {
+							blockServiceSet[blockServiceInfo.Id] = 1
+						} else {
+							panic(fmt.Sprintf("duplicate block service %s, this should not happen in this part of assigment", blockServiceInfo.Id))
+						}
+						perStorageClassShardBlockServices[shard.shard] = append(perStorageClassShardBlockServices[shard.shard], blockServices[candidateBsIdx])
+						candidateBsIdx++
+						shardFailureDomainSet[shardFailureDomain{shard: shard.shard, domain: failureDomain.id}] = struct{}{}
+					}
+				}
+				for shard, blockServices := range perStorageClassShardBlockServices {
+					if len(blockServices) > stats.maxBlockServicesPerShard {
+						stats.maxBlockServicesPerShard = len(blockServices)
+					}
+					if len(blockServices) < stats.minBlockServicesPerShard {
+						stats.minBlockServicesPerShard = len(blockServices)
+					}
+					currentShardBlockServices[shard] = append(currentShardBlockServices[shard], blockServices...)
+				}
 
-			log.Info("finished calculating current block services for storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d}",
-				storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+				for _, count := range blockServiceSet {
+					stats.minTimesBlockServicePicked = min(count, stats.minTimesBlockServicePicked)
+				}
+				if stats.minTimesBlockServicePicked *5 < stats.maxTimesBlockServicePicked {
+					log.RaiseAlert("hot spotting block services in location %v, storage class %v. Min times picked: %d, max times picked: %d", locId, storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+				}
+				if stats.minTimesBlockServicePicked > 10 {
+					log.RaiseAlert("high load on block services in location %v, storage class %v. Min times picked: %d", locId, storageClass, stats.minTimesBlockServicePicked)
+				}
+
+				log.Info("finished calculating current block services for location %v, storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d}",
+					locId, storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+			}
 		}
 		s.currentShardBlockServicesMu.Lock()
 		s.currentShardBlockServices = currentShardBlockServices
@@ -513,7 +539,7 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 	resp.BlockServices = make([]msgs.BlockServiceInfo, len(blockServices))
 	i := 0
 	for _, bs := range blockServices {
-		resp.BlockServices[i] = bs
+		resp.BlockServices[i] = bs.BlockServiceInfo
 		i++
 	}
 
@@ -549,33 +575,6 @@ func handleChangedBlockServicesAtLocation(ll *lib.Logger, s *state, req *msgs.Ch
 		i++
 	}
 	return &resp, nil
-}
-
-func handleRegisterBlockServicesDEPRECATED(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesDEPRECATEDReq) (*msgs.RegisterBlockServicesDEPRECATEDResp, error) {
-	newReq := &msgs.RegisterBlockServicesReq{}
-	for _, bs := range req.BlockServices {
-		newReq.BlockServices = append(
-			newReq.BlockServices,
-			msgs.RegisterBlockServiceInfo{
-				Id:             bs.Id,
-				LocationId:     0,
-				Addrs:          bs.Addrs,
-				StorageClass:   bs.StorageClass,
-				FailureDomain:  bs.FailureDomain,
-				SecretKey:      bs.SecretKey,
-				Flags:          bs.Flags,
-				FlagsMask:      bs.FlagsMask,
-				CapacityBytes:  bs.CapacityBytes,
-				AvailableBytes: bs.AvailableBytes,
-				Blocks:         bs.Blocks,
-				Path:           bs.Path,
-			})
-	}
-	_, err := handleRegisterBlockServices(ll, s, newReq)
-	if err != nil {
-		return nil, err
-	}
-	return &msgs.RegisterBlockServicesDEPRECATEDResp{}, nil
 }
 
 func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
@@ -825,7 +824,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 		if err != nil {
 			ll.RaiseAlert("couldnt select block service after decommissioning")
 		} else {
-			s.decommedBlockServices[req.Id] = bs[req.Id]
+			s.decommedBlockServices[req.Id] = bs[req.Id].BlockServiceInfo
 		}
 	}
 	return &msgs.SetBlockServiceFlagsResp{}, nil
@@ -1137,6 +1136,23 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 	return resp, nil
 }
 
+func handleShardBlockServicesDEPRECATED(log *lib.Logger, s *state, req *msgs.ShardBlockServicesDEPRECATEDReq) (*msgs.ShardBlockServicesDEPRECATEDResp, error) {
+	resp, err := handleShardBlockServices(log, s, &msgs.ShardBlockServicesReq{req.ShardId})
+	if err != nil {
+		return nil, err
+	}
+	deprecatedResp := &msgs.ShardBlockServicesDEPRECATEDResp{}
+	for _, bs := range resp.BlockServices {
+		if bs.LocationId != 0 {
+			continue
+		}
+		deprecatedResp.BlockServices = append(deprecatedResp.BlockServices, bs.Id)
+	}
+	return deprecatedResp, nil
+}
+
+
+
 func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
 	s.currentShardBlockServicesMu.RLock()
 	defer s.currentShardBlockServicesMu.RUnlock()
@@ -1332,8 +1348,6 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 	var err error
 	var resp msgs.ShuckleResponse
 	switch whichReq := req.(type) {
-	case *msgs.RegisterBlockServicesDEPRECATEDReq:
-		resp, err = handleRegisterBlockServicesDEPRECATED(log, s, whichReq)
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleSetBlockServiceFlags(log, s, whichReq)
 	case *msgs.DecommissionBlockServiceReq:
@@ -1360,8 +1374,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleInfoReq(log, s, whichReq)
 	case *msgs.ShuckleReq:
 		resp, err = handleShuckle(log, s)
-	case *msgs.ShardBlockServicesReq:
-		resp, err = handleShardBlockServices(log, s, whichReq)
+	case *msgs.ShardBlockServicesDEPRECATEDReq:
+		resp, err = handleShardBlockServicesDEPRECATED(log, s, whichReq)
 	case *msgs.MoveShardLeaderReq:
 		resp, err = handleMoveShardLeader(log, s, whichReq)
 	case *msgs.ClearShardInfoReq:
@@ -1386,6 +1400,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleChangedBlockServicesAtLocation(log, s, whichReq)
 	case *msgs.ShardsAtLocationReq:
 		resp, err = handleShardsAtLocation(log, s, whichReq)
+	case *msgs.ShardBlockServicesReq:
+		resp, err = handleShardBlockServices(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -1502,8 +1518,6 @@ func readShuckleRequest(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		req = &msgs.RegisterBlockServicesDEPRECATEDReq{}
 	case msgs.LOCAL_SHARDS:
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
@@ -1526,8 +1540,8 @@ func readShuckleRequest(
 		req = &msgs.InfoReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
-	case msgs.SHARD_BLOCK_SERVICES:
-		req = &msgs.ShardBlockServicesReq{}
+	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		req = &msgs.ShardBlockServicesDEPRECATEDReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
 	case msgs.ALL_CDC:
@@ -1556,6 +1570,8 @@ func readShuckleRequest(
 		req = &msgs.ChangedBlockServicesAtLocationReq{}
 	case msgs.SHARDS_AT_LOCATION:
 		req = &msgs.ShardsAtLocationReq{}
+	case msgs.SHARD_BLOCK_SERVICES:
+		req = &msgs.ShardBlockServicesReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}
@@ -2081,8 +2097,8 @@ func handleInode(
 					data.DownloadLink = fmt.Sprintf("%s?name=%s", data.DownloadLink, data.PathSegments[len(data.PathSegments)-1].Segment)
 				}
 				{
-					req := msgs.FileSpansReq{FileId: id}
-					resp := msgs.FileSpansResp{}
+					req := msgs.LocalFileSpansReq{FileId: id}
+					resp := msgs.LocalFileSpansResp{}
 					blockServiceToHosts := make(map[msgs.BlockServiceId]string)
 					for {
 						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {

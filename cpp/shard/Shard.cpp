@@ -307,6 +307,7 @@ static bool bigResponse(ShardMessageKind kind) {
     return unlikely(
         kind == ShardMessageKind::READ_DIR ||
         kind == ShardMessageKind::ADD_SPAN_INITIATE ||
+        kind == ShardMessageKind::LOCAL_FILE_SPANS ||
         kind == ShardMessageKind::FILE_SPANS ||
         kind == ShardMessageKind::VISIT_DIRECTORIES ||
         kind == ShardMessageKind::VISIT_FILES ||

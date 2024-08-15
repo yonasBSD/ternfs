@@ -301,8 +301,8 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         out << "SOFT_UNLINK_FILE";
         break;
-    case ShardMessageKind::FILE_SPANS:
-        out << "FILE_SPANS";
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        out << "LOCAL_FILE_SPANS";
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         out << "SAME_DIRECTORY_RENAME";
@@ -330,6 +330,12 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
         break;
     case ShardMessageKind::SHARD_SNAPSHOT:
         out << "SHARD_SNAPSHOT";
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        out << "FILE_SPANS";
+        break;
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        out << "ADD_SPAN_LOCATION";
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         out << "SET_DIRECTORY_INFO";
@@ -369,6 +375,9 @@ std::ostream& operator<<(std::ostream& out, ShardMessageKind kind) {
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         out << "SAME_DIRECTORY_RENAME_SNAPSHOT";
+        break;
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        out << "ADD_SPAN_AT_LOCATION_INITIATE";
         break;
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         out << "CREATE_DIRECTORY_INODE";
@@ -490,8 +499,8 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         out << "CDC_AT_LOCATION";
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        out << "SHARD_BLOCK_SERVICES";
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        out << "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED";
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         out << "CDC_REPLICAS_DE_PR_EC_AT_ED";
@@ -508,8 +517,8 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         out << "CLEAR_SHARD_INFO";
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        out << "REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED";
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        out << "SHARD_BLOCK_SERVICES";
         break;
     case ShuckleMessageKind::ALL_CDC:
         out << "ALL_CDC";
@@ -1008,6 +1017,96 @@ std::ostream& operator<<(std::ostream& out, const FetchedBlocksSpan& x) {
     return out;
 }
 
+void FetchedBlockServices::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(locationId);
+    buf.packScalar<uint8_t>(storageClass);
+    parity.pack(buf);
+    buf.packScalar<uint8_t>(stripes);
+    buf.packScalar<uint32_t>(cellSize);
+    buf.packList<FetchedBlock>(blocks);
+    buf.packList<Crc>(stripesCrc);
+}
+void FetchedBlockServices::unpack(BincodeBuf& buf) {
+    locationId = buf.unpackScalar<uint8_t>();
+    storageClass = buf.unpackScalar<uint8_t>();
+    parity.unpack(buf);
+    stripes = buf.unpackScalar<uint8_t>();
+    cellSize = buf.unpackScalar<uint32_t>();
+    buf.unpackList<FetchedBlock>(blocks);
+    buf.unpackList<Crc>(stripesCrc);
+}
+void FetchedBlockServices::clear() {
+    locationId = uint8_t(0);
+    storageClass = uint8_t(0);
+    parity = Parity();
+    stripes = uint8_t(0);
+    cellSize = uint32_t(0);
+    blocks.clear();
+    stripesCrc.clear();
+}
+bool FetchedBlockServices::operator==(const FetchedBlockServices& rhs) const {
+    if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if ((Parity)this->parity != (Parity)rhs.parity) { return false; };
+    if ((uint8_t)this->stripes != (uint8_t)rhs.stripes) { return false; };
+    if ((uint32_t)this->cellSize != (uint32_t)rhs.cellSize) { return false; };
+    if (blocks != rhs.blocks) { return false; };
+    if (stripesCrc != rhs.stripesCrc) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FetchedBlockServices& x) {
+    out << "FetchedBlockServices(" << "LocationId=" << (int)x.locationId << ", " << "StorageClass=" << (int)x.storageClass << ", " << "Parity=" << x.parity << ", " << "Stripes=" << (int)x.stripes << ", " << "CellSize=" << x.cellSize << ", " << "Blocks=" << x.blocks << ", " << "StripesCrc=" << x.stripesCrc << ")";
+    return out;
+}
+
+void FetchedLocations::pack(BincodeBuf& buf) const {
+    buf.packList<FetchedBlockServices>(locations);
+}
+void FetchedLocations::unpack(BincodeBuf& buf) {
+    buf.unpackList<FetchedBlockServices>(locations);
+}
+void FetchedLocations::clear() {
+    locations.clear();
+}
+bool FetchedLocations::operator==(const FetchedLocations& rhs) const {
+    if (locations != rhs.locations) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FetchedLocations& x) {
+    out << "FetchedLocations(" << "Locations=" << x.locations << ")";
+    return out;
+}
+
+void FetchedSpanHeaderFull::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(byteOffset);
+    buf.packScalar<uint32_t>(size);
+    crc.pack(buf);
+    buf.packScalar<bool>(isInline);
+}
+void FetchedSpanHeaderFull::unpack(BincodeBuf& buf) {
+    byteOffset = buf.unpackScalar<uint64_t>();
+    size = buf.unpackScalar<uint32_t>();
+    crc.unpack(buf);
+    isInline = buf.unpackScalar<bool>();
+}
+void FetchedSpanHeaderFull::clear() {
+    byteOffset = uint64_t(0);
+    size = uint32_t(0);
+    crc = Crc(0);
+    isInline = bool(0);
+}
+bool FetchedSpanHeaderFull::operator==(const FetchedSpanHeaderFull& rhs) const {
+    if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if ((uint32_t)this->size != (uint32_t)rhs.size) { return false; };
+    if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
+    if ((bool)this->isInline != (bool)rhs.isInline) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FetchedSpanHeaderFull& x) {
+    out << "FetchedSpanHeaderFull(" << "ByteOffset=" << x.byteOffset << ", " << "Size=" << x.size << ", " << "Crc=" << x.crc << ", " << "IsInline=" << x.isInline << ")";
+    return out;
+}
+
 void BlacklistEntry::pack(BincodeBuf& buf) const {
     failureDomain.pack(buf);
     blockService.pack(buf);
@@ -1204,6 +1303,36 @@ std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
     return out;
 }
 
+void BlockServiceInfoShort::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(locationId);
+    failureDomain.pack(buf);
+    id.pack(buf);
+    buf.packScalar<uint8_t>(storageClass);
+}
+void BlockServiceInfoShort::unpack(BincodeBuf& buf) {
+    locationId = buf.unpackScalar<uint8_t>();
+    failureDomain.unpack(buf);
+    id.unpack(buf);
+    storageClass = buf.unpackScalar<uint8_t>();
+}
+void BlockServiceInfoShort::clear() {
+    locationId = uint8_t(0);
+    failureDomain.clear();
+    id = BlockServiceId(0);
+    storageClass = uint8_t(0);
+}
+bool BlockServiceInfoShort::operator==(const BlockServiceInfoShort& rhs) const {
+    if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
+    if (failureDomain != rhs.failureDomain) { return false; };
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceInfoShort& x) {
+    out << "BlockServiceInfoShort(" << "LocationId=" << (int)x.locationId << ", " << "FailureDomain=" << x.failureDomain << ", " << "Id=" << x.id << ", " << "StorageClass=" << (int)x.storageClass << ")";
+    return out;
+}
+
 void SpanPolicy::pack(BincodeBuf& buf) const {
     buf.packList<SpanPolicyEntry>(entries);
 }
@@ -1293,64 +1422,6 @@ bool FullShardInfo::operator==(const FullShardInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const FullShardInfo& x) {
     out << "FullShardInfo(" << "Id=" << x.id << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ", " << "LastSeen=" << x.lastSeen << ", " << "LocationId=" << (int)x.locationId << ")";
-    return out;
-}
-
-void RegisterBlockServiceInfoDEPRECATED::pack(BincodeBuf& buf) const {
-    id.pack(buf);
-    addrs.pack(buf);
-    buf.packScalar<uint8_t>(storageClass);
-    failureDomain.pack(buf);
-    buf.packFixedBytes<16>(secretKey);
-    buf.packScalar<uint8_t>(flags);
-    buf.packScalar<uint8_t>(flagsMask);
-    buf.packScalar<uint64_t>(capacityBytes);
-    buf.packScalar<uint64_t>(availableBytes);
-    buf.packScalar<uint64_t>(blocks);
-    buf.packBytes(path);
-}
-void RegisterBlockServiceInfoDEPRECATED::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
-    addrs.unpack(buf);
-    storageClass = buf.unpackScalar<uint8_t>();
-    failureDomain.unpack(buf);
-    buf.unpackFixedBytes<16>(secretKey);
-    flags = buf.unpackScalar<uint8_t>();
-    flagsMask = buf.unpackScalar<uint8_t>();
-    capacityBytes = buf.unpackScalar<uint64_t>();
-    availableBytes = buf.unpackScalar<uint64_t>();
-    blocks = buf.unpackScalar<uint64_t>();
-    buf.unpackBytes(path);
-}
-void RegisterBlockServiceInfoDEPRECATED::clear() {
-    id = BlockServiceId(0);
-    addrs.clear();
-    storageClass = uint8_t(0);
-    failureDomain.clear();
-    secretKey.clear();
-    flags = uint8_t(0);
-    flagsMask = uint8_t(0);
-    capacityBytes = uint64_t(0);
-    availableBytes = uint64_t(0);
-    blocks = uint64_t(0);
-    path.clear();
-}
-bool RegisterBlockServiceInfoDEPRECATED::operator==(const RegisterBlockServiceInfoDEPRECATED& rhs) const {
-    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
-    if (addrs != rhs.addrs) { return false; };
-    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
-    if (failureDomain != rhs.failureDomain) { return false; };
-    if (secretKey != rhs.secretKey) { return false; };
-    if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
-    if ((uint8_t)this->flagsMask != (uint8_t)rhs.flagsMask) { return false; };
-    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
-    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
-    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
-    if (path != rhs.path) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfoDEPRECATED& x) {
-    out << "RegisterBlockServiceInfoDEPRECATED(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "FlagsMask=" << (int)x.flagsMask << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ")";
     return out;
 }
 
@@ -1912,59 +1983,59 @@ std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileResp& x) {
     return out;
 }
 
-void FileSpansReq::pack(BincodeBuf& buf) const {
+void LocalFileSpansReq::pack(BincodeBuf& buf) const {
     fileId.pack(buf);
     buf.packScalar<uint64_t>(byteOffset);
     buf.packScalar<uint32_t>(limit);
     buf.packScalar<uint16_t>(mtu);
 }
-void FileSpansReq::unpack(BincodeBuf& buf) {
+void LocalFileSpansReq::unpack(BincodeBuf& buf) {
     fileId.unpack(buf);
     byteOffset = buf.unpackScalar<uint64_t>();
     limit = buf.unpackScalar<uint32_t>();
     mtu = buf.unpackScalar<uint16_t>();
 }
-void FileSpansReq::clear() {
+void LocalFileSpansReq::clear() {
     fileId = InodeId();
     byteOffset = uint64_t(0);
     limit = uint32_t(0);
     mtu = uint16_t(0);
 }
-bool FileSpansReq::operator==(const FileSpansReq& rhs) const {
+bool LocalFileSpansReq::operator==(const LocalFileSpansReq& rhs) const {
     if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
     if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
     if ((uint32_t)this->limit != (uint32_t)rhs.limit) { return false; };
     if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const FileSpansReq& x) {
-    out << "FileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Limit=" << x.limit << ", " << "Mtu=" << x.mtu << ")";
+std::ostream& operator<<(std::ostream& out, const LocalFileSpansReq& x) {
+    out << "LocalFileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Limit=" << x.limit << ", " << "Mtu=" << x.mtu << ")";
     return out;
 }
 
-void FileSpansResp::pack(BincodeBuf& buf) const {
+void LocalFileSpansResp::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(nextOffset);
     buf.packList<BlockService>(blockServices);
     buf.packList<FetchedSpan>(spans);
 }
-void FileSpansResp::unpack(BincodeBuf& buf) {
+void LocalFileSpansResp::unpack(BincodeBuf& buf) {
     nextOffset = buf.unpackScalar<uint64_t>();
     buf.unpackList<BlockService>(blockServices);
     buf.unpackList<FetchedSpan>(spans);
 }
-void FileSpansResp::clear() {
+void LocalFileSpansResp::clear() {
     nextOffset = uint64_t(0);
     blockServices.clear();
     spans.clear();
 }
-bool FileSpansResp::operator==(const FileSpansResp& rhs) const {
+bool LocalFileSpansResp::operator==(const LocalFileSpansResp& rhs) const {
     if ((uint64_t)this->nextOffset != (uint64_t)rhs.nextOffset) { return false; };
     if (blockServices != rhs.blockServices) { return false; };
     if (spans != rhs.spans) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const FileSpansResp& x) {
-    out << "FileSpansResp(" << "NextOffset=" << x.nextOffset << ", " << "BlockServices=" << x.blockServices << ", " << "Spans=" << x.spans << ")";
+std::ostream& operator<<(std::ostream& out, const LocalFileSpansResp& x) {
+    out << "LocalFileSpansResp(" << "NextOffset=" << x.nextOffset << ", " << "BlockServices=" << x.blockServices << ", " << "Spans=" << x.spans << ")";
     return out;
 }
 
@@ -2393,6 +2464,110 @@ bool ShardSnapshotResp::operator==(const ShardSnapshotResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const ShardSnapshotResp& x) {
     out << "ShardSnapshotResp(" << ")";
+    return out;
+}
+
+void FileSpansReq::pack(BincodeBuf& buf) const {
+    fileId.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset);
+    buf.packScalar<uint32_t>(limit);
+    buf.packScalar<uint16_t>(mtu);
+}
+void FileSpansReq::unpack(BincodeBuf& buf) {
+    fileId.unpack(buf);
+    byteOffset = buf.unpackScalar<uint64_t>();
+    limit = buf.unpackScalar<uint32_t>();
+    mtu = buf.unpackScalar<uint16_t>();
+}
+void FileSpansReq::clear() {
+    fileId = InodeId();
+    byteOffset = uint64_t(0);
+    limit = uint32_t(0);
+    mtu = uint16_t(0);
+}
+bool FileSpansReq::operator==(const FileSpansReq& rhs) const {
+    if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
+    if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if ((uint32_t)this->limit != (uint32_t)rhs.limit) { return false; };
+    if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FileSpansReq& x) {
+    out << "FileSpansReq(" << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Limit=" << x.limit << ", " << "Mtu=" << x.mtu << ")";
+    return out;
+}
+
+void FileSpansResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(nextOffset);
+    buf.packList<BlockService>(blockServices);
+    buf.packList<FetchedFullSpan>(spans);
+}
+void FileSpansResp::unpack(BincodeBuf& buf) {
+    nextOffset = buf.unpackScalar<uint64_t>();
+    buf.unpackList<BlockService>(blockServices);
+    buf.unpackList<FetchedFullSpan>(spans);
+}
+void FileSpansResp::clear() {
+    nextOffset = uint64_t(0);
+    blockServices.clear();
+    spans.clear();
+}
+bool FileSpansResp::operator==(const FileSpansResp& rhs) const {
+    if ((uint64_t)this->nextOffset != (uint64_t)rhs.nextOffset) { return false; };
+    if (blockServices != rhs.blockServices) { return false; };
+    if (spans != rhs.spans) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const FileSpansResp& x) {
+    out << "FileSpansResp(" << "NextOffset=" << x.nextOffset << ", " << "BlockServices=" << x.blockServices << ", " << "Spans=" << x.spans << ")";
+    return out;
+}
+
+void AddSpanLocationReq::pack(BincodeBuf& buf) const {
+    fileId1.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset1);
+    buf.packList<uint64_t>(blocks1);
+    fileId2.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset2);
+}
+void AddSpanLocationReq::unpack(BincodeBuf& buf) {
+    fileId1.unpack(buf);
+    byteOffset1 = buf.unpackScalar<uint64_t>();
+    buf.unpackList<uint64_t>(blocks1);
+    fileId2.unpack(buf);
+    byteOffset2 = buf.unpackScalar<uint64_t>();
+}
+void AddSpanLocationReq::clear() {
+    fileId1 = InodeId();
+    byteOffset1 = uint64_t(0);
+    blocks1.clear();
+    fileId2 = InodeId();
+    byteOffset2 = uint64_t(0);
+}
+bool AddSpanLocationReq::operator==(const AddSpanLocationReq& rhs) const {
+    if ((InodeId)this->fileId1 != (InodeId)rhs.fileId1) { return false; };
+    if ((uint64_t)this->byteOffset1 != (uint64_t)rhs.byteOffset1) { return false; };
+    if (blocks1 != rhs.blocks1) { return false; };
+    if ((InodeId)this->fileId2 != (InodeId)rhs.fileId2) { return false; };
+    if ((uint64_t)this->byteOffset2 != (uint64_t)rhs.byteOffset2) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanLocationReq& x) {
+    out << "AddSpanLocationReq(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "Blocks1=" << x.blocks1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ")";
+    return out;
+}
+
+void AddSpanLocationResp::pack(BincodeBuf& buf) const {
+}
+void AddSpanLocationResp::unpack(BincodeBuf& buf) {
+}
+void AddSpanLocationResp::clear() {
+}
+bool AddSpanLocationResp::operator==(const AddSpanLocationResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanLocationResp& x) {
+    out << "AddSpanLocationResp(" << ")";
     return out;
 }
 
@@ -2965,6 +3140,46 @@ bool SameDirectoryRenameSnapshotResp::operator==(const SameDirectoryRenameSnapsh
 }
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameSnapshotResp& x) {
     out << "SameDirectoryRenameSnapshotResp(" << "NewCreationTime=" << x.newCreationTime << ")";
+    return out;
+}
+
+void AddSpanAtLocationInitiateReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(locationId);
+    req.pack(buf);
+}
+void AddSpanAtLocationInitiateReq::unpack(BincodeBuf& buf) {
+    locationId = buf.unpackScalar<uint8_t>();
+    req.unpack(buf);
+}
+void AddSpanAtLocationInitiateReq::clear() {
+    locationId = uint8_t(0);
+    req.clear();
+}
+bool AddSpanAtLocationInitiateReq::operator==(const AddSpanAtLocationInitiateReq& rhs) const {
+    if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
+    if (req != rhs.req) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanAtLocationInitiateReq& x) {
+    out << "AddSpanAtLocationInitiateReq(" << "LocationId=" << (int)x.locationId << ", " << "Req=" << x.req << ")";
+    return out;
+}
+
+void AddSpanAtLocationInitiateResp::pack(BincodeBuf& buf) const {
+    resp.pack(buf);
+}
+void AddSpanAtLocationInitiateResp::unpack(BincodeBuf& buf) {
+    resp.unpack(buf);
+}
+void AddSpanAtLocationInitiateResp::clear() {
+    resp.clear();
+}
+bool AddSpanAtLocationInitiateResp::operator==(const AddSpanAtLocationInitiateResp& rhs) const {
+    if (resp != rhs.resp) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanAtLocationInitiateResp& x) {
+    out << "AddSpanAtLocationInitiateResp(" << "Resp=" << x.resp << ")";
     return out;
 }
 
@@ -4184,39 +4399,39 @@ std::ostream& operator<<(std::ostream& out, const CdcAtLocationResp& x) {
     return out;
 }
 
-void ShardBlockServicesReq::pack(BincodeBuf& buf) const {
+void ShardBlockServicesDEPRECATEDReq::pack(BincodeBuf& buf) const {
     shardId.pack(buf);
 }
-void ShardBlockServicesReq::unpack(BincodeBuf& buf) {
+void ShardBlockServicesDEPRECATEDReq::unpack(BincodeBuf& buf) {
     shardId.unpack(buf);
 }
-void ShardBlockServicesReq::clear() {
+void ShardBlockServicesDEPRECATEDReq::clear() {
     shardId = ShardId();
 }
-bool ShardBlockServicesReq::operator==(const ShardBlockServicesReq& rhs) const {
+bool ShardBlockServicesDEPRECATEDReq::operator==(const ShardBlockServicesDEPRECATEDReq& rhs) const {
     if ((ShardId)this->shardId != (ShardId)rhs.shardId) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const ShardBlockServicesReq& x) {
-    out << "ShardBlockServicesReq(" << "ShardId=" << x.shardId << ")";
+std::ostream& operator<<(std::ostream& out, const ShardBlockServicesDEPRECATEDReq& x) {
+    out << "ShardBlockServicesDEPRECATEDReq(" << "ShardId=" << x.shardId << ")";
     return out;
 }
 
-void ShardBlockServicesResp::pack(BincodeBuf& buf) const {
+void ShardBlockServicesDEPRECATEDResp::pack(BincodeBuf& buf) const {
     buf.packList<BlockServiceId>(blockServices);
 }
-void ShardBlockServicesResp::unpack(BincodeBuf& buf) {
+void ShardBlockServicesDEPRECATEDResp::unpack(BincodeBuf& buf) {
     buf.unpackList<BlockServiceId>(blockServices);
 }
-void ShardBlockServicesResp::clear() {
+void ShardBlockServicesDEPRECATEDResp::clear() {
     blockServices.clear();
 }
-bool ShardBlockServicesResp::operator==(const ShardBlockServicesResp& rhs) const {
+bool ShardBlockServicesDEPRECATEDResp::operator==(const ShardBlockServicesDEPRECATEDResp& rhs) const {
     if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x) {
-    out << "ShardBlockServicesResp(" << "BlockServices=" << x.blockServices << ")";
+std::ostream& operator<<(std::ostream& out, const ShardBlockServicesDEPRECATEDResp& x) {
+    out << "ShardBlockServicesDEPRECATEDResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -4388,35 +4603,39 @@ std::ostream& operator<<(std::ostream& out, const ClearShardInfoResp& x) {
     return out;
 }
 
-void RegisterBlockServicesDEPRECATEDReq::pack(BincodeBuf& buf) const {
-    buf.packList<RegisterBlockServiceInfoDEPRECATED>(blockServices);
+void ShardBlockServicesReq::pack(BincodeBuf& buf) const {
+    shardId.pack(buf);
 }
-void RegisterBlockServicesDEPRECATEDReq::unpack(BincodeBuf& buf) {
-    buf.unpackList<RegisterBlockServiceInfoDEPRECATED>(blockServices);
+void ShardBlockServicesReq::unpack(BincodeBuf& buf) {
+    shardId.unpack(buf);
 }
-void RegisterBlockServicesDEPRECATEDReq::clear() {
-    blockServices.clear();
+void ShardBlockServicesReq::clear() {
+    shardId = ShardId();
 }
-bool RegisterBlockServicesDEPRECATEDReq::operator==(const RegisterBlockServicesDEPRECATEDReq& rhs) const {
-    if (blockServices != rhs.blockServices) { return false; };
+bool ShardBlockServicesReq::operator==(const ShardBlockServicesReq& rhs) const {
+    if ((ShardId)this->shardId != (ShardId)rhs.shardId) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesDEPRECATEDReq& x) {
-    out << "RegisterBlockServicesDEPRECATEDReq(" << "BlockServices=" << x.blockServices << ")";
+std::ostream& operator<<(std::ostream& out, const ShardBlockServicesReq& x) {
+    out << "ShardBlockServicesReq(" << "ShardId=" << x.shardId << ")";
     return out;
 }
 
-void RegisterBlockServicesDEPRECATEDResp::pack(BincodeBuf& buf) const {
+void ShardBlockServicesResp::pack(BincodeBuf& buf) const {
+    buf.packList<BlockServiceInfoShort>(blockServices);
 }
-void RegisterBlockServicesDEPRECATEDResp::unpack(BincodeBuf& buf) {
+void ShardBlockServicesResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<BlockServiceInfoShort>(blockServices);
 }
-void RegisterBlockServicesDEPRECATEDResp::clear() {
+void ShardBlockServicesResp::clear() {
+    blockServices.clear();
 }
-bool RegisterBlockServicesDEPRECATEDResp::operator==(const RegisterBlockServicesDEPRECATEDResp& rhs) const {
+bool ShardBlockServicesResp::operator==(const ShardBlockServicesResp& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesDEPRECATEDResp& x) {
-    out << "RegisterBlockServicesDEPRECATEDResp(" << ")";
+std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x) {
+    out << "ShardBlockServicesResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -5265,12 +5484,12 @@ SoftUnlinkFileReq& ShardReqContainer::setSoftUnlinkFile() {
     auto& x = _data.emplace<8>();
     return x;
 }
-const FileSpansReq& ShardReqContainer::getFileSpans() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::FILE_SPANS, "%s != %s", _kind, ShardMessageKind::FILE_SPANS);
+const LocalFileSpansReq& ShardReqContainer::getLocalFileSpans() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::LOCAL_FILE_SPANS, "%s != %s", _kind, ShardMessageKind::LOCAL_FILE_SPANS);
     return std::get<9>(_data);
 }
-FileSpansReq& ShardReqContainer::setFileSpans() {
-    _kind = ShardMessageKind::FILE_SPANS;
+LocalFileSpansReq& ShardReqContainer::setLocalFileSpans() {
+    _kind = ShardMessageKind::LOCAL_FILE_SPANS;
     auto& x = _data.emplace<9>();
     return x;
 }
@@ -5355,193 +5574,220 @@ ShardSnapshotReq& ShardReqContainer::setShardSnapshot() {
     auto& x = _data.emplace<18>();
     return x;
 }
+const FileSpansReq& ShardReqContainer::getFileSpans() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::FILE_SPANS, "%s != %s", _kind, ShardMessageKind::FILE_SPANS);
+    return std::get<19>(_data);
+}
+FileSpansReq& ShardReqContainer::setFileSpans() {
+    _kind = ShardMessageKind::FILE_SPANS;
+    auto& x = _data.emplace<19>();
+    return x;
+}
+const AddSpanLocationReq& ShardReqContainer::getAddSpanLocation() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_LOCATION, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_LOCATION);
+    return std::get<20>(_data);
+}
+AddSpanLocationReq& ShardReqContainer::setAddSpanLocation() {
+    _kind = ShardMessageKind::ADD_SPAN_LOCATION;
+    auto& x = _data.emplace<20>();
+    return x;
+}
 const SetDirectoryInfoReq& ShardReqContainer::getSetDirectoryInfo() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
-    return std::get<19>(_data);
+    return std::get<21>(_data);
 }
 SetDirectoryInfoReq& ShardReqContainer::setSetDirectoryInfo() {
     _kind = ShardMessageKind::SET_DIRECTORY_INFO;
-    auto& x = _data.emplace<19>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const VisitDirectoriesReq& ShardReqContainer::getVisitDirectories() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_DIRECTORIES, "%s != %s", _kind, ShardMessageKind::VISIT_DIRECTORIES);
-    return std::get<20>(_data);
+    return std::get<22>(_data);
 }
 VisitDirectoriesReq& ShardReqContainer::setVisitDirectories() {
     _kind = ShardMessageKind::VISIT_DIRECTORIES;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const VisitFilesReq& ShardReqContainer::getVisitFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_FILES);
-    return std::get<21>(_data);
+    return std::get<23>(_data);
 }
 VisitFilesReq& ShardReqContainer::setVisitFiles() {
     _kind = ShardMessageKind::VISIT_FILES;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const VisitTransientFilesReq& ShardReqContainer::getVisitTransientFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_TRANSIENT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_TRANSIENT_FILES);
-    return std::get<22>(_data);
+    return std::get<24>(_data);
 }
 VisitTransientFilesReq& ShardReqContainer::setVisitTransientFiles() {
     _kind = ShardMessageKind::VISIT_TRANSIENT_FILES;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 const RemoveSpanInitiateReq& ShardReqContainer::getRemoveSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_INITIATE, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_INITIATE);
-    return std::get<23>(_data);
+    return std::get<25>(_data);
 }
 RemoveSpanInitiateReq& ShardReqContainer::setRemoveSpanInitiate() {
     _kind = ShardMessageKind::REMOVE_SPAN_INITIATE;
-    auto& x = _data.emplace<23>();
+    auto& x = _data.emplace<25>();
     return x;
 }
 const RemoveSpanCertifyReq& ShardReqContainer::getRemoveSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_CERTIFY, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_CERTIFY);
-    return std::get<24>(_data);
+    return std::get<26>(_data);
 }
 RemoveSpanCertifyReq& ShardReqContainer::setRemoveSpanCertify() {
     _kind = ShardMessageKind::REMOVE_SPAN_CERTIFY;
-    auto& x = _data.emplace<24>();
+    auto& x = _data.emplace<26>();
     return x;
 }
 const SwapBlocksReq& ShardReqContainer::getSwapBlocks() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_BLOCKS, "%s != %s", _kind, ShardMessageKind::SWAP_BLOCKS);
-    return std::get<25>(_data);
+    return std::get<27>(_data);
 }
 SwapBlocksReq& ShardReqContainer::setSwapBlocks() {
     _kind = ShardMessageKind::SWAP_BLOCKS;
-    auto& x = _data.emplace<25>();
+    auto& x = _data.emplace<27>();
     return x;
 }
 const BlockServiceFilesReq& ShardReqContainer::getBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::BLOCK_SERVICE_FILES);
-    return std::get<26>(_data);
+    return std::get<28>(_data);
 }
 BlockServiceFilesReq& ShardReqContainer::setBlockServiceFiles() {
     _kind = ShardMessageKind::BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<26>();
+    auto& x = _data.emplace<28>();
     return x;
 }
 const RemoveInodeReq& ShardReqContainer::getRemoveInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_INODE, "%s != %s", _kind, ShardMessageKind::REMOVE_INODE);
-    return std::get<27>(_data);
+    return std::get<29>(_data);
 }
 RemoveInodeReq& ShardReqContainer::setRemoveInode() {
     _kind = ShardMessageKind::REMOVE_INODE;
-    auto& x = _data.emplace<27>();
+    auto& x = _data.emplace<29>();
     return x;
 }
 const AddSpanInitiateWithReferenceReq& ShardReqContainer::getAddSpanInitiateWithReference() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE);
-    return std::get<28>(_data);
+    return std::get<30>(_data);
 }
 AddSpanInitiateWithReferenceReq& ShardReqContainer::setAddSpanInitiateWithReference() {
     _kind = ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE;
-    auto& x = _data.emplace<28>();
+    auto& x = _data.emplace<30>();
     return x;
 }
 const RemoveZeroBlockServiceFilesReq& ShardReqContainer::getRemoveZeroBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES);
-    return std::get<29>(_data);
+    return std::get<31>(_data);
 }
 RemoveZeroBlockServiceFilesReq& ShardReqContainer::setRemoveZeroBlockServiceFiles() {
     _kind = ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<29>();
+    auto& x = _data.emplace<31>();
     return x;
 }
 const SwapSpansReq& ShardReqContainer::getSwapSpans() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_SPANS, "%s != %s", _kind, ShardMessageKind::SWAP_SPANS);
-    return std::get<30>(_data);
+    return std::get<32>(_data);
 }
 SwapSpansReq& ShardReqContainer::setSwapSpans() {
     _kind = ShardMessageKind::SWAP_SPANS;
-    auto& x = _data.emplace<30>();
+    auto& x = _data.emplace<32>();
     return x;
 }
 const SameDirectoryRenameSnapshotReq& ShardReqContainer::getSameDirectoryRenameSnapshot() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT, "%s != %s", _kind, ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT);
-    return std::get<31>(_data);
+    return std::get<33>(_data);
 }
 SameDirectoryRenameSnapshotReq& ShardReqContainer::setSameDirectoryRenameSnapshot() {
     _kind = ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT;
-    auto& x = _data.emplace<31>();
+    auto& x = _data.emplace<33>();
+    return x;
+}
+const AddSpanAtLocationInitiateReq& ShardReqContainer::getAddSpanAtLocationInitiate() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE);
+    return std::get<34>(_data);
+}
+AddSpanAtLocationInitiateReq& ShardReqContainer::setAddSpanAtLocationInitiate() {
+    _kind = ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE;
+    auto& x = _data.emplace<34>();
     return x;
 }
 const CreateDirectoryInodeReq& ShardReqContainer::getCreateDirectoryInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_DIRECTORY_INODE, "%s != %s", _kind, ShardMessageKind::CREATE_DIRECTORY_INODE);
-    return std::get<32>(_data);
+    return std::get<35>(_data);
 }
 CreateDirectoryInodeReq& ShardReqContainer::setCreateDirectoryInode() {
     _kind = ShardMessageKind::CREATE_DIRECTORY_INODE;
-    auto& x = _data.emplace<32>();
+    auto& x = _data.emplace<35>();
     return x;
 }
 const SetDirectoryOwnerReq& ShardReqContainer::getSetDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_OWNER);
-    return std::get<33>(_data);
+    return std::get<36>(_data);
 }
 SetDirectoryOwnerReq& ShardReqContainer::setSetDirectoryOwner() {
     _kind = ShardMessageKind::SET_DIRECTORY_OWNER;
-    auto& x = _data.emplace<33>();
+    auto& x = _data.emplace<36>();
     return x;
 }
 const RemoveDirectoryOwnerReq& ShardReqContainer::getRemoveDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::REMOVE_DIRECTORY_OWNER);
-    return std::get<34>(_data);
+    return std::get<37>(_data);
 }
 RemoveDirectoryOwnerReq& ShardReqContainer::setRemoveDirectoryOwner() {
     _kind = ShardMessageKind::REMOVE_DIRECTORY_OWNER;
-    auto& x = _data.emplace<34>();
+    auto& x = _data.emplace<37>();
     return x;
 }
 const CreateLockedCurrentEdgeReq& ShardReqContainer::getCreateLockedCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE);
-    return std::get<35>(_data);
+    return std::get<38>(_data);
 }
 CreateLockedCurrentEdgeReq& ShardReqContainer::setCreateLockedCurrentEdge() {
     _kind = ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE;
-    auto& x = _data.emplace<35>();
+    auto& x = _data.emplace<38>();
     return x;
 }
 const LockCurrentEdgeReq& ShardReqContainer::getLockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::LOCK_CURRENT_EDGE);
-    return std::get<36>(_data);
+    return std::get<39>(_data);
 }
 LockCurrentEdgeReq& ShardReqContainer::setLockCurrentEdge() {
     _kind = ShardMessageKind::LOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<39>();
     return x;
 }
 const UnlockCurrentEdgeReq& ShardReqContainer::getUnlockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::UNLOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::UNLOCK_CURRENT_EDGE);
-    return std::get<37>(_data);
+    return std::get<40>(_data);
 }
 UnlockCurrentEdgeReq& ShardReqContainer::setUnlockCurrentEdge() {
     _kind = ShardMessageKind::UNLOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<40>();
     return x;
 }
 const RemoveOwnedSnapshotFileEdgeReq& ShardReqContainer::getRemoveOwnedSnapshotFileEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE, "%s != %s", _kind, ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE);
-    return std::get<38>(_data);
+    return std::get<41>(_data);
 }
 RemoveOwnedSnapshotFileEdgeReq& ShardReqContainer::setRemoveOwnedSnapshotFileEdge() {
     _kind = ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE;
-    auto& x = _data.emplace<38>();
+    auto& x = _data.emplace<41>();
     return x;
 }
 const MakeFileTransientReq& ShardReqContainer::getMakeFileTransient() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardMessageKind::MAKE_FILE_TRANSIENT);
-    return std::get<39>(_data);
+    return std::get<42>(_data);
 }
 MakeFileTransientReq& ShardReqContainer::setMakeFileTransient() {
     _kind = ShardMessageKind::MAKE_FILE_TRANSIENT;
-    auto& x = _data.emplace<39>();
+    auto& x = _data.emplace<42>();
     return x;
 }
 ShardReqContainer::ShardReqContainer() {
@@ -5588,8 +5834,8 @@ void ShardReqContainer::operator=(const ShardReqContainer& other) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         setSoftUnlinkFile() = other.getSoftUnlinkFile();
         break;
-    case ShardMessageKind::FILE_SPANS:
-        setFileSpans() = other.getFileSpans();
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        setLocalFileSpans() = other.getLocalFileSpans();
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         setSameDirectoryRename() = other.getSameDirectoryRename();
@@ -5617,6 +5863,12 @@ void ShardReqContainer::operator=(const ShardReqContainer& other) {
         break;
     case ShardMessageKind::SHARD_SNAPSHOT:
         setShardSnapshot() = other.getShardSnapshot();
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        setFileSpans() = other.getFileSpans();
+        break;
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        setAddSpanLocation() = other.getAddSpanLocation();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         setSetDirectoryInfo() = other.getSetDirectoryInfo();
@@ -5656,6 +5908,9 @@ void ShardReqContainer::operator=(const ShardReqContainer& other) {
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         setSameDirectoryRenameSnapshot() = other.getSameDirectoryRenameSnapshot();
+        break;
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        setAddSpanAtLocationInitiate() = other.getAddSpanAtLocationInitiate();
         break;
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         setCreateDirectoryInode() = other.getCreateDirectoryInode();
@@ -5712,7 +5967,7 @@ size_t ShardReqContainer::packedSize() const {
         return sizeof(ShardMessageKind) + std::get<7>(_data).packedSize();
     case ShardMessageKind::SOFT_UNLINK_FILE:
         return sizeof(ShardMessageKind) + std::get<8>(_data).packedSize();
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
         return sizeof(ShardMessageKind) + std::get<9>(_data).packedSize();
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         return sizeof(ShardMessageKind) + std::get<10>(_data).packedSize();
@@ -5732,48 +5987,54 @@ size_t ShardReqContainer::packedSize() const {
         return sizeof(ShardMessageKind) + std::get<17>(_data).packedSize();
     case ShardMessageKind::SHARD_SNAPSHOT:
         return sizeof(ShardMessageKind) + std::get<18>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::FILE_SPANS:
         return sizeof(ShardMessageKind) + std::get<19>(_data).packedSize();
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
         return sizeof(ShardMessageKind) + std::get<20>(_data).packedSize();
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         return sizeof(ShardMessageKind) + std::get<21>(_data).packedSize();
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         return sizeof(ShardMessageKind) + std::get<22>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_FILES:
         return sizeof(ShardMessageKind) + std::get<23>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         return sizeof(ShardMessageKind) + std::get<24>(_data).packedSize();
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         return sizeof(ShardMessageKind) + std::get<25>(_data).packedSize();
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         return sizeof(ShardMessageKind) + std::get<26>(_data).packedSize();
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::SWAP_BLOCKS:
         return sizeof(ShardMessageKind) + std::get<27>(_data).packedSize();
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         return sizeof(ShardMessageKind) + std::get<28>(_data).packedSize();
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_INODE:
         return sizeof(ShardMessageKind) + std::get<29>(_data).packedSize();
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         return sizeof(ShardMessageKind) + std::get<30>(_data).packedSize();
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         return sizeof(ShardMessageKind) + std::get<31>(_data).packedSize();
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SWAP_SPANS:
         return sizeof(ShardMessageKind) + std::get<32>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return sizeof(ShardMessageKind) + std::get<33>(_data).packedSize();
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         return sizeof(ShardMessageKind) + std::get<34>(_data).packedSize();
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         return sizeof(ShardMessageKind) + std::get<35>(_data).packedSize();
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         return sizeof(ShardMessageKind) + std::get<36>(_data).packedSize();
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         return sizeof(ShardMessageKind) + std::get<37>(_data).packedSize();
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         return sizeof(ShardMessageKind) + std::get<38>(_data).packedSize();
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         return sizeof(ShardMessageKind) + std::get<39>(_data).packedSize();
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        return sizeof(ShardMessageKind) + std::get<40>(_data).packedSize();
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return sizeof(ShardMessageKind) + std::get<41>(_data).packedSize();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return sizeof(ShardMessageKind) + std::get<42>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
@@ -5809,7 +6070,7 @@ void ShardReqContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         std::get<8>(_data).pack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
         std::get<9>(_data).pack(buf);
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
@@ -5839,68 +6100,77 @@ void ShardReqContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::SHARD_SNAPSHOT:
         std::get<18>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::FILE_SPANS:
         std::get<19>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
         std::get<20>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<21>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         std::get<22>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_FILES:
         std::get<23>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         std::get<24>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         std::get<25>(_data).pack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         std::get<26>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::SWAP_BLOCKS:
         std::get<27>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         std::get<28>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_INODE:
         std::get<29>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         std::get<30>(_data).pack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         std::get<31>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SWAP_SPANS:
         std::get<32>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         std::get<33>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         std::get<34>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         std::get<35>(_data).pack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         std::get<36>(_data).pack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         std::get<37>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         std::get<38>(_data).pack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         std::get<39>(_data).pack(buf);
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        std::get<40>(_data).pack(buf);
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        std::get<41>(_data).pack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        std::get<42>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
@@ -5937,7 +6207,7 @@ void ShardReqContainer::unpack(BincodeBuf& buf) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         _data.emplace<8>().unpack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
         _data.emplace<9>().unpack(buf);
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
@@ -5967,68 +6237,77 @@ void ShardReqContainer::unpack(BincodeBuf& buf) {
     case ShardMessageKind::SHARD_SNAPSHOT:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::FILE_SPANS:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_FILES:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         _data.emplace<25>().unpack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         _data.emplace<26>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::SWAP_BLOCKS:
         _data.emplace<27>().unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         _data.emplace<28>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_INODE:
         _data.emplace<29>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         _data.emplace<30>().unpack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         _data.emplace<31>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SWAP_SPANS:
         _data.emplace<32>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         _data.emplace<33>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         _data.emplace<34>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         _data.emplace<35>().unpack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         _data.emplace<36>().unpack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         _data.emplace<37>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         _data.emplace<38>().unpack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         _data.emplace<39>().unpack(buf);
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        _data.emplace<40>().unpack(buf);
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        _data.emplace<41>().unpack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        _data.emplace<42>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", _kind);
@@ -6057,8 +6336,8 @@ bool ShardReqContainer::operator==(const ShardReqContainer& other) const {
         return getLinkFile() == other.getLinkFile();
     case ShardMessageKind::SOFT_UNLINK_FILE:
         return getSoftUnlinkFile() == other.getSoftUnlinkFile();
-    case ShardMessageKind::FILE_SPANS:
-        return getFileSpans() == other.getFileSpans();
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        return getLocalFileSpans() == other.getLocalFileSpans();
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         return getSameDirectoryRename() == other.getSameDirectoryRename();
     case ShardMessageKind::ADD_INLINE_SPAN:
@@ -6077,6 +6356,10 @@ bool ShardReqContainer::operator==(const ShardReqContainer& other) const {
         return getStatTransientFile() == other.getStatTransientFile();
     case ShardMessageKind::SHARD_SNAPSHOT:
         return getShardSnapshot() == other.getShardSnapshot();
+    case ShardMessageKind::FILE_SPANS:
+        return getFileSpans() == other.getFileSpans();
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        return getAddSpanLocation() == other.getAddSpanLocation();
     case ShardMessageKind::SET_DIRECTORY_INFO:
         return getSetDirectoryInfo() == other.getSetDirectoryInfo();
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -6103,6 +6386,8 @@ bool ShardReqContainer::operator==(const ShardReqContainer& other) const {
         return getSwapSpans() == other.getSwapSpans();
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return getSameDirectoryRenameSnapshot() == other.getSameDirectoryRenameSnapshot();
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        return getAddSpanAtLocationInitiate() == other.getAddSpanAtLocationInitiate();
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         return getCreateDirectoryInode() == other.getCreateDirectoryInode();
     case ShardMessageKind::SET_DIRECTORY_OWNER:
@@ -6153,8 +6438,8 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         out << x.getSoftUnlinkFile();
         break;
-    case ShardMessageKind::FILE_SPANS:
-        out << x.getFileSpans();
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        out << x.getLocalFileSpans();
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         out << x.getSameDirectoryRename();
@@ -6182,6 +6467,12 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
         break;
     case ShardMessageKind::SHARD_SNAPSHOT:
         out << x.getShardSnapshot();
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        out << x.getFileSpans();
+        break;
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        out << x.getAddSpanLocation();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         out << x.getSetDirectoryInfo();
@@ -6221,6 +6512,9 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         out << x.getSameDirectoryRenameSnapshot();
+        break;
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        out << x.getAddSpanAtLocationInitiate();
         break;
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         out << x.getCreateDirectoryInode();
@@ -6345,12 +6639,12 @@ SoftUnlinkFileResp& ShardRespContainer::setSoftUnlinkFile() {
     auto& x = _data.emplace<9>();
     return x;
 }
-const FileSpansResp& ShardRespContainer::getFileSpans() const {
-    ALWAYS_ASSERT(_kind == ShardMessageKind::FILE_SPANS, "%s != %s", _kind, ShardMessageKind::FILE_SPANS);
+const LocalFileSpansResp& ShardRespContainer::getLocalFileSpans() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::LOCAL_FILE_SPANS, "%s != %s", _kind, ShardMessageKind::LOCAL_FILE_SPANS);
     return std::get<10>(_data);
 }
-FileSpansResp& ShardRespContainer::setFileSpans() {
-    _kind = ShardMessageKind::FILE_SPANS;
+LocalFileSpansResp& ShardRespContainer::setLocalFileSpans() {
+    _kind = ShardMessageKind::LOCAL_FILE_SPANS;
     auto& x = _data.emplace<10>();
     return x;
 }
@@ -6435,193 +6729,220 @@ ShardSnapshotResp& ShardRespContainer::setShardSnapshot() {
     auto& x = _data.emplace<19>();
     return x;
 }
+const FileSpansResp& ShardRespContainer::getFileSpans() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::FILE_SPANS, "%s != %s", _kind, ShardMessageKind::FILE_SPANS);
+    return std::get<20>(_data);
+}
+FileSpansResp& ShardRespContainer::setFileSpans() {
+    _kind = ShardMessageKind::FILE_SPANS;
+    auto& x = _data.emplace<20>();
+    return x;
+}
+const AddSpanLocationResp& ShardRespContainer::getAddSpanLocation() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_LOCATION, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_LOCATION);
+    return std::get<21>(_data);
+}
+AddSpanLocationResp& ShardRespContainer::setAddSpanLocation() {
+    _kind = ShardMessageKind::ADD_SPAN_LOCATION;
+    auto& x = _data.emplace<21>();
+    return x;
+}
 const SetDirectoryInfoResp& ShardRespContainer::getSetDirectoryInfo() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_INFO, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_INFO);
-    return std::get<20>(_data);
+    return std::get<22>(_data);
 }
 SetDirectoryInfoResp& ShardRespContainer::setSetDirectoryInfo() {
     _kind = ShardMessageKind::SET_DIRECTORY_INFO;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const VisitDirectoriesResp& ShardRespContainer::getVisitDirectories() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_DIRECTORIES, "%s != %s", _kind, ShardMessageKind::VISIT_DIRECTORIES);
-    return std::get<21>(_data);
+    return std::get<23>(_data);
 }
 VisitDirectoriesResp& ShardRespContainer::setVisitDirectories() {
     _kind = ShardMessageKind::VISIT_DIRECTORIES;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const VisitFilesResp& ShardRespContainer::getVisitFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_FILES);
-    return std::get<22>(_data);
+    return std::get<24>(_data);
 }
 VisitFilesResp& ShardRespContainer::setVisitFiles() {
     _kind = ShardMessageKind::VISIT_FILES;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 const VisitTransientFilesResp& ShardRespContainer::getVisitTransientFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::VISIT_TRANSIENT_FILES, "%s != %s", _kind, ShardMessageKind::VISIT_TRANSIENT_FILES);
-    return std::get<23>(_data);
+    return std::get<25>(_data);
 }
 VisitTransientFilesResp& ShardRespContainer::setVisitTransientFiles() {
     _kind = ShardMessageKind::VISIT_TRANSIENT_FILES;
-    auto& x = _data.emplace<23>();
+    auto& x = _data.emplace<25>();
     return x;
 }
 const RemoveSpanInitiateResp& ShardRespContainer::getRemoveSpanInitiate() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_INITIATE, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_INITIATE);
-    return std::get<24>(_data);
+    return std::get<26>(_data);
 }
 RemoveSpanInitiateResp& ShardRespContainer::setRemoveSpanInitiate() {
     _kind = ShardMessageKind::REMOVE_SPAN_INITIATE;
-    auto& x = _data.emplace<24>();
+    auto& x = _data.emplace<26>();
     return x;
 }
 const RemoveSpanCertifyResp& ShardRespContainer::getRemoveSpanCertify() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_SPAN_CERTIFY, "%s != %s", _kind, ShardMessageKind::REMOVE_SPAN_CERTIFY);
-    return std::get<25>(_data);
+    return std::get<27>(_data);
 }
 RemoveSpanCertifyResp& ShardRespContainer::setRemoveSpanCertify() {
     _kind = ShardMessageKind::REMOVE_SPAN_CERTIFY;
-    auto& x = _data.emplace<25>();
+    auto& x = _data.emplace<27>();
     return x;
 }
 const SwapBlocksResp& ShardRespContainer::getSwapBlocks() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_BLOCKS, "%s != %s", _kind, ShardMessageKind::SWAP_BLOCKS);
-    return std::get<26>(_data);
+    return std::get<28>(_data);
 }
 SwapBlocksResp& ShardRespContainer::setSwapBlocks() {
     _kind = ShardMessageKind::SWAP_BLOCKS;
-    auto& x = _data.emplace<26>();
+    auto& x = _data.emplace<28>();
     return x;
 }
 const BlockServiceFilesResp& ShardRespContainer::getBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::BLOCK_SERVICE_FILES);
-    return std::get<27>(_data);
+    return std::get<29>(_data);
 }
 BlockServiceFilesResp& ShardRespContainer::setBlockServiceFiles() {
     _kind = ShardMessageKind::BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<27>();
+    auto& x = _data.emplace<29>();
     return x;
 }
 const RemoveInodeResp& ShardRespContainer::getRemoveInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_INODE, "%s != %s", _kind, ShardMessageKind::REMOVE_INODE);
-    return std::get<28>(_data);
+    return std::get<30>(_data);
 }
 RemoveInodeResp& ShardRespContainer::setRemoveInode() {
     _kind = ShardMessageKind::REMOVE_INODE;
-    auto& x = _data.emplace<28>();
+    auto& x = _data.emplace<30>();
     return x;
 }
 const AddSpanInitiateWithReferenceResp& ShardRespContainer::getAddSpanInitiateWithReference() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE);
-    return std::get<29>(_data);
+    return std::get<31>(_data);
 }
 AddSpanInitiateWithReferenceResp& ShardRespContainer::setAddSpanInitiateWithReference() {
     _kind = ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE;
-    auto& x = _data.emplace<29>();
+    auto& x = _data.emplace<31>();
     return x;
 }
 const RemoveZeroBlockServiceFilesResp& ShardRespContainer::getRemoveZeroBlockServiceFiles() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES, "%s != %s", _kind, ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES);
-    return std::get<30>(_data);
+    return std::get<32>(_data);
 }
 RemoveZeroBlockServiceFilesResp& ShardRespContainer::setRemoveZeroBlockServiceFiles() {
     _kind = ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES;
-    auto& x = _data.emplace<30>();
+    auto& x = _data.emplace<32>();
     return x;
 }
 const SwapSpansResp& ShardRespContainer::getSwapSpans() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SWAP_SPANS, "%s != %s", _kind, ShardMessageKind::SWAP_SPANS);
-    return std::get<31>(_data);
+    return std::get<33>(_data);
 }
 SwapSpansResp& ShardRespContainer::setSwapSpans() {
     _kind = ShardMessageKind::SWAP_SPANS;
-    auto& x = _data.emplace<31>();
+    auto& x = _data.emplace<33>();
     return x;
 }
 const SameDirectoryRenameSnapshotResp& ShardRespContainer::getSameDirectoryRenameSnapshot() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT, "%s != %s", _kind, ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT);
-    return std::get<32>(_data);
+    return std::get<34>(_data);
 }
 SameDirectoryRenameSnapshotResp& ShardRespContainer::setSameDirectoryRenameSnapshot() {
     _kind = ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT;
-    auto& x = _data.emplace<32>();
+    auto& x = _data.emplace<34>();
+    return x;
+}
+const AddSpanAtLocationInitiateResp& ShardRespContainer::getAddSpanAtLocationInitiate() const {
+    ALWAYS_ASSERT(_kind == ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE, "%s != %s", _kind, ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE);
+    return std::get<35>(_data);
+}
+AddSpanAtLocationInitiateResp& ShardRespContainer::setAddSpanAtLocationInitiate() {
+    _kind = ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE;
+    auto& x = _data.emplace<35>();
     return x;
 }
 const CreateDirectoryInodeResp& ShardRespContainer::getCreateDirectoryInode() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_DIRECTORY_INODE, "%s != %s", _kind, ShardMessageKind::CREATE_DIRECTORY_INODE);
-    return std::get<33>(_data);
+    return std::get<36>(_data);
 }
 CreateDirectoryInodeResp& ShardRespContainer::setCreateDirectoryInode() {
     _kind = ShardMessageKind::CREATE_DIRECTORY_INODE;
-    auto& x = _data.emplace<33>();
+    auto& x = _data.emplace<36>();
     return x;
 }
 const SetDirectoryOwnerResp& ShardRespContainer::getSetDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::SET_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::SET_DIRECTORY_OWNER);
-    return std::get<34>(_data);
+    return std::get<37>(_data);
 }
 SetDirectoryOwnerResp& ShardRespContainer::setSetDirectoryOwner() {
     _kind = ShardMessageKind::SET_DIRECTORY_OWNER;
-    auto& x = _data.emplace<34>();
+    auto& x = _data.emplace<37>();
     return x;
 }
 const RemoveDirectoryOwnerResp& ShardRespContainer::getRemoveDirectoryOwner() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_DIRECTORY_OWNER, "%s != %s", _kind, ShardMessageKind::REMOVE_DIRECTORY_OWNER);
-    return std::get<35>(_data);
+    return std::get<38>(_data);
 }
 RemoveDirectoryOwnerResp& ShardRespContainer::setRemoveDirectoryOwner() {
     _kind = ShardMessageKind::REMOVE_DIRECTORY_OWNER;
-    auto& x = _data.emplace<35>();
+    auto& x = _data.emplace<38>();
     return x;
 }
 const CreateLockedCurrentEdgeResp& ShardRespContainer::getCreateLockedCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE);
-    return std::get<36>(_data);
+    return std::get<39>(_data);
 }
 CreateLockedCurrentEdgeResp& ShardRespContainer::setCreateLockedCurrentEdge() {
     _kind = ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<39>();
     return x;
 }
 const LockCurrentEdgeResp& ShardRespContainer::getLockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::LOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::LOCK_CURRENT_EDGE);
-    return std::get<37>(_data);
+    return std::get<40>(_data);
 }
 LockCurrentEdgeResp& ShardRespContainer::setLockCurrentEdge() {
     _kind = ShardMessageKind::LOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<40>();
     return x;
 }
 const UnlockCurrentEdgeResp& ShardRespContainer::getUnlockCurrentEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::UNLOCK_CURRENT_EDGE, "%s != %s", _kind, ShardMessageKind::UNLOCK_CURRENT_EDGE);
-    return std::get<38>(_data);
+    return std::get<41>(_data);
 }
 UnlockCurrentEdgeResp& ShardRespContainer::setUnlockCurrentEdge() {
     _kind = ShardMessageKind::UNLOCK_CURRENT_EDGE;
-    auto& x = _data.emplace<38>();
+    auto& x = _data.emplace<41>();
     return x;
 }
 const RemoveOwnedSnapshotFileEdgeResp& ShardRespContainer::getRemoveOwnedSnapshotFileEdge() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE, "%s != %s", _kind, ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE);
-    return std::get<39>(_data);
+    return std::get<42>(_data);
 }
 RemoveOwnedSnapshotFileEdgeResp& ShardRespContainer::setRemoveOwnedSnapshotFileEdge() {
     _kind = ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE;
-    auto& x = _data.emplace<39>();
+    auto& x = _data.emplace<42>();
     return x;
 }
 const MakeFileTransientResp& ShardRespContainer::getMakeFileTransient() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardMessageKind::MAKE_FILE_TRANSIENT);
-    return std::get<40>(_data);
+    return std::get<43>(_data);
 }
 MakeFileTransientResp& ShardRespContainer::setMakeFileTransient() {
     _kind = ShardMessageKind::MAKE_FILE_TRANSIENT;
-    auto& x = _data.emplace<40>();
+    auto& x = _data.emplace<43>();
     return x;
 }
 ShardRespContainer::ShardRespContainer() {
@@ -6671,8 +6992,8 @@ void ShardRespContainer::operator=(const ShardRespContainer& other) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         setSoftUnlinkFile() = other.getSoftUnlinkFile();
         break;
-    case ShardMessageKind::FILE_SPANS:
-        setFileSpans() = other.getFileSpans();
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        setLocalFileSpans() = other.getLocalFileSpans();
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         setSameDirectoryRename() = other.getSameDirectoryRename();
@@ -6700,6 +7021,12 @@ void ShardRespContainer::operator=(const ShardRespContainer& other) {
         break;
     case ShardMessageKind::SHARD_SNAPSHOT:
         setShardSnapshot() = other.getShardSnapshot();
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        setFileSpans() = other.getFileSpans();
+        break;
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        setAddSpanLocation() = other.getAddSpanLocation();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         setSetDirectoryInfo() = other.getSetDirectoryInfo();
@@ -6739,6 +7066,9 @@ void ShardRespContainer::operator=(const ShardRespContainer& other) {
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         setSameDirectoryRenameSnapshot() = other.getSameDirectoryRenameSnapshot();
+        break;
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        setAddSpanAtLocationInitiate() = other.getAddSpanAtLocationInitiate();
         break;
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         setCreateDirectoryInode() = other.getCreateDirectoryInode();
@@ -6797,7 +7127,7 @@ size_t ShardRespContainer::packedSize() const {
         return sizeof(ShardMessageKind) + std::get<8>(_data).packedSize();
     case ShardMessageKind::SOFT_UNLINK_FILE:
         return sizeof(ShardMessageKind) + std::get<9>(_data).packedSize();
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
         return sizeof(ShardMessageKind) + std::get<10>(_data).packedSize();
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         return sizeof(ShardMessageKind) + std::get<11>(_data).packedSize();
@@ -6817,48 +7147,54 @@ size_t ShardRespContainer::packedSize() const {
         return sizeof(ShardMessageKind) + std::get<18>(_data).packedSize();
     case ShardMessageKind::SHARD_SNAPSHOT:
         return sizeof(ShardMessageKind) + std::get<19>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::FILE_SPANS:
         return sizeof(ShardMessageKind) + std::get<20>(_data).packedSize();
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
         return sizeof(ShardMessageKind) + std::get<21>(_data).packedSize();
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         return sizeof(ShardMessageKind) + std::get<22>(_data).packedSize();
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         return sizeof(ShardMessageKind) + std::get<23>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_FILES:
         return sizeof(ShardMessageKind) + std::get<24>(_data).packedSize();
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         return sizeof(ShardMessageKind) + std::get<25>(_data).packedSize();
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         return sizeof(ShardMessageKind) + std::get<26>(_data).packedSize();
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         return sizeof(ShardMessageKind) + std::get<27>(_data).packedSize();
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::SWAP_BLOCKS:
         return sizeof(ShardMessageKind) + std::get<28>(_data).packedSize();
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         return sizeof(ShardMessageKind) + std::get<29>(_data).packedSize();
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_INODE:
         return sizeof(ShardMessageKind) + std::get<30>(_data).packedSize();
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         return sizeof(ShardMessageKind) + std::get<31>(_data).packedSize();
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         return sizeof(ShardMessageKind) + std::get<32>(_data).packedSize();
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SWAP_SPANS:
         return sizeof(ShardMessageKind) + std::get<33>(_data).packedSize();
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return sizeof(ShardMessageKind) + std::get<34>(_data).packedSize();
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         return sizeof(ShardMessageKind) + std::get<35>(_data).packedSize();
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         return sizeof(ShardMessageKind) + std::get<36>(_data).packedSize();
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         return sizeof(ShardMessageKind) + std::get<37>(_data).packedSize();
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         return sizeof(ShardMessageKind) + std::get<38>(_data).packedSize();
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         return sizeof(ShardMessageKind) + std::get<39>(_data).packedSize();
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         return sizeof(ShardMessageKind) + std::get<40>(_data).packedSize();
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        return sizeof(ShardMessageKind) + std::get<41>(_data).packedSize();
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        return sizeof(ShardMessageKind) + std::get<42>(_data).packedSize();
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        return sizeof(ShardMessageKind) + std::get<43>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
@@ -6897,7 +7233,7 @@ void ShardRespContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         std::get<9>(_data).pack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
         std::get<10>(_data).pack(buf);
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
@@ -6927,68 +7263,77 @@ void ShardRespContainer::pack(BincodeBuf& buf) const {
     case ShardMessageKind::SHARD_SNAPSHOT:
         std::get<19>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::FILE_SPANS:
         std::get<20>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
         std::get<21>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         std::get<22>(_data).pack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         std::get<23>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_FILES:
         std::get<24>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         std::get<25>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         std::get<26>(_data).pack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         std::get<27>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::SWAP_BLOCKS:
         std::get<28>(_data).pack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         std::get<29>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_INODE:
         std::get<30>(_data).pack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         std::get<31>(_data).pack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         std::get<32>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SWAP_SPANS:
         std::get<33>(_data).pack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         std::get<34>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         std::get<35>(_data).pack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         std::get<36>(_data).pack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         std::get<37>(_data).pack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         std::get<38>(_data).pack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         std::get<39>(_data).pack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         std::get<40>(_data).pack(buf);
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        std::get<41>(_data).pack(buf);
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        std::get<42>(_data).pack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        std::get<43>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
@@ -7028,7 +7373,7 @@ void ShardRespContainer::unpack(BincodeBuf& buf) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         _data.emplace<9>().unpack(buf);
         break;
-    case ShardMessageKind::FILE_SPANS:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
         _data.emplace<10>().unpack(buf);
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
@@ -7058,68 +7403,77 @@ void ShardRespContainer::unpack(BincodeBuf& buf) {
     case ShardMessageKind::SHARD_SNAPSHOT:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_INFO:
+    case ShardMessageKind::FILE_SPANS:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_DIRECTORIES:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_FILES:
+    case ShardMessageKind::SET_DIRECTORY_INFO:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShardMessageKind::VISIT_TRANSIENT_FILES:
+    case ShardMessageKind::VISIT_DIRECTORIES:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_INITIATE:
+    case ShardMessageKind::VISIT_FILES:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
+    case ShardMessageKind::VISIT_TRANSIENT_FILES:
         _data.emplace<25>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REMOVE_SPAN_INITIATE:
         _data.emplace<26>().unpack(buf);
         break;
-    case ShardMessageKind::BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_SPAN_CERTIFY:
         _data.emplace<27>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_INODE:
+    case ShardMessageKind::SWAP_BLOCKS:
         _data.emplace<28>().unpack(buf);
         break;
-    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+    case ShardMessageKind::BLOCK_SERVICE_FILES:
         _data.emplace<29>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
+    case ShardMessageKind::REMOVE_INODE:
         _data.emplace<30>().unpack(buf);
         break;
-    case ShardMessageKind::SWAP_SPANS:
+    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
         _data.emplace<31>().unpack(buf);
         break;
-    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
+    case ShardMessageKind::REMOVE_ZERO_BLOCK_SERVICE_FILES:
         _data.emplace<32>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_DIRECTORY_INODE:
+    case ShardMessageKind::SWAP_SPANS:
         _data.emplace<33>().unpack(buf);
         break;
-    case ShardMessageKind::SET_DIRECTORY_OWNER:
+    case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         _data.emplace<34>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         _data.emplace<35>().unpack(buf);
         break;
-    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
+    case ShardMessageKind::CREATE_DIRECTORY_INODE:
         _data.emplace<36>().unpack(buf);
         break;
-    case ShardMessageKind::LOCK_CURRENT_EDGE:
+    case ShardMessageKind::SET_DIRECTORY_OWNER:
         _data.emplace<37>().unpack(buf);
         break;
-    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+    case ShardMessageKind::REMOVE_DIRECTORY_OWNER:
         _data.emplace<38>().unpack(buf);
         break;
-    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+    case ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE:
         _data.emplace<39>().unpack(buf);
         break;
-    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+    case ShardMessageKind::LOCK_CURRENT_EDGE:
         _data.emplace<40>().unpack(buf);
+        break;
+    case ShardMessageKind::UNLOCK_CURRENT_EDGE:
+        _data.emplace<41>().unpack(buf);
+        break;
+    case ShardMessageKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
+        _data.emplace<42>().unpack(buf);
+        break;
+    case ShardMessageKind::MAKE_FILE_TRANSIENT:
+        _data.emplace<43>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardMessageKind kind %s", _kind);
@@ -7150,8 +7504,8 @@ bool ShardRespContainer::operator==(const ShardRespContainer& other) const {
         return getLinkFile() == other.getLinkFile();
     case ShardMessageKind::SOFT_UNLINK_FILE:
         return getSoftUnlinkFile() == other.getSoftUnlinkFile();
-    case ShardMessageKind::FILE_SPANS:
-        return getFileSpans() == other.getFileSpans();
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        return getLocalFileSpans() == other.getLocalFileSpans();
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         return getSameDirectoryRename() == other.getSameDirectoryRename();
     case ShardMessageKind::ADD_INLINE_SPAN:
@@ -7170,6 +7524,10 @@ bool ShardRespContainer::operator==(const ShardRespContainer& other) const {
         return getStatTransientFile() == other.getStatTransientFile();
     case ShardMessageKind::SHARD_SNAPSHOT:
         return getShardSnapshot() == other.getShardSnapshot();
+    case ShardMessageKind::FILE_SPANS:
+        return getFileSpans() == other.getFileSpans();
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        return getAddSpanLocation() == other.getAddSpanLocation();
     case ShardMessageKind::SET_DIRECTORY_INFO:
         return getSetDirectoryInfo() == other.getSetDirectoryInfo();
     case ShardMessageKind::VISIT_DIRECTORIES:
@@ -7196,6 +7554,8 @@ bool ShardRespContainer::operator==(const ShardRespContainer& other) const {
         return getSwapSpans() == other.getSwapSpans();
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return getSameDirectoryRenameSnapshot() == other.getSameDirectoryRenameSnapshot();
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        return getAddSpanAtLocationInitiate() == other.getAddSpanAtLocationInitiate();
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         return getCreateDirectoryInode() == other.getCreateDirectoryInode();
     case ShardMessageKind::SET_DIRECTORY_OWNER:
@@ -7249,8 +7609,8 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
     case ShardMessageKind::SOFT_UNLINK_FILE:
         out << x.getSoftUnlinkFile();
         break;
-    case ShardMessageKind::FILE_SPANS:
-        out << x.getFileSpans();
+    case ShardMessageKind::LOCAL_FILE_SPANS:
+        out << x.getLocalFileSpans();
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME:
         out << x.getSameDirectoryRename();
@@ -7278,6 +7638,12 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
         break;
     case ShardMessageKind::SHARD_SNAPSHOT:
         out << x.getShardSnapshot();
+        break;
+    case ShardMessageKind::FILE_SPANS:
+        out << x.getFileSpans();
+        break;
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+        out << x.getAddSpanLocation();
         break;
     case ShardMessageKind::SET_DIRECTORY_INFO:
         out << x.getSetDirectoryInfo();
@@ -7317,6 +7683,9 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
         break;
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         out << x.getSameDirectoryRenameSnapshot();
+        break;
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        out << x.getAddSpanAtLocationInitiate();
         break;
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
         out << x.getCreateDirectoryInode();
@@ -8003,12 +8372,12 @@ CdcAtLocationReq& ShuckleReqContainer::setCdcAtLocation() {
     auto& x = _data.emplace<14>();
     return x;
 }
-const ShardBlockServicesReq& ShuckleReqContainer::getShardBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
+const ShardBlockServicesDEPRECATEDReq& ShuckleReqContainer::getShardBlockServicesDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
     return std::get<15>(_data);
 }
-ShardBlockServicesReq& ShuckleReqContainer::setShardBlockServices() {
-    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
+ShardBlockServicesDEPRECATEDReq& ShuckleReqContainer::setShardBlockServicesDEPRECATED() {
+    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<15>();
     return x;
 }
@@ -8057,12 +8426,12 @@ ClearShardInfoReq& ShuckleReqContainer::setClearShardInfo() {
     auto& x = _data.emplace<20>();
     return x;
 }
-const RegisterBlockServicesDEPRECATEDReq& ShuckleReqContainer::getRegisterBlockServicesDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED);
+const ShardBlockServicesReq& ShuckleReqContainer::getShardBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
     return std::get<21>(_data);
 }
-RegisterBlockServicesDEPRECATEDReq& ShuckleReqContainer::setRegisterBlockServicesDEPRECATED() {
-    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED;
+ShardBlockServicesReq& ShuckleReqContainer::setShardBlockServices() {
+    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
     auto& x = _data.emplace<21>();
     return x;
 }
@@ -8173,8 +8542,8 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         setCdcAtLocation() = other.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        setShardBlockServices() = other.getShardBlockServices();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        setShardBlockServicesDEPRECATED() = other.getShardBlockServicesDEPRECATED();
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         setCdcReplicasDEPRECATED() = other.getCdcReplicasDEPRECATED();
@@ -8191,8 +8560,8 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         setClearShardInfo() = other.getClearShardInfo();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        setRegisterBlockServicesDEPRECATED() = other.getRegisterBlockServicesDEPRECATED();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        setShardBlockServices() = other.getShardBlockServices();
         break;
     case ShuckleMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
@@ -8252,7 +8621,7 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<13>(_data).packedSize();
     case ShuckleMessageKind::CDC_AT_LOCATION:
         return sizeof(ShuckleMessageKind) + std::get<14>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         return sizeof(ShuckleMessageKind) + std::get<15>(_data).packedSize();
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         return sizeof(ShuckleMessageKind) + std::get<16>(_data).packedSize();
@@ -8264,7 +8633,7 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<19>(_data).packedSize();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
     case ShuckleMessageKind::ALL_CDC:
         return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
@@ -8329,7 +8698,7 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         std::get<14>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         std::get<15>(_data).pack(buf);
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
@@ -8347,7 +8716,7 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         std::get<20>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         std::get<21>(_data).pack(buf);
         break;
     case ShuckleMessageKind::ALL_CDC:
@@ -8418,7 +8787,7 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         _data.emplace<14>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         _data.emplace<15>().unpack(buf);
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
@@ -8436,7 +8805,7 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<21>().unpack(buf);
         break;
     case ShuckleMessageKind::ALL_CDC:
@@ -8493,8 +8862,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getShardsAtLocation() == other.getShardsAtLocation();
     case ShuckleMessageKind::CDC_AT_LOCATION:
         return getCdcAtLocation() == other.getCdcAtLocation();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        return getShardBlockServices() == other.getShardBlockServices();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        return getShardBlockServicesDEPRECATED() == other.getShardBlockServicesDEPRECATED();
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         return getCdcReplicasDEPRECATED() == other.getCdcReplicasDEPRECATED();
     case ShuckleMessageKind::ALL_SHARDS:
@@ -8505,8 +8874,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getMoveShardLeader() == other.getMoveShardLeader();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return getClearShardInfo() == other.getClearShardInfo();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return getRegisterBlockServicesDEPRECATED() == other.getRegisterBlockServicesDEPRECATED();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        return getShardBlockServices() == other.getShardBlockServices();
     case ShuckleMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
@@ -8569,8 +8938,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         out << x.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        out << x.getShardBlockServices();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        out << x.getShardBlockServicesDEPRECATED();
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         out << x.getCdcReplicasDEPRECATED();
@@ -8587,8 +8956,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         out << x.getClearShardInfo();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        out << x.getRegisterBlockServicesDEPRECATED();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        out << x.getShardBlockServices();
         break;
     case ShuckleMessageKind::ALL_CDC:
         out << x.getAllCdc();
@@ -8758,12 +9127,12 @@ CdcAtLocationResp& ShuckleRespContainer::setCdcAtLocation() {
     auto& x = _data.emplace<15>();
     return x;
 }
-const ShardBlockServicesResp& ShuckleRespContainer::getShardBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
+const ShardBlockServicesDEPRECATEDResp& ShuckleRespContainer::getShardBlockServicesDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
     return std::get<16>(_data);
 }
-ShardBlockServicesResp& ShuckleRespContainer::setShardBlockServices() {
-    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
+ShardBlockServicesDEPRECATEDResp& ShuckleRespContainer::setShardBlockServicesDEPRECATED() {
+    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<16>();
     return x;
 }
@@ -8812,12 +9181,12 @@ ClearShardInfoResp& ShuckleRespContainer::setClearShardInfo() {
     auto& x = _data.emplace<21>();
     return x;
 }
-const RegisterBlockServicesDEPRECATEDResp& ShuckleRespContainer::getRegisterBlockServicesDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED);
+const ShardBlockServicesResp& ShuckleRespContainer::getShardBlockServices() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
     return std::get<22>(_data);
 }
-RegisterBlockServicesDEPRECATEDResp& ShuckleRespContainer::setRegisterBlockServicesDEPRECATED() {
-    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED;
+ShardBlockServicesResp& ShuckleRespContainer::setShardBlockServices() {
+    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
     auto& x = _data.emplace<22>();
     return x;
 }
@@ -8931,8 +9300,8 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         setCdcAtLocation() = other.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        setShardBlockServices() = other.getShardBlockServices();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        setShardBlockServicesDEPRECATED() = other.getShardBlockServicesDEPRECATED();
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         setCdcReplicasDEPRECATED() = other.getCdcReplicasDEPRECATED();
@@ -8949,8 +9318,8 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         setClearShardInfo() = other.getClearShardInfo();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        setRegisterBlockServicesDEPRECATED() = other.getRegisterBlockServicesDEPRECATED();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        setShardBlockServices() = other.getShardBlockServices();
         break;
     case ShuckleMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
@@ -9012,7 +9381,7 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<14>(_data).packedSize();
     case ShuckleMessageKind::CDC_AT_LOCATION:
         return sizeof(ShuckleMessageKind) + std::get<15>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         return sizeof(ShuckleMessageKind) + std::get<16>(_data).packedSize();
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         return sizeof(ShuckleMessageKind) + std::get<17>(_data).packedSize();
@@ -9024,7 +9393,7 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
     case ShuckleMessageKind::ALL_CDC:
         return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
@@ -9092,7 +9461,7 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         std::get<15>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         std::get<16>(_data).pack(buf);
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
@@ -9110,7 +9479,7 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         std::get<21>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         std::get<22>(_data).pack(buf);
         break;
     case ShuckleMessageKind::ALL_CDC:
@@ -9184,7 +9553,7 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         _data.emplace<15>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         _data.emplace<16>().unpack(buf);
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
@@ -9202,7 +9571,7 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<22>().unpack(buf);
         break;
     case ShuckleMessageKind::ALL_CDC:
@@ -9261,8 +9630,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getShardsAtLocation() == other.getShardsAtLocation();
     case ShuckleMessageKind::CDC_AT_LOCATION:
         return getCdcAtLocation() == other.getCdcAtLocation();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        return getShardBlockServices() == other.getShardBlockServices();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        return getShardBlockServicesDEPRECATED() == other.getShardBlockServicesDEPRECATED();
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         return getCdcReplicasDEPRECATED() == other.getCdcReplicasDEPRECATED();
     case ShuckleMessageKind::ALL_SHARDS:
@@ -9273,8 +9642,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getMoveShardLeader() == other.getMoveShardLeader();
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         return getClearShardInfo() == other.getClearShardInfo();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return getRegisterBlockServicesDEPRECATED() == other.getRegisterBlockServicesDEPRECATED();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        return getShardBlockServices() == other.getShardBlockServices();
     case ShuckleMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
@@ -9340,8 +9709,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
     case ShuckleMessageKind::CDC_AT_LOCATION:
         out << x.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        out << x.getShardBlockServices();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        out << x.getShardBlockServicesDEPRECATED();
         break;
     case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         out << x.getCdcReplicasDEPRECATED();
@@ -9358,8 +9727,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
     case ShuckleMessageKind::CLEAR_SHARD_INFO:
         out << x.getClearShardInfo();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        out << x.getRegisterBlockServicesDEPRECATED();
+    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+        out << x.getShardBlockServices();
         break;
     case ShuckleMessageKind::ALL_CDC:
         out << x.getAllCdc();
@@ -9984,6 +10353,12 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
         break;
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         out << "SAME_DIRECTORY_RENAME_SNAPSHOT";
+        break;
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        out << "ADD_SPAN_AT_LOCATION_INITIATE";
+        break;
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        out << "ADD_SPAN_LOCATION";
         break;
     case ShardLogEntryKind::EMPTY:
         out << "EMPTY";
@@ -10793,6 +11168,102 @@ std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameSnapshotEnt
     return out;
 }
 
+void AddSpanAtLocationInitiateEntry::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(locationId);
+    buf.packScalar<bool>(withReference);
+    fileId.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset);
+    buf.packScalar<uint32_t>(size);
+    crc.pack(buf);
+    buf.packScalar<uint8_t>(storageClass);
+    parity.pack(buf);
+    buf.packScalar<uint8_t>(stripes);
+    buf.packScalar<uint32_t>(cellSize);
+    buf.packList<EntryNewBlockInfo>(bodyBlocks);
+    buf.packList<Crc>(bodyStripes);
+}
+void AddSpanAtLocationInitiateEntry::unpack(BincodeBuf& buf) {
+    locationId = buf.unpackScalar<uint8_t>();
+    withReference = buf.unpackScalar<bool>();
+    fileId.unpack(buf);
+    byteOffset = buf.unpackScalar<uint64_t>();
+    size = buf.unpackScalar<uint32_t>();
+    crc.unpack(buf);
+    storageClass = buf.unpackScalar<uint8_t>();
+    parity.unpack(buf);
+    stripes = buf.unpackScalar<uint8_t>();
+    cellSize = buf.unpackScalar<uint32_t>();
+    buf.unpackList<EntryNewBlockInfo>(bodyBlocks);
+    buf.unpackList<Crc>(bodyStripes);
+}
+void AddSpanAtLocationInitiateEntry::clear() {
+    locationId = uint8_t(0);
+    withReference = bool(0);
+    fileId = InodeId();
+    byteOffset = uint64_t(0);
+    size = uint32_t(0);
+    crc = Crc(0);
+    storageClass = uint8_t(0);
+    parity = Parity();
+    stripes = uint8_t(0);
+    cellSize = uint32_t(0);
+    bodyBlocks.clear();
+    bodyStripes.clear();
+}
+bool AddSpanAtLocationInitiateEntry::operator==(const AddSpanAtLocationInitiateEntry& rhs) const {
+    if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
+    if ((bool)this->withReference != (bool)rhs.withReference) { return false; };
+    if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
+    if ((uint64_t)this->byteOffset != (uint64_t)rhs.byteOffset) { return false; };
+    if ((uint32_t)this->size != (uint32_t)rhs.size) { return false; };
+    if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
+    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
+    if ((Parity)this->parity != (Parity)rhs.parity) { return false; };
+    if ((uint8_t)this->stripes != (uint8_t)rhs.stripes) { return false; };
+    if ((uint32_t)this->cellSize != (uint32_t)rhs.cellSize) { return false; };
+    if (bodyBlocks != rhs.bodyBlocks) { return false; };
+    if (bodyStripes != rhs.bodyStripes) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanAtLocationInitiateEntry& x) {
+    out << "AddSpanAtLocationInitiateEntry(" << "LocationId=" << (int)x.locationId << ", " << "WithReference=" << x.withReference << ", " << "FileId=" << x.fileId << ", " << "ByteOffset=" << x.byteOffset << ", " << "Size=" << x.size << ", " << "Crc=" << x.crc << ", " << "StorageClass=" << (int)x.storageClass << ", " << "Parity=" << x.parity << ", " << "Stripes=" << (int)x.stripes << ", " << "CellSize=" << x.cellSize << ", " << "BodyBlocks=" << x.bodyBlocks << ", " << "BodyStripes=" << x.bodyStripes << ")";
+    return out;
+}
+
+void AddSpanLocationEntry::pack(BincodeBuf& buf) const {
+    fileId1.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset1);
+    buf.packList<uint64_t>(blocks1);
+    fileId2.pack(buf);
+    buf.packScalar<uint64_t>(byteOffset2);
+}
+void AddSpanLocationEntry::unpack(BincodeBuf& buf) {
+    fileId1.unpack(buf);
+    byteOffset1 = buf.unpackScalar<uint64_t>();
+    buf.unpackList<uint64_t>(blocks1);
+    fileId2.unpack(buf);
+    byteOffset2 = buf.unpackScalar<uint64_t>();
+}
+void AddSpanLocationEntry::clear() {
+    fileId1 = InodeId();
+    byteOffset1 = uint64_t(0);
+    blocks1.clear();
+    fileId2 = InodeId();
+    byteOffset2 = uint64_t(0);
+}
+bool AddSpanLocationEntry::operator==(const AddSpanLocationEntry& rhs) const {
+    if ((InodeId)this->fileId1 != (InodeId)rhs.fileId1) { return false; };
+    if ((uint64_t)this->byteOffset1 != (uint64_t)rhs.byteOffset1) { return false; };
+    if (blocks1 != rhs.blocks1) { return false; };
+    if ((InodeId)this->fileId2 != (InodeId)rhs.fileId2) { return false; };
+    if ((uint64_t)this->byteOffset2 != (uint64_t)rhs.byteOffset2) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const AddSpanLocationEntry& x) {
+    out << "AddSpanLocationEntry(" << "FileId1=" << x.fileId1 << ", " << "ByteOffset1=" << x.byteOffset1 << ", " << "Blocks1=" << x.blocks1 << ", " << "FileId2=" << x.fileId2 << ", " << "ByteOffset2=" << x.byteOffset2 << ")";
+    return out;
+}
+
 const ConstructFileEntry& ShardLogEntryContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardLogEntryKind::CONSTRUCT_FILE);
     return std::get<0>(_data);
@@ -11036,6 +11507,24 @@ SameDirectoryRenameSnapshotEntry& ShardLogEntryContainer::setSameDirectoryRename
     auto& x = _data.emplace<26>();
     return x;
 }
+const AddSpanAtLocationInitiateEntry& ShardLogEntryContainer::getAddSpanAtLocationInitiate() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE, "%s != %s", _kind, ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE);
+    return std::get<27>(_data);
+}
+AddSpanAtLocationInitiateEntry& ShardLogEntryContainer::setAddSpanAtLocationInitiate() {
+    _kind = ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE;
+    auto& x = _data.emplace<27>();
+    return x;
+}
+const AddSpanLocationEntry& ShardLogEntryContainer::getAddSpanLocation() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::ADD_SPAN_LOCATION, "%s != %s", _kind, ShardLogEntryKind::ADD_SPAN_LOCATION);
+    return std::get<28>(_data);
+}
+AddSpanLocationEntry& ShardLogEntryContainer::setAddSpanLocation() {
+    _kind = ShardLogEntryKind::ADD_SPAN_LOCATION;
+    auto& x = _data.emplace<28>();
+    return x;
+}
 ShardLogEntryContainer::ShardLogEntryContainer() {
     clear();
 }
@@ -11134,6 +11623,12 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         setSameDirectoryRenameSnapshot() = other.getSameDirectoryRenameSnapshot();
         break;
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        setAddSpanAtLocationInitiate() = other.getAddSpanAtLocationInitiate();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        setAddSpanLocation() = other.getAddSpanLocation();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", other.kind());
     }
@@ -11201,6 +11696,10 @@ size_t ShardLogEntryContainer::packedSize() const {
         return sizeof(ShardLogEntryKind) + std::get<25>(_data).packedSize();
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return sizeof(ShardLogEntryKind) + std::get<26>(_data).packedSize();
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        return sizeof(ShardLogEntryKind) + std::get<27>(_data).packedSize();
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        return sizeof(ShardLogEntryKind) + std::get<28>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -11289,6 +11788,12 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
         break;
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         std::get<26>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        std::get<27>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        std::get<28>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -11379,6 +11884,12 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf) {
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         _data.emplace<26>().unpack(buf);
         break;
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        _data.emplace<27>().unpack(buf);
+        break;
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        _data.emplace<28>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -11442,6 +11953,10 @@ bool ShardLogEntryContainer::operator==(const ShardLogEntryContainer& other) con
         return getSwapSpans() == other.getSwapSpans();
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         return getSameDirectoryRenameSnapshot() == other.getSameDirectoryRenameSnapshot();
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        return getAddSpanAtLocationInitiate() == other.getAddSpanAtLocationInitiate();
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        return getAddSpanLocation() == other.getAddSpanLocation();
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -11529,6 +12044,12 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         break;
     case ShardLogEntryKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
         out << x.getSameDirectoryRenameSnapshot();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE:
+        out << x.getAddSpanAtLocationInitiate();
+        break;
+    case ShardLogEntryKind::ADD_SPAN_LOCATION:
+        out << x.getAddSpanLocation();
         break;
     case ShardLogEntryKind::EMPTY:
         out << "EMPTY";

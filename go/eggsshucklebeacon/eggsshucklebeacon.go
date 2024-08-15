@@ -108,8 +108,6 @@ func readShuckleRequest(
 	kind := msgs.ShuckleMessageKind(data[0])
 	var req msgs.ShuckleRequest
 	switch kind {
-	case msgs.REGISTER_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		req = &msgs.RegisterBlockServicesDEPRECATEDReq{}
 	case msgs.LOCAL_SHARDS:
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
@@ -132,8 +130,8 @@ func readShuckleRequest(
 		req = &msgs.InfoReq{}
 	case msgs.SHUCKLE:
 		req = &msgs.ShuckleReq{}
-	case msgs.SHARD_BLOCK_SERVICES:
-		req = &msgs.ShardBlockServicesReq{}
+	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		req = &msgs.ShardBlockServicesDEPRECATEDReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
 	case msgs.ALL_CDC:
@@ -162,6 +160,8 @@ func readShuckleRequest(
 		req = &msgs.RegisterBlockServicesReq{}
 	case msgs.SHARDS_AT_LOCATION:
 		req = &msgs.ShardsAtLocationReq{}
+	case msgs.SHARD_BLOCK_SERVICES:
+		req = &msgs.ShardBlockServicesReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

@@ -699,7 +699,7 @@ struct ShardDBImpl {
         return _visitInodes(options, _directoriesCf, req, resp);
     }
 
-    EggsError _fileSpans(rocksdb::ReadOptions& options, const FileSpansReq& req, FileSpansResp& resp) {
+    EggsError _fileSpans(rocksdb::ReadOptions& options, const LocalFileSpansReq& req, LocalFileSpansResp& resp) {
         StaticValue<SpanKey> lowerKey;
         lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
         lowerKey().setOffset(~(uint64_t)0);
@@ -714,7 +714,7 @@ struct ShardDBImpl {
 
         auto inMemoryBlockServicesData = _blockServicesCache.getCache();
 
-        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
+        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - LocalFileSpansResp::STATIC_SIZE;
         // if -1, we ran out of budget.
         const auto addBlockService = [&resp, &budget, &inMemoryBlockServicesData](BlockServiceId blockServiceId) -> int {
             // See if we've placed it already
@@ -894,8 +894,8 @@ struct ShardDBImpl {
         case ShardMessageKind::VISIT_DIRECTORIES:
             err = _visitDirectories(options, req.getVisitDirectories(), resp.setVisitDirectories());
             break;
-        case ShardMessageKind::FILE_SPANS:
-            err = _fileSpans(options, req.getFileSpans(), resp.setFileSpans());
+        case ShardMessageKind::LOCAL_FILE_SPANS:
+            err = _fileSpans(options, req.getLocalFileSpans(), resp.setLocalFileSpans());
             break;
         case ShardMessageKind::BLOCK_SERVICE_FILES:
             err = _blockServiceFiles(options, req.getBlockServiceFiles(), resp.setBlockServiceFiles());
@@ -3780,6 +3780,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::STAT_DIRECTORY:
     case ShardMessageKind::READ_DIR:
     case ShardMessageKind::FULL_READ_DIR:
+    case ShardMessageKind::LOCAL_FILE_SPANS:
     case ShardMessageKind::FILE_SPANS:
     case ShardMessageKind::VISIT_DIRECTORIES:
     case ShardMessageKind::VISIT_FILES:
@@ -3815,11 +3816,14 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::SWAP_SPANS:
     case ShardMessageKind::SAME_DIRECTORY_RENAME_SNAPSHOT:
     case ShardMessageKind::SHARD_SNAPSHOT:
+    case ShardMessageKind::ADD_SPAN_LOCATION:
+    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");
     case ShardMessageKind::EMPTY:
         throw EGGS_EXCEPTION("unexpected EMPTY shard message kind");
+      break;
     }
 
     throw EGGS_EXCEPTION("bad message kind %s", kind);

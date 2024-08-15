@@ -27,8 +27,8 @@ func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockSe
 			panic(fmt.Errorf("got more block services than expected (%v > %v)", len(bss), expectedBlockServices))
 		}
 		if waitCurrentServicesCalcuation {
-			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShardBlockServicesReq{0})
-			if err != nil || len(resp.(*msgs.ShardBlockServicesResp).BlockServices) == 0 {
+			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShardBlockServicesDEPRECATEDReq{0})
+			if err != nil || len(resp.(*msgs.ShardBlockServicesDEPRECATEDResp).BlockServices) == 0 {
 				ll.Debug("current block services not calculated, will keep waiting")
 				goto KeepChecking
 			}

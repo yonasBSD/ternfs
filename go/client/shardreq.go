@@ -124,7 +124,7 @@ func (c *Client) shardRequestInternal(
 	switch r := reqBody.(type) {
 	case *msgs.ReadDirReq:
 		r.Mtu = mtu
-	case *msgs.FileSpansReq:
+	case *msgs.LocalFileSpansReq:
 		r.Mtu = mtu
 	case *msgs.VisitDirectoriesReq:
 		r.Mtu = mtu

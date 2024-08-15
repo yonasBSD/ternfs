@@ -84,10 +84,10 @@ func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 
 			logicalSize := uint64(0)
 			physicalSize := uint64(0)
-			spansReq := &msgs.FileSpansReq{
+			spansReq := &msgs.LocalFileSpansReq{
 				FileId: id,
 			}
-			spansResp := &msgs.FileSpansResp{}
+			spansResp := &msgs.LocalFileSpansResp{}
 			for {
 				if err := c.ShardRequest(log, id.Shard(), spansReq, spansResp); err != nil {
 					log.ErrorNoAlert("could not read spans for %v: %v", id, err)
@@ -932,11 +932,11 @@ func main() {
 				atomic.AddUint64(&histoCountBins[bin], 1)
 				atomic.AddUint64(&histoLogicalSizeBins[bin], resp.Size)
 				if *duPhysical {
-					fileSpansReq := msgs.FileSpansReq{
+					fileSpansReq := msgs.LocalFileSpansReq{
 						FileId:     id,
 						ByteOffset: 0,
 					}
-					fileSpansResp := msgs.FileSpansResp{}
+					fileSpansResp := msgs.LocalFileSpansResp{}
 					physicalSize := uint64(0)
 					for {
 						if err := c.ShardRequest(log, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
@@ -1078,10 +1078,10 @@ func main() {
 					if id.Type() == msgs.DIRECTORY {
 						return nil
 					}
-					req := msgs.FileSpansReq{
+					req := msgs.LocalFileSpansReq{
 						FileId: id,
 					}
-					resp := msgs.FileSpansResp{}
+					resp := msgs.LocalFileSpansResp{}
 					found := false
 					for {
 						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
@@ -1115,10 +1115,10 @@ func main() {
 					if id.Type() == msgs.DIRECTORY {
 						return nil
 					}
-					req := msgs.FileSpansReq{
+					req := msgs.LocalFileSpansReq{
 						FileId: id,
 					}
-					resp := msgs.FileSpansResp{}
+					resp := msgs.LocalFileSpansResp{}
 					for {
 						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 							return err
@@ -1466,10 +1466,10 @@ func main() {
 				if id.Type() == msgs.DIRECTORY {
 					return nil
 				}
-				req := msgs.FileSpansReq{
+				req := msgs.LocalFileSpansReq{
 					FileId: id,
 				}
-				resp := msgs.FileSpansResp{}
+				resp := msgs.LocalFileSpansResp{}
 				for {
 					if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
 						log.ErrorNoAlert("failed to fetch spans with err %v", err)

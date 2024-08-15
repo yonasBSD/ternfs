@@ -99,7 +99,7 @@ const char* eggsfs_err_str(int err);
 #define EGGSFS_SHARD_ADD_SPAN_CERTIFY 0x8
 #define EGGSFS_SHARD_LINK_FILE 0x9
 #define EGGSFS_SHARD_SOFT_UNLINK_FILE 0xA
-#define EGGSFS_SHARD_FILE_SPANS 0xB
+#define EGGSFS_SHARD_LOCAL_FILE_SPANS 0xB
 #define EGGSFS_SHARD_SAME_DIRECTORY_RENAME 0xC
 #define EGGSFS_SHARD_ADD_INLINE_SPAN 0x10
 #define EGGSFS_SHARD_SET_TIME 0x11
@@ -107,7 +107,7 @@ const char* eggsfs_err_str(int err);
 #define EGGSFS_SHARD_MOVE_SPAN 0x7B
 #define EGGSFS_SHARD_REMOVE_NON_OWNED_EDGE 0x74
 #define EGGSFS_SHARD_SAME_SHARD_HARD_FILE_UNLINK 0x75
-#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 17, "SET_TIME" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" }, { 116, "REMOVE_NON_OWNED_EDGE" }, { 117, "SAME_SHARD_HARD_FILE_UNLINK" })
+#define __print_eggsfs_shard_kind(k) __print_symbolic(k, { 1, "LOOKUP" }, { 2, "STAT_FILE" }, { 4, "STAT_DIRECTORY" }, { 5, "READ_DIR" }, { 6, "CONSTRUCT_FILE" }, { 7, "ADD_SPAN_INITIATE" }, { 8, "ADD_SPAN_CERTIFY" }, { 9, "LINK_FILE" }, { 10, "SOFT_UNLINK_FILE" }, { 11, "LOCAL_FILE_SPANS" }, { 12, "SAME_DIRECTORY_RENAME" }, { 16, "ADD_INLINE_SPAN" }, { 17, "SET_TIME" }, { 115, "FULL_READ_DIR" }, { 123, "MOVE_SPAN" }, { 116, "REMOVE_NON_OWNED_EDGE" }, { 117, "SAME_SHARD_HARD_FILE_UNLINK" })
 #define EGGSFS_SHARD_KIND_MAX 17
 static const u8 __eggsfs_shard_kind_index_mappings[256] = {255, 0, 1, 255, 2, 3, 4, 5, 6, 7, 8, 9, 10, 255, 255, 255, 11, 12, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 13, 15, 16, 255, 255, 255, 255, 255, 14, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* eggsfs_shard_kind_str(int kind);
@@ -1532,6 +1532,376 @@ static inline void _eggsfs_fetched_blocks_span_put_stripes_crc(struct eggsfs_bin
 #define eggsfs_fetched_blocks_span_put_end(ctx, prev, next) \
     { struct eggsfs_fetched_blocks_span_stripes_crc* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_fetched_blocks_span_end* next __attribute__((unused)) = NULL
+
+struct eggsfs_fetched_block_services_start;
+#define eggsfs_fetched_block_services_get_start(ctx, start) struct eggsfs_fetched_block_services_start* start = NULL
+
+struct eggsfs_fetched_block_services_location_id { u8 x; };
+static inline void _eggsfs_fetched_block_services_get_location_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_start** prev, struct eggsfs_fetched_block_services_location_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = *(u8*)(ctx->buf);
+            ctx->buf += 1;
+        }
+    }
+}
+#define eggsfs_fetched_block_services_get_location_id(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_location_id next; \
+    _eggsfs_fetched_block_services_get_location_id(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_storage_class { u8 x; };
+static inline void _eggsfs_fetched_block_services_get_storage_class(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_location_id* prev, struct eggsfs_fetched_block_services_storage_class* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = *(u8*)(ctx->buf);
+            ctx->buf += 1;
+        }
+    }
+}
+#define eggsfs_fetched_block_services_get_storage_class(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_storage_class next; \
+    _eggsfs_fetched_block_services_get_storage_class(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_parity { u8 x; };
+static inline void _eggsfs_fetched_block_services_get_parity(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_storage_class* prev, struct eggsfs_fetched_block_services_parity* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = *(u8*)(ctx->buf);
+            ctx->buf += 1;
+        }
+    }
+}
+#define eggsfs_fetched_block_services_get_parity(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_parity next; \
+    _eggsfs_fetched_block_services_get_parity(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_stripes { u8 x; };
+static inline void _eggsfs_fetched_block_services_get_stripes(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_parity* prev, struct eggsfs_fetched_block_services_stripes* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = *(u8*)(ctx->buf);
+            ctx->buf += 1;
+        }
+    }
+}
+#define eggsfs_fetched_block_services_get_stripes(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_stripes next; \
+    _eggsfs_fetched_block_services_get_stripes(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_cell_size { u32 x; };
+static inline void _eggsfs_fetched_block_services_get_cell_size(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_stripes* prev, struct eggsfs_fetched_block_services_cell_size* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_fetched_block_services_get_cell_size(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_cell_size next; \
+    _eggsfs_fetched_block_services_get_cell_size(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_blocks { u16 len; };
+static inline void _eggsfs_fetched_block_services_get_blocks(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_cell_size* prev, struct eggsfs_fetched_block_services_blocks* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->len = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    } else {
+        next->len = 0;
+    }
+}
+#define eggsfs_fetched_block_services_get_blocks(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_blocks next; \
+    _eggsfs_fetched_block_services_get_blocks(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_stripes_crc { u16 len; };
+static inline void _eggsfs_fetched_block_services_get_stripes_crc(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_blocks* prev, struct eggsfs_fetched_block_services_stripes_crc* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->len = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    } else {
+        next->len = 0;
+    }
+}
+#define eggsfs_fetched_block_services_get_stripes_crc(ctx, prev, next) \
+    struct eggsfs_fetched_block_services_stripes_crc next; \
+    _eggsfs_fetched_block_services_get_stripes_crc(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_block_services_end;
+#define eggsfs_fetched_block_services_get_end(ctx, prev, next) \
+    { struct eggsfs_fetched_block_services_stripes_crc* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetched_block_services_end* next = NULL
+
+static inline void eggsfs_fetched_block_services_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_block_services_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_fetched_block_services_put_start(ctx, start) struct eggsfs_fetched_block_services_start* start = NULL
+
+static inline void _eggsfs_fetched_block_services_put_location_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_start** prev, struct eggsfs_fetched_block_services_location_id* next, u8 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 1);
+    *(u8*)(ctx->cursor) = x;
+    ctx->cursor += 1;
+}
+#define eggsfs_fetched_block_services_put_location_id(ctx, prev, next, x) \
+    struct eggsfs_fetched_block_services_location_id next; \
+    _eggsfs_fetched_block_services_put_location_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_block_services_put_storage_class(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_location_id* prev, struct eggsfs_fetched_block_services_storage_class* next, u8 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 1);
+    *(u8*)(ctx->cursor) = x;
+    ctx->cursor += 1;
+}
+#define eggsfs_fetched_block_services_put_storage_class(ctx, prev, next, x) \
+    struct eggsfs_fetched_block_services_storage_class next; \
+    _eggsfs_fetched_block_services_put_storage_class(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_block_services_put_parity(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_storage_class* prev, struct eggsfs_fetched_block_services_parity* next, u8 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 1);
+    *(u8*)(ctx->cursor) = x;
+    ctx->cursor += 1;
+}
+#define eggsfs_fetched_block_services_put_parity(ctx, prev, next, x) \
+    struct eggsfs_fetched_block_services_parity next; \
+    _eggsfs_fetched_block_services_put_parity(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_block_services_put_stripes(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_parity* prev, struct eggsfs_fetched_block_services_stripes* next, u8 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 1);
+    *(u8*)(ctx->cursor) = x;
+    ctx->cursor += 1;
+}
+#define eggsfs_fetched_block_services_put_stripes(ctx, prev, next, x) \
+    struct eggsfs_fetched_block_services_stripes next; \
+    _eggsfs_fetched_block_services_put_stripes(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_block_services_put_cell_size(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_stripes* prev, struct eggsfs_fetched_block_services_cell_size* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_fetched_block_services_put_cell_size(ctx, prev, next, x) \
+    struct eggsfs_fetched_block_services_cell_size next; \
+    _eggsfs_fetched_block_services_put_cell_size(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_block_services_put_blocks(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_cell_size* prev, struct eggsfs_fetched_block_services_blocks* next, int len) {
+    next = NULL;
+    BUG_ON(len < 0 || len >= 1<<16);
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(len, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_fetched_block_services_put_blocks(ctx, prev, next, len) \
+    struct eggsfs_fetched_block_services_blocks next; \
+    _eggsfs_fetched_block_services_put_blocks(ctx, &(prev), &(next), len)
+
+static inline void _eggsfs_fetched_block_services_put_stripes_crc(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_block_services_blocks* prev, struct eggsfs_fetched_block_services_stripes_crc* next, int len) {
+    next = NULL;
+    BUG_ON(len < 0 || len >= 1<<16);
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(len, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_fetched_block_services_put_stripes_crc(ctx, prev, next, len) \
+    struct eggsfs_fetched_block_services_stripes_crc next; \
+    _eggsfs_fetched_block_services_put_stripes_crc(ctx, &(prev), &(next), len)
+
+#define eggsfs_fetched_block_services_put_end(ctx, prev, next) \
+    { struct eggsfs_fetched_block_services_stripes_crc* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetched_block_services_end* next __attribute__((unused)) = NULL
+
+struct eggsfs_fetched_locations_start;
+#define eggsfs_fetched_locations_get_start(ctx, start) struct eggsfs_fetched_locations_start* start = NULL
+
+struct eggsfs_fetched_locations_locations { u16 len; };
+static inline void _eggsfs_fetched_locations_get_locations(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_locations_start** prev, struct eggsfs_fetched_locations_locations* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 2)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->len = get_unaligned_le16(ctx->buf);
+            ctx->buf += 2;
+        }
+    } else {
+        next->len = 0;
+    }
+}
+#define eggsfs_fetched_locations_get_locations(ctx, prev, next) \
+    struct eggsfs_fetched_locations_locations next; \
+    _eggsfs_fetched_locations_get_locations(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_locations_end;
+#define eggsfs_fetched_locations_get_end(ctx, prev, next) \
+    { struct eggsfs_fetched_locations_locations* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetched_locations_end* next = NULL
+
+static inline void eggsfs_fetched_locations_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_locations_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_fetched_locations_put_start(ctx, start) struct eggsfs_fetched_locations_start* start = NULL
+
+static inline void _eggsfs_fetched_locations_put_locations(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_locations_start** prev, struct eggsfs_fetched_locations_locations* next, int len) {
+    next = NULL;
+    BUG_ON(len < 0 || len >= 1<<16);
+    BUG_ON(ctx->end - ctx->cursor < 2);
+    put_unaligned_le16(len, ctx->cursor);
+    ctx->cursor += 2;
+}
+#define eggsfs_fetched_locations_put_locations(ctx, prev, next, len) \
+    struct eggsfs_fetched_locations_locations next; \
+    _eggsfs_fetched_locations_put_locations(ctx, &(prev), &(next), len)
+
+#define eggsfs_fetched_locations_put_end(ctx, prev, next) \
+    { struct eggsfs_fetched_locations_locations* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetched_locations_end* next __attribute__((unused)) = NULL
+
+#define EGGSFS_FETCHED_SPAN_HEADER_FULL_SIZE 17
+struct eggsfs_fetched_span_header_full_start;
+#define eggsfs_fetched_span_header_full_get_start(ctx, start) struct eggsfs_fetched_span_header_full_start* start = NULL
+
+struct eggsfs_fetched_span_header_full_byte_offset { u64 x; };
+static inline void _eggsfs_fetched_span_header_full_get_byte_offset(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_span_header_full_start** prev, struct eggsfs_fetched_span_header_full_byte_offset* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_fetched_span_header_full_get_byte_offset(ctx, prev, next) \
+    struct eggsfs_fetched_span_header_full_byte_offset next; \
+    _eggsfs_fetched_span_header_full_get_byte_offset(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_span_header_full_size { u32 x; };
+static inline void _eggsfs_fetched_span_header_full_get_size(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_span_header_full_byte_offset* prev, struct eggsfs_fetched_span_header_full_size* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_fetched_span_header_full_get_size(ctx, prev, next) \
+    struct eggsfs_fetched_span_header_full_size next; \
+    _eggsfs_fetched_span_header_full_get_size(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_span_header_full_crc { u32 x; };
+static inline void _eggsfs_fetched_span_header_full_get_crc(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_span_header_full_size* prev, struct eggsfs_fetched_span_header_full_crc* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 4)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le32(ctx->buf);
+            ctx->buf += 4;
+        }
+    }
+}
+#define eggsfs_fetched_span_header_full_get_crc(ctx, prev, next) \
+    struct eggsfs_fetched_span_header_full_crc next; \
+    _eggsfs_fetched_span_header_full_get_crc(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_span_header_full_is_inline { bool x; };
+static inline void _eggsfs_fetched_span_header_full_get_is_inline(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_span_header_full_crc* prev, struct eggsfs_fetched_span_header_full_is_inline* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = *(bool*)(ctx->buf);
+            ctx->buf += 1;
+        }
+    }
+}
+#define eggsfs_fetched_span_header_full_get_is_inline(ctx, prev, next) \
+    struct eggsfs_fetched_span_header_full_is_inline next; \
+    _eggsfs_fetched_span_header_full_get_is_inline(ctx, &(prev), &(next))
+
+struct eggsfs_fetched_span_header_full_end;
+#define eggsfs_fetched_span_header_full_get_end(ctx, prev, next) \
+    { struct eggsfs_fetched_span_header_full_is_inline* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetched_span_header_full_end* next = NULL
+
+static inline void eggsfs_fetched_span_header_full_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetched_span_header_full_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define eggsfs_fetched_span_header_full_put_start(ctx, start) struct eggsfs_fetched_span_header_full_start* start = NULL
+
+static inline void _eggsfs_fetched_span_header_full_put_byte_offset(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_span_header_full_start** prev, struct eggsfs_fetched_span_header_full_byte_offset* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_fetched_span_header_full_put_byte_offset(ctx, prev, next, x) \
+    struct eggsfs_fetched_span_header_full_byte_offset next; \
+    _eggsfs_fetched_span_header_full_put_byte_offset(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_span_header_full_put_size(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_span_header_full_byte_offset* prev, struct eggsfs_fetched_span_header_full_size* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_fetched_span_header_full_put_size(ctx, prev, next, x) \
+    struct eggsfs_fetched_span_header_full_size next; \
+    _eggsfs_fetched_span_header_full_put_size(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_span_header_full_put_crc(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_span_header_full_size* prev, struct eggsfs_fetched_span_header_full_crc* next, u32 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 4);
+    put_unaligned_le32(x, ctx->cursor);
+    ctx->cursor += 4;
+}
+#define eggsfs_fetched_span_header_full_put_crc(ctx, prev, next, x) \
+    struct eggsfs_fetched_span_header_full_crc next; \
+    _eggsfs_fetched_span_header_full_put_crc(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetched_span_header_full_put_is_inline(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetched_span_header_full_crc* prev, struct eggsfs_fetched_span_header_full_is_inline* next, bool x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 1);
+    *(bool*)(ctx->cursor) = x;
+    ctx->cursor += 1;
+}
+#define eggsfs_fetched_span_header_full_put_is_inline(ctx, prev, next, x) \
+    struct eggsfs_fetched_span_header_full_is_inline next; \
+    _eggsfs_fetched_span_header_full_put_is_inline(ctx, &(prev), &(next), x)
+
+#define eggsfs_fetched_span_header_full_put_end(ctx, prev, next) \
+    { struct eggsfs_fetched_span_header_full_is_inline* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_fetched_span_header_full_end* next __attribute__((unused)) = NULL
 
 struct eggsfs_blacklist_entry_start;
 #define eggsfs_blacklist_entry_get_start(ctx, start) struct eggsfs_blacklist_entry_start* start = NULL
@@ -3414,12 +3784,12 @@ static inline void _eggsfs_soft_unlink_file_resp_put_delete_creation_time(struct
     { struct eggsfs_soft_unlink_file_resp_delete_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_soft_unlink_file_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_FILE_SPANS_REQ_SIZE 22
-struct eggsfs_file_spans_req_start;
-#define eggsfs_file_spans_req_get_start(ctx, start) struct eggsfs_file_spans_req_start* start = NULL
+#define EGGSFS_LOCAL_FILE_SPANS_REQ_SIZE 22
+struct eggsfs_local_file_spans_req_start;
+#define eggsfs_local_file_spans_req_get_start(ctx, start) struct eggsfs_local_file_spans_req_start* start = NULL
 
-struct eggsfs_file_spans_req_file_id { u64 x; };
-static inline void _eggsfs_file_spans_req_get_file_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_start** prev, struct eggsfs_file_spans_req_file_id* next) {
+struct eggsfs_local_file_spans_req_file_id { u64 x; };
+static inline void _eggsfs_local_file_spans_req_get_file_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_req_start** prev, struct eggsfs_local_file_spans_req_file_id* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3429,12 +3799,12 @@ static inline void _eggsfs_file_spans_req_get_file_id(struct eggsfs_bincode_get_
         }
     }
 }
-#define eggsfs_file_spans_req_get_file_id(ctx, prev, next) \
-    struct eggsfs_file_spans_req_file_id next; \
-    _eggsfs_file_spans_req_get_file_id(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_req_get_file_id(ctx, prev, next) \
+    struct eggsfs_local_file_spans_req_file_id next; \
+    _eggsfs_local_file_spans_req_get_file_id(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_req_byte_offset { u64 x; };
-static inline void _eggsfs_file_spans_req_get_byte_offset(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_file_id* prev, struct eggsfs_file_spans_req_byte_offset* next) {
+struct eggsfs_local_file_spans_req_byte_offset { u64 x; };
+static inline void _eggsfs_local_file_spans_req_get_byte_offset(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_req_file_id* prev, struct eggsfs_local_file_spans_req_byte_offset* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3444,12 +3814,12 @@ static inline void _eggsfs_file_spans_req_get_byte_offset(struct eggsfs_bincode_
         }
     }
 }
-#define eggsfs_file_spans_req_get_byte_offset(ctx, prev, next) \
-    struct eggsfs_file_spans_req_byte_offset next; \
-    _eggsfs_file_spans_req_get_byte_offset(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_req_get_byte_offset(ctx, prev, next) \
+    struct eggsfs_local_file_spans_req_byte_offset next; \
+    _eggsfs_local_file_spans_req_get_byte_offset(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_req_limit { u32 x; };
-static inline void _eggsfs_file_spans_req_get_limit(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_byte_offset* prev, struct eggsfs_file_spans_req_limit* next) {
+struct eggsfs_local_file_spans_req_limit { u32 x; };
+static inline void _eggsfs_local_file_spans_req_get_limit(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_req_byte_offset* prev, struct eggsfs_local_file_spans_req_limit* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 4)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3459,12 +3829,12 @@ static inline void _eggsfs_file_spans_req_get_limit(struct eggsfs_bincode_get_ct
         }
     }
 }
-#define eggsfs_file_spans_req_get_limit(ctx, prev, next) \
-    struct eggsfs_file_spans_req_limit next; \
-    _eggsfs_file_spans_req_get_limit(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_req_get_limit(ctx, prev, next) \
+    struct eggsfs_local_file_spans_req_limit next; \
+    _eggsfs_local_file_spans_req_get_limit(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_req_mtu { u16 x; };
-static inline void _eggsfs_file_spans_req_get_mtu(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_limit* prev, struct eggsfs_file_spans_req_mtu* next) {
+struct eggsfs_local_file_spans_req_mtu { u16 x; };
+static inline void _eggsfs_local_file_spans_req_get_mtu(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_req_limit* prev, struct eggsfs_local_file_spans_req_mtu* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3474,72 +3844,72 @@ static inline void _eggsfs_file_spans_req_get_mtu(struct eggsfs_bincode_get_ctx*
         }
     }
 }
-#define eggsfs_file_spans_req_get_mtu(ctx, prev, next) \
-    struct eggsfs_file_spans_req_mtu next; \
-    _eggsfs_file_spans_req_get_mtu(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_req_get_mtu(ctx, prev, next) \
+    struct eggsfs_local_file_spans_req_mtu next; \
+    _eggsfs_local_file_spans_req_get_mtu(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_req_end;
-#define eggsfs_file_spans_req_get_end(ctx, prev, next) \
-    { struct eggsfs_file_spans_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_file_spans_req_end* next = NULL
+struct eggsfs_local_file_spans_req_end;
+#define eggsfs_local_file_spans_req_get_end(ctx, prev, next) \
+    { struct eggsfs_local_file_spans_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_file_spans_req_end* next = NULL
 
-static inline void eggsfs_file_spans_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_req_end* end) {
+static inline void eggsfs_local_file_spans_req_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_req_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_file_spans_req_put_start(ctx, start) struct eggsfs_file_spans_req_start* start = NULL
+#define eggsfs_local_file_spans_req_put_start(ctx, start) struct eggsfs_local_file_spans_req_start* start = NULL
 
-static inline void _eggsfs_file_spans_req_put_file_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_req_start** prev, struct eggsfs_file_spans_req_file_id* next, u64 x) {
+static inline void _eggsfs_local_file_spans_req_put_file_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_req_start** prev, struct eggsfs_local_file_spans_req_file_id* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_file_spans_req_put_file_id(ctx, prev, next, x) \
-    struct eggsfs_file_spans_req_file_id next; \
-    _eggsfs_file_spans_req_put_file_id(ctx, &(prev), &(next), x)
+#define eggsfs_local_file_spans_req_put_file_id(ctx, prev, next, x) \
+    struct eggsfs_local_file_spans_req_file_id next; \
+    _eggsfs_local_file_spans_req_put_file_id(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_file_spans_req_put_byte_offset(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_req_file_id* prev, struct eggsfs_file_spans_req_byte_offset* next, u64 x) {
+static inline void _eggsfs_local_file_spans_req_put_byte_offset(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_req_file_id* prev, struct eggsfs_local_file_spans_req_byte_offset* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_file_spans_req_put_byte_offset(ctx, prev, next, x) \
-    struct eggsfs_file_spans_req_byte_offset next; \
-    _eggsfs_file_spans_req_put_byte_offset(ctx, &(prev), &(next), x)
+#define eggsfs_local_file_spans_req_put_byte_offset(ctx, prev, next, x) \
+    struct eggsfs_local_file_spans_req_byte_offset next; \
+    _eggsfs_local_file_spans_req_put_byte_offset(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_file_spans_req_put_limit(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_req_byte_offset* prev, struct eggsfs_file_spans_req_limit* next, u32 x) {
+static inline void _eggsfs_local_file_spans_req_put_limit(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_req_byte_offset* prev, struct eggsfs_local_file_spans_req_limit* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_le32(x, ctx->cursor);
     ctx->cursor += 4;
 }
-#define eggsfs_file_spans_req_put_limit(ctx, prev, next, x) \
-    struct eggsfs_file_spans_req_limit next; \
-    _eggsfs_file_spans_req_put_limit(ctx, &(prev), &(next), x)
+#define eggsfs_local_file_spans_req_put_limit(ctx, prev, next, x) \
+    struct eggsfs_local_file_spans_req_limit next; \
+    _eggsfs_local_file_spans_req_put_limit(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_file_spans_req_put_mtu(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_req_limit* prev, struct eggsfs_file_spans_req_mtu* next, u16 x) {
+static inline void _eggsfs_local_file_spans_req_put_mtu(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_req_limit* prev, struct eggsfs_local_file_spans_req_mtu* next, u16 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(x, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_file_spans_req_put_mtu(ctx, prev, next, x) \
-    struct eggsfs_file_spans_req_mtu next; \
-    _eggsfs_file_spans_req_put_mtu(ctx, &(prev), &(next), x)
+#define eggsfs_local_file_spans_req_put_mtu(ctx, prev, next, x) \
+    struct eggsfs_local_file_spans_req_mtu next; \
+    _eggsfs_local_file_spans_req_put_mtu(ctx, &(prev), &(next), x)
 
-#define eggsfs_file_spans_req_put_end(ctx, prev, next) \
-    { struct eggsfs_file_spans_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_file_spans_req_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_file_spans_req_put_end(ctx, prev, next) \
+    { struct eggsfs_local_file_spans_req_mtu* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_file_spans_req_end* next __attribute__((unused)) = NULL
 
-struct eggsfs_file_spans_resp_start;
-#define eggsfs_file_spans_resp_get_start(ctx, start) struct eggsfs_file_spans_resp_start* start = NULL
+struct eggsfs_local_file_spans_resp_start;
+#define eggsfs_local_file_spans_resp_get_start(ctx, start) struct eggsfs_local_file_spans_resp_start* start = NULL
 
-struct eggsfs_file_spans_resp_next_offset { u64 x; };
-static inline void _eggsfs_file_spans_resp_get_next_offset(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_resp_start** prev, struct eggsfs_file_spans_resp_next_offset* next) {
+struct eggsfs_local_file_spans_resp_next_offset { u64 x; };
+static inline void _eggsfs_local_file_spans_resp_get_next_offset(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_resp_start** prev, struct eggsfs_local_file_spans_resp_next_offset* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3549,12 +3919,12 @@ static inline void _eggsfs_file_spans_resp_get_next_offset(struct eggsfs_bincode
         }
     }
 }
-#define eggsfs_file_spans_resp_get_next_offset(ctx, prev, next) \
-    struct eggsfs_file_spans_resp_next_offset next; \
-    _eggsfs_file_spans_resp_get_next_offset(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_resp_get_next_offset(ctx, prev, next) \
+    struct eggsfs_local_file_spans_resp_next_offset next; \
+    _eggsfs_local_file_spans_resp_get_next_offset(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_resp_block_services { u16 len; };
-static inline void _eggsfs_file_spans_resp_get_block_services(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_resp_next_offset* prev, struct eggsfs_file_spans_resp_block_services* next) {
+struct eggsfs_local_file_spans_resp_block_services { u16 len; };
+static inline void _eggsfs_local_file_spans_resp_get_block_services(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_resp_next_offset* prev, struct eggsfs_local_file_spans_resp_block_services* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3566,12 +3936,12 @@ static inline void _eggsfs_file_spans_resp_get_block_services(struct eggsfs_binc
         next->len = 0;
     }
 }
-#define eggsfs_file_spans_resp_get_block_services(ctx, prev, next) \
-    struct eggsfs_file_spans_resp_block_services next; \
-    _eggsfs_file_spans_resp_get_block_services(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_resp_get_block_services(ctx, prev, next) \
+    struct eggsfs_local_file_spans_resp_block_services next; \
+    _eggsfs_local_file_spans_resp_get_block_services(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_resp_spans { u16 len; };
-static inline void _eggsfs_file_spans_resp_get_spans(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_resp_block_services* prev, struct eggsfs_file_spans_resp_spans* next) {
+struct eggsfs_local_file_spans_resp_spans { u16 len; };
+static inline void _eggsfs_local_file_spans_resp_get_spans(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_resp_block_services* prev, struct eggsfs_local_file_spans_resp_spans* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -3583,58 +3953,58 @@ static inline void _eggsfs_file_spans_resp_get_spans(struct eggsfs_bincode_get_c
         next->len = 0;
     }
 }
-#define eggsfs_file_spans_resp_get_spans(ctx, prev, next) \
-    struct eggsfs_file_spans_resp_spans next; \
-    _eggsfs_file_spans_resp_get_spans(ctx, &(prev), &(next))
+#define eggsfs_local_file_spans_resp_get_spans(ctx, prev, next) \
+    struct eggsfs_local_file_spans_resp_spans next; \
+    _eggsfs_local_file_spans_resp_get_spans(ctx, &(prev), &(next))
 
-struct eggsfs_file_spans_resp_end;
-#define eggsfs_file_spans_resp_get_end(ctx, prev, next) \
-    { struct eggsfs_file_spans_resp_spans* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_file_spans_resp_end* next = NULL
+struct eggsfs_local_file_spans_resp_end;
+#define eggsfs_local_file_spans_resp_get_end(ctx, prev, next) \
+    { struct eggsfs_local_file_spans_resp_spans* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_file_spans_resp_end* next = NULL
 
-static inline void eggsfs_file_spans_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_file_spans_resp_end* end) {
+static inline void eggsfs_local_file_spans_resp_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_local_file_spans_resp_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define eggsfs_file_spans_resp_put_start(ctx, start) struct eggsfs_file_spans_resp_start* start = NULL
+#define eggsfs_local_file_spans_resp_put_start(ctx, start) struct eggsfs_local_file_spans_resp_start* start = NULL
 
-static inline void _eggsfs_file_spans_resp_put_next_offset(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_resp_start** prev, struct eggsfs_file_spans_resp_next_offset* next, u64 x) {
+static inline void _eggsfs_local_file_spans_resp_put_next_offset(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_resp_start** prev, struct eggsfs_local_file_spans_resp_next_offset* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define eggsfs_file_spans_resp_put_next_offset(ctx, prev, next, x) \
-    struct eggsfs_file_spans_resp_next_offset next; \
-    _eggsfs_file_spans_resp_put_next_offset(ctx, &(prev), &(next), x)
+#define eggsfs_local_file_spans_resp_put_next_offset(ctx, prev, next, x) \
+    struct eggsfs_local_file_spans_resp_next_offset next; \
+    _eggsfs_local_file_spans_resp_put_next_offset(ctx, &(prev), &(next), x)
 
-static inline void _eggsfs_file_spans_resp_put_block_services(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_resp_next_offset* prev, struct eggsfs_file_spans_resp_block_services* next, int len) {
+static inline void _eggsfs_local_file_spans_resp_put_block_services(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_resp_next_offset* prev, struct eggsfs_local_file_spans_resp_block_services* next, int len) {
     next = NULL;
     BUG_ON(len < 0 || len >= 1<<16);
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(len, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_file_spans_resp_put_block_services(ctx, prev, next, len) \
-    struct eggsfs_file_spans_resp_block_services next; \
-    _eggsfs_file_spans_resp_put_block_services(ctx, &(prev), &(next), len)
+#define eggsfs_local_file_spans_resp_put_block_services(ctx, prev, next, len) \
+    struct eggsfs_local_file_spans_resp_block_services next; \
+    _eggsfs_local_file_spans_resp_put_block_services(ctx, &(prev), &(next), len)
 
-static inline void _eggsfs_file_spans_resp_put_spans(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_file_spans_resp_block_services* prev, struct eggsfs_file_spans_resp_spans* next, int len) {
+static inline void _eggsfs_local_file_spans_resp_put_spans(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_local_file_spans_resp_block_services* prev, struct eggsfs_local_file_spans_resp_spans* next, int len) {
     next = NULL;
     BUG_ON(len < 0 || len >= 1<<16);
     BUG_ON(ctx->end - ctx->cursor < 2);
     put_unaligned_le16(len, ctx->cursor);
     ctx->cursor += 2;
 }
-#define eggsfs_file_spans_resp_put_spans(ctx, prev, next, len) \
-    struct eggsfs_file_spans_resp_spans next; \
-    _eggsfs_file_spans_resp_put_spans(ctx, &(prev), &(next), len)
+#define eggsfs_local_file_spans_resp_put_spans(ctx, prev, next, len) \
+    struct eggsfs_local_file_spans_resp_spans next; \
+    _eggsfs_local_file_spans_resp_put_spans(ctx, &(prev), &(next), len)
 
-#define eggsfs_file_spans_resp_put_end(ctx, prev, next) \
-    { struct eggsfs_file_spans_resp_spans* __dummy __attribute__((unused)) = &(prev); }\
-    struct eggsfs_file_spans_resp_end* next __attribute__((unused)) = NULL
+#define eggsfs_local_file_spans_resp_put_end(ctx, prev, next) \
+    { struct eggsfs_local_file_spans_resp_spans* __dummy __attribute__((unused)) = &(prev); }\
+    struct eggsfs_local_file_spans_resp_end* next __attribute__((unused)) = NULL
 
 #define EGGSFS_SAME_DIRECTORY_RENAME_REQ_MAX_SIZE 536
 struct eggsfs_same_directory_rename_req_start;

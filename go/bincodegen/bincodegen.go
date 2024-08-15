@@ -1312,6 +1312,9 @@ func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []re
 //go:embed FetchedSpan.hpp
 var fetchedSpanCpp string
 
+//go:embed FetchedFullSpan.hpp
+var fetchedFullSpanCpp string
+
 func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hppOut := new(bytes.Buffer)
 	cppOut := new(bytes.Buffer)
@@ -1340,6 +1343,10 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		if typ == reflect.TypeOf(msgs.FetchedBlocksSpan{}) {
 			// inject the hand-written definition for FetchedSpan
 			hppOut.Write([]byte(fetchedSpanCpp))
+		}
+		if typ == reflect.TypeOf(msgs.FetchedSpanHeaderFull{}) {
+			// inject the hand-written definition for FetchedSpan
+			hppOut.Write([]byte(fetchedFullSpanCpp))
 		}
 	}
 	for _, reqResp := range shardReqResps {
@@ -1400,6 +1407,8 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.RemoveZeroBlockServiceFilesEntry{}),
 			reflect.TypeOf(msgs.SwapSpansEntry{}),
 			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotEntry{}),
+			reflect.TypeOf(msgs.AddSpanAtLocationInitiateEntry{}),
+			reflect.TypeOf(msgs.AddSpanLocationEntry{}),
 		},
 	)
 
@@ -1572,8 +1581,8 @@ func main() {
 		},
 		{
 			0x0B,
-			reflect.TypeOf(msgs.FileSpansReq{}),
-			reflect.TypeOf(msgs.FileSpansResp{}),
+			reflect.TypeOf(msgs.LocalFileSpansReq{}),
+			reflect.TypeOf(msgs.LocalFileSpansResp{}),
 		},
 		{
 			0x0C,
@@ -1628,6 +1637,16 @@ func main() {
 			0x12,
 			reflect.TypeOf(msgs.ShardSnapshotReq{}),
 			reflect.TypeOf(msgs.ShardSnapshotResp{}),
+		},
+		{
+			0x14,
+			reflect.TypeOf(msgs.FileSpansReq{}),
+			reflect.TypeOf(msgs.FileSpansResp{}),
+		},
+		{
+			0x15,
+			reflect.TypeOf(msgs.AddSpanLocationReq{}),
+			reflect.TypeOf(msgs.AddSpanLocationResp{}),
 		},
 		{
 			0x0D,
@@ -1695,6 +1714,12 @@ func main() {
 			0x7F,
 			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotReq{}),
 			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotResp{}),
+		},
+		// Needs to be after AddSpanInitiateWithReferenceReq
+		{
+			0x13,
+			reflect.TypeOf(msgs.AddSpanAtLocationInitiateReq{}),
+			reflect.TypeOf(msgs.AddSpanAtLocationInitiateResp{}),
 		},
 		// UNSAFE OPERATIONS -- these can break invariants.
 		{
@@ -1861,8 +1886,8 @@ func main() {
 		},
 		{
 			0x11,
-			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
-			reflect.TypeOf(msgs.ShardBlockServicesResp{}),
+			reflect.TypeOf(msgs.ShardBlockServicesDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.ShardBlockServicesDEPRECATEDResp{}),
 		},
 		{
 			0x13,
@@ -1891,8 +1916,8 @@ func main() {
 		},
 		{
 			0x18,
-			reflect.TypeOf(msgs.RegisterBlockServicesDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.RegisterBlockServicesDEPRECATEDResp{}),
+			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
+			reflect.TypeOf(msgs.ShardBlockServicesResp{}),
 		},
 		{
 			0x19,
@@ -2016,6 +2041,9 @@ func main() {
 		reflect.TypeOf(msgs.FetchedSpanHeader{}),
 		reflect.TypeOf(msgs.FetchedInlineSpan{}),
 		reflect.TypeOf(msgs.FetchedBlocksSpan{}),
+		reflect.TypeOf(msgs.FetchedBlockServices{}),
+		reflect.TypeOf(msgs.FetchedLocations{}),
+		reflect.TypeOf(msgs.FetchedSpanHeaderFull{}),
 		reflect.TypeOf(msgs.BlacklistEntry{}),
 		reflect.TypeOf(msgs.Edge{}),
 		reflect.TypeOf(msgs.FullReadDirCursor{}),
@@ -2025,12 +2053,12 @@ func main() {
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockServiceInfo{}),
+		reflect.TypeOf(msgs.BlockServiceInfoShort{}),
 
 		reflect.TypeOf(msgs.SpanPolicy{}),
 		reflect.TypeOf(msgs.BlockPolicy{}),
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
 		reflect.TypeOf(msgs.FullShardInfo{}),
-		reflect.TypeOf(msgs.RegisterBlockServiceInfoDEPRECATED{}),
 		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 		reflect.TypeOf(msgs.CdcInfo{}),
 		reflect.TypeOf(msgs.LocationInfo{}),

@@ -100,7 +100,7 @@ const char* eggsfs_shard_kind_str(int kind) {
     case 8: return "ADD_SPAN_CERTIFY";
     case 9: return "LINK_FILE";
     case 10: return "SOFT_UNLINK_FILE";
-    case 11: return "FILE_SPANS";
+    case 11: return "LOCAL_FILE_SPANS";
     case 12: return "SAME_DIRECTORY_RENAME";
     case 16: return "ADD_INLINE_SPAN";
     case 17: return "SET_TIME";

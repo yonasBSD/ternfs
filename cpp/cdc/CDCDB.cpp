@@ -181,9 +181,12 @@ static DirectoriesNeedingLock directoriesNeedingLock(const CDCReqContainer& req)
         toLock.add(req.getRenameFile().newOwnerId);
         break;
     case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
-        // TODO I'm pretty sure the target id is fine, as
-        // in, does not need locking.
+        // Lock needs to be acquired on both owner and target directory.
+        // Lock on owner is needed for remove owner step of the state machine.
+        // Lock on target is needed so that the target does not get removed by GC after
+        // we unlink the owner but before we unlock the edge.
         toLock.add(req.getSoftUnlinkDirectory().ownerId);
+        toLock.add(req.getSoftUnlinkDirectory().targetId);
         break;
     case CDCMessageKind::RENAME_DIRECTORY:
         toLock.add(req.getRenameDirectory().oldOwnerId);

@@ -125,6 +125,10 @@ void ShardLogEntry::unpack(BincodeBuf& buf) {
     body.unpack(buf);
 }
 
+std::ostream& operator<<(std::ostream& out, const ShardLogEntry& entry) {
+    return out << "ShardLogEntry(idx=" << entry.idx << ",time=" << entry.time << ",body=" << entry.body << ")";
+}
+
 static char maxNameChars[255];
 __attribute__((constructor))
 static void fillMaxNameChars() {

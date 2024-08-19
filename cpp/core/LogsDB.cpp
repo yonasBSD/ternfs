@@ -1849,3 +1849,16 @@ void LogsDB::_getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx&
         ++it;
     }
 }
+
+void LogsDB::_getLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx start, size_t count, std::vector<LogsDBLogEntry>& logEntriesOut) {
+    logEntriesOut.clear();
+    DataPartitions data(env, sharedDB);
+    bool initSuccess = data.init(false);
+    ALWAYS_ASSERT(initSuccess, "Failed to init LogsDB, check if you need to run with \"initialStart\" flag!");
+    auto it = data.getIterator();
+    it.seek(start);
+    while(it.valid() && logEntriesOut.size() < count) {
+        logEntriesOut.emplace_back(it.entry());
+        ++it;
+    }
+}

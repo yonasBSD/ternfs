@@ -29,6 +29,8 @@ struct ShardLogEntry {
     void unpack(BincodeBuf& buf);
 };
 
+std::ostream& operator<<(std::ostream& out, const ShardLogEntry& entry);
+
 bool readOnlyShardReq(const ShardMessageKind kind);
 
 DirectoryInfo defaultDirectoryInfo();

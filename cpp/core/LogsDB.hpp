@@ -139,5 +139,6 @@ public:
 private:
     friend class LogsDBTools;
     static void _getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx& lastReleasedOut, std::vector<LogIdx>& unreleasedLogEntriesOut);
+    static void _getLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx start, size_t count, std::vector<LogsDBLogEntry>& logEntriesOut);
     LogsDBImpl* _impl;
 };

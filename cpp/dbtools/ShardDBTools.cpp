@@ -128,6 +128,38 @@ void ShardDBTools::outputUnreleasedState(const std::string& dbPath) {
     LOG_INFO(env, "Unreleased entries: %s", unreleasedLogEntries);
 }
 
+void ShardDBTools::outputLogEntries(const std::string& dbPath, LogIdx startIdx, size_t count) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions);
+    size_t entriesAtOnce = std::min<size_t>(count, 1 << 20);
+    std::vector<LogsDBLogEntry> logEntries;
+    logEntries.reserve(entriesAtOnce);
+    while (count > 0) {
+        entriesAtOnce = std::min(count, entriesAtOnce);
+        LogsDBTools::getLogEntries(env, sharedDb, startIdx, entriesAtOnce, logEntries);
+        for (const auto& entry : logEntries) {
+            BincodeBuf buf((char*)&entry.value.front(), entry.value.size());
+            ShardLogEntry shardEntry;
+            shardEntry.unpack(buf);
+            LOG_INFO(env, "%s", shardEntry);
+        }
+        if (logEntries.size() == entriesAtOnce) {
+            startIdx = logEntries.back().idx + 1;
+            count -= entriesAtOnce;
+        } else {
+            break;
+        }
+    }
+}
+
 void ShardDBTools::fsck(const std::string& dbPath) {
     Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
     std::shared_ptr<XmonAgent> xmon;

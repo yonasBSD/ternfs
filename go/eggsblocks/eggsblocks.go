@@ -192,7 +192,7 @@ func updateBlockServiceInfoBlocks(
 	blockService.extraCachedInfo.BlocksWithCrc = blocksWithCrc
 	blockService.extraCachedInfo.BlocksWithoutCrc = blocksWithoutCrc
 	blockService.cachedInfo.Blocks = blocksWithCrc + blocksWithoutCrc
-	log.Info("done counting blocks for %v in %v", blockService.cachedInfo.Id, time.Since(t))
+	log.Info("done counting blocks for %v in %v. (with_crc: %d, without_crc: %d)", blockService.cachedInfo.Id, time.Since(t), blocksWithCrc, blocksWithoutCrc)
 	return nil
 }
 

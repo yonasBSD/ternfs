@@ -96,13 +96,15 @@ import (
 import "C"
 
 type blockServiceStats struct {
-	blocksWritten uint64
-	bytesWritten  uint64
-	blocksErased  uint64
-	blocksFetched uint64
-	bytesFetched  uint64
-	blocksChecked uint64
-	bytesChecked  uint64
+	blocksWritten            uint64
+	bytesWritten             uint64
+	blocksErased             uint64
+	blocksFetched            uint64
+	bytesFetched             uint64
+	blocksChecked            uint64
+	bytesChecked             uint64
+	blocksConverted          uint64
+	blockConversionDiscarded uint64
 }
 
 type atomicRenameDeleteReq struct {
@@ -179,15 +181,17 @@ func updateBlockServiceInfoBlocks(
 ) error {
 	t := time.Now()
 	log.Info("starting to count blocks for %v", blockService.cachedInfo.Id)
-	var totalBlocks uint64
-	for _, subDir := range []string{"with_crc", "without_crc"} {
-		blocks, err := countBlocks(path.Join(blockService.path, subDir))
-		if err != nil {
-			return err
-		}
-		totalBlocks += blocks
+	blocksWithCrc, err := countBlocks(path.Join(blockService.path, "with_crc"))
+	if err != nil {
+		return err
 	}
-	blockService.cachedInfo.Blocks = totalBlocks
+	blocksWithoutCrc, err := countBlocks(path.Join(blockService.path, "without_crc"))
+	if err != nil {
+		return err
+	}
+	blockService.extraCachedInfo.BlocksWithCrc = blocksWithCrc
+	blockService.extraCachedInfo.BlocksWithoutCrc = blocksWithoutCrc
+	blockService.cachedInfo.Blocks = blocksWithCrc + blocksWithoutCrc
 	log.Info("done counting blocks for %v in %v", blockService.cachedInfo.Id, time.Since(t))
 	return nil
 }
@@ -505,6 +509,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			delete:  false,
 		}:
 		default:
+			atomic.AddUint64(&env.stats[blockServiceId].blockConversionDiscarded, 1)
 			os.Remove(tmpName)
 		}
 	}
@@ -1327,6 +1332,18 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			metrics.FieldU64("blocks", bsStats.blocksChecked)
 			metrics.FieldU64("bytes", bsStats.bytesChecked)
 			metrics.Timestamp(now)
+
+			metrics.Measurement("eggsfs_blocks_convert")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.FieldU64("blocks", bsStats.blocksConverted)
+			metrics.Timestamp(now)
+
+			metrics.Measurement("eggsfs_blocks_convert_discard")
+			metrics.Tag("blockservice", bsId.String())
+			metrics.Tag("failuredomain", failureDomain)
+			metrics.FieldU64("blocks", bsStats.blockConversionDiscarded)
+			metrics.Timestamp(now)
 		}
 		for bsId, bsInfo := range blockServices {
 			metrics.Measurement("eggsfs_blocks_storage")
@@ -1336,6 +1353,8 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			metrics.FieldU64("capacity", bsInfo.cachedInfo.CapacityBytes)
 			metrics.FieldU64("available", bsInfo.cachedInfo.AvailableBytes)
 			metrics.FieldU64("blocks", bsInfo.cachedInfo.Blocks)
+			metrics.FieldU64("blocks_with_crc", bsInfo.extraCachedInfo.BlocksWithCrc)
+			metrics.FieldU64("blocks_without_crc", bsInfo.extraCachedInfo.BlocksWithoutCrc)
 			metrics.FieldU64("io_errors", bsInfo.ioErrors)
 			dm, found := diskMetrics[bsInfo.devId]
 			if found {
@@ -1358,6 +1377,11 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 	}
 }
 
+// TODO: move to msgs.RegisterBlockServiceInfo and report in shuckle
+type blockServiceExtraInfo struct {
+	BlocksWithCrc    uint64
+	BlocksWithoutCrc uint64
+}
 type blockService struct {
 	path                            string
 	devId                           string
@@ -1365,6 +1389,7 @@ type blockService struct {
 	cipher                          cipher.Block
 	storageClass                    msgs.StorageClass
 	cachedInfo                      msgs.RegisterBlockServiceInfo
+	extraCachedInfo                 blockServiceExtraInfo
 	couldNotUpdateInfoBlocks        bool
 	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
 	couldNotUpdateInfoCapacity      bool
@@ -1696,7 +1721,7 @@ func main() {
 		env.stats[bsId] = &blockServiceStats{}
 		// we want to handle short bursts of requests
 		env.conversionChannels[bsId] = make(chan atomicRenameDeleteReq, 1000)
-		go func(c <-chan atomicRenameDeleteReq) {
+		go func(c <-chan atomicRenameDeleteReq, bsStats *blockServiceStats) {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 			for {
 				req := <-c
@@ -1709,8 +1734,9 @@ func main() {
 							continue
 						}
 						// sync directory before returning response
-						if err := dir.Sync(); err != nil {
-							dir.Close()
+						err = dir.Sync()
+						dir.Close()
+						if err != nil {
 							req.deleteDone <- err
 							continue
 						}
@@ -1718,7 +1744,6 @@ func main() {
 						req.deleteDone <- err
 						continue
 					}
-
 					err = os.Remove(req.oldPath)
 					if err == nil {
 						dir, err := os.Open(filepath.Dir(req.oldPath))
@@ -1727,8 +1752,9 @@ func main() {
 							continue
 						}
 						// sync directory before returning response
-						if err := dir.Sync(); err != nil {
-							dir.Close()
+						err = dir.Sync()
+						dir.Close()
+						if err != nil {
 							req.deleteDone <- err
 							continue
 						}
@@ -1751,16 +1777,18 @@ func main() {
 						continue
 					}
 					// sync directory before returning response
-					if err := dir.Sync(); err != nil {
-						dir.Close()
+					err = dir.Sync()
+					dir.Close()
+					if err != nil {
 						req.deleteDone <- err
 						continue
 					}
+					atomic.AddUint64(&bsStats.blocksConverted, 1)
 					// best effort to remove old file
 					os.Remove(req.oldPath)
 				}
 			}
-		}(env.conversionChannels[bsId])
+		}(env.conversionChannels[bsId], env.stats[bsId])
 	}
 	for bsId := range deadBlockServices {
 		env.stats[bsId] = &blockServiceStats{}

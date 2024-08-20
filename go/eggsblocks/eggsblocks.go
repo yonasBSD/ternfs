@@ -599,7 +599,37 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	// if it doesn't exist in both places then it really is deleted
 	f, err := os.Open(blockPathNoCrc)
 	fileWithCrc := false
-	if os.IsNotExist(err) {
+	if err == nil {
+		tmpName, actualCrc, err := writeToTempWithCRC(log, env, blockServiceId, path.Join(basePath, "with_crc"), uint64(expectedSize), f)
+		if err != nil {
+			log.RaiseAlert("could not convert file %v to crc format, got error: %v", blockPathNoCrc, err)
+		} else if crc != msgs.Crc(actualCrc) {
+			os.Remove(tmpName)
+			log.RaiseAlert("file %v has wrong CRC, expected: %x, got: %x", blockPathNoCrc, crc, actualCrc)
+		} else {
+			f.Close()
+			f = nil
+			f, err = os.Open(tmpName)
+			if err != nil {
+				os.Remove(tmpName)
+				log.RaiseAlert("could not open file %v, got error: %v", tmpName, err)
+			} else {
+				fileWithCrc = true
+				// delegate rename, or delete tmp if channel full
+				select {
+				case env.conversionChannels[blockServiceId] <- atomicRenameDeleteReq{
+					oldPath: blockPathNoCrc,
+					tmpPath: tmpName,
+					newPath: blockPathWithCrc,
+					delete:  false,
+				}:
+				default:
+					atomic.AddUint64(&env.stats[blockServiceId].blockConversionDiscarded, 1)
+					os.Remove(tmpName)
+				}
+			}
+		}
+	} else if os.IsNotExist(err) {
 		f, err = os.Open(blockPathWithCrc)
 		fileWithCrc = true
 	}

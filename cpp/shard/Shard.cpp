@@ -2071,7 +2071,7 @@ void runShard(ShardOptions& options) {
 
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
 
-    ShardDB shardDB(logger, xmon, options.shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
+    ShardDB shardDB(logger, xmon, options.shrid.shardId(), options.location, options.transientDeadlineInterval, sharedDB, blockServicesCache);
     LogsDB logsDB(logger, xmon, sharedDB, options.shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.noReplication, options.avoidBeingLeader);
     env.clearAlert(dbInitAlert);
 

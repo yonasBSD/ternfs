@@ -511,3 +511,6 @@ static constexpr uint8_t SPAN_POLICY_TAG = 2;
 static constexpr uint8_t BLOCK_POLICY_TAG = 3;
 static constexpr uint8_t STRIPE_POLICY_TAG = 4;
 static std::array<uint8_t, 4> REQUIRED_DIR_INFO_TAGS = {SNAPSHOT_POLICY_TAG, SPAN_POLICY_TAG, BLOCK_POLICY_TAG, STRIPE_POLICY_TAG};
+
+static constexpr uint8_t DEFAULT_LOCATION = 0;
+static constexpr uint8_t INVALID_LOCATION = 255;

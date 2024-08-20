@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <ostream>
 #include <rocksdb/slice.h>
 #include <sys/types.h>
@@ -98,6 +99,14 @@ struct BlockBody {
     constexpr static size_t SIZE = MAX_SIZE;
 };
 
+inline void swapBlocks(BlockBody& lhs, BlockBody& rhs) {
+    ALWAYS_ASSERT(lhs.crc() == rhs.crc());
+    std::array<char, BlockBody::SIZE> tmp;
+    memcpy(tmp.data(), lhs._data, BlockBody::SIZE);
+    memcpy(lhs._data, rhs._data, BlockBody::SIZE);
+    memcpy(rhs._data, tmp.data(), BlockBody::SIZE);
+}
+
 struct SpanBlocksBodyV0 {
     FIELDS(
         LE, Parity,   parity, setParity,
@@ -155,6 +164,19 @@ struct SpanBlocksBodyV0 {
     }
 };
 
+struct LocationBlocksInfo {
+    LocationBlocksInfo(uint8_t location_, uint8_t storageClass_, Parity parity_, uint8_t stripes_)
+        : location(location_), storageClass(storageClass_), parity(parity_), stripes(stripes_) {
+            ALWAYS_ASSERT(stripes > 0 && stripes < 16);
+            ALWAYS_ASSERT(parity.dataBlocks() > 0);
+            ALWAYS_ASSERT(storageClass != EMPTY_STORAGE && storageClass != INLINE_STORAGE);
+        }
+    const uint8_t location;
+    const uint8_t storageClass;
+    const Parity parity;
+    const uint8_t stripes;
+};
+
 struct SpanBlocksBody {
     FIELDS(
         LE, uint8_t,  location, setLocation,
@@ -172,18 +194,15 @@ struct SpanBlocksBody {
 
     SpanBlocksBody(char* data) : _data(data) {}
 
-    static size_t calcSize(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
-        ALWAYS_ASSERT(stripes > 0 && stripes < 16);
-        ALWAYS_ASSERT(parity.dataBlocks() > 0);
-        return MIN_SIZE + BlockBody::SIZE*parity.blocks() + sizeof(uint32_t)*stripes;
+    static size_t calcSize(const LocationBlocksInfo& blocksInfo) {
+        return MIN_SIZE + BlockBody::SIZE*blocksInfo.parity.blocks() + sizeof(uint32_t)*blocksInfo.stripes;
     }
 
-    void afterAlloc(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
-        ALWAYS_ASSERT(storageClass != EMPTY_STORAGE && storageClass != INLINE_STORAGE);
-        setLocation(location);
-        setStorageClass(storageClass);
-        setParity(parity);
-        setStripes(stripes);
+    void afterAlloc(const LocationBlocksInfo& blocksInfo) {
+        setLocation(blocksInfo.location);
+        setStorageClass(blocksInfo.storageClass);
+        setParity(blocksInfo.parity);
+        setStripes(blocksInfo.stripes);
     }
 
     size_t size() const {
@@ -221,13 +240,12 @@ struct SpanBlocksBody {
 
 struct SpanBody;
 
-// We support two formats of BlocksBody
-// We want to provide same api when reading regardless of format
-// We don't want to allow changes to data in old format.
-// This class covers all the above
-class BlocksBodyReadOnly {
+// We support two formats of SpanBlocksBody
+// We want to provide same api regardless of format
+// This class provides the above
+class BlocksBodyWrapper {
 public:
-    BlocksBodyReadOnly(char* span, char* spanBlockBodyData) : _spanData(span), _bodyData(spanBlockBodyData) {}
+    BlocksBodyWrapper(char* span, char* spanBlockBodyData) : _spanData(span), _bodyData(spanBlockBodyData) {}
 
     uint8_t location() const;
     uint8_t storageClass() const;
@@ -239,6 +257,9 @@ public:
     uint32_t stripeCrc(uint64_t ix) const;
 
     size_t size() const;
+
+    const char* variableDataOffset() const;
+    size_t variableDataSize() const;
 private:
     char* _spanData;
     char* _bodyData;
@@ -257,12 +278,13 @@ struct SpanBody {
     )
 
     static constexpr uint8_t LOCATION_COUNT_INLINE = 255;
+    static constexpr uint8_t INVALID_LOCATION_IDX = 255;
     // after this:
     // * Inline body for inline spans (bytes)
-    // * Blocks for normal spans BlocksBodyOld (version 0)
-    // * Blocks per location for normal spans []BlocksBody (version 1)
+    // * Blocks for spans SpanBlocksBodyV0
+    // * Blocks per location for spans []SpanBlocksBody (version 1)
 
-    // In new format storage type is stored in BlocksBody
+    // In new format storage type is stored in BlocksBody as it can be different per location
     // This function maintains same external api to determine if span is inline or not.
     bool isInlineStorage() const {
         return version() == 0 ? INLINE_STORAGE == _storageClassOrLocationCount() : _storageClassOrLocationCount() == LOCATION_COUNT_INLINE;
@@ -300,16 +322,73 @@ struct SpanBody {
     }
 
 
-    // * Blocks per location for normal spans []BlocksBody (version 1)
-    // * we don't have a usecase for creating a span with multiple locations so far so only constructor for one is provided.
-    static size_t calcSize(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
-        return MIN_SIZE + SpanBlocksBody::calcSize(location, storageClass, parity, stripes);
+    // used when creating span in a transient file. It can only have 1 location
+    static size_t calcSize(const LocationBlocksInfo& locationBlocksInfo) {
+        return MIN_SIZE + SpanBlocksBody::calcSize(locationBlocksInfo);
     }
 
-    void afterAlloc(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
+    void afterAlloc(const LocationBlocksInfo& locationBlocksInfo) {
         _setVersion(1);
         _setStorageClassOrLocationCount(1);
-        blocksBody(0).afterAlloc(location, storageClass, parity, stripes);
+        blocksBody(0).afterAlloc(locationBlocksInfo);
+    }
+
+    // used when adding location to existing span
+    // existing span locations are copied over and new one added
+    static size_t calcSize(const SpanBody& existingSpan, const BlocksBodyWrapper& newLocationBlocks) {
+        ALWAYS_ASSERT(!existingSpan.isInlineStorage());
+        size_t size = MIN_SIZE;
+        for (uint8_t locIdx = 0; locIdx <= existingSpan.locationCount(); ++locIdx) {
+            auto blocks = existingSpan.blocksBodyReadOnly(locIdx);
+            ALWAYS_ASSERT(blocks.location() != newLocationBlocks.location());
+            size += SpanBlocksBody::calcSize(
+                        LocationBlocksInfo(
+                        blocks.location(),
+                        blocks.storageClass(),
+                        blocks.parity(),
+                        blocks.stripes()));
+        }
+        return size +
+                SpanBlocksBody::calcSize(
+                    LocationBlocksInfo(
+                        newLocationBlocks.location(),
+                        newLocationBlocks.storageClass(),
+                        newLocationBlocks.parity(),
+                        newLocationBlocks.stripes()));
+    }
+
+    void afterAlloc(const SpanBody& existingSpan, const BlocksBodyWrapper& newLocationBlocks) {
+        ALWAYS_ASSERT(!existingSpan.isInlineStorage());
+        // init span info
+        _setVersion(1);
+        setSpanSize(existingSpan.spanSize());
+        setCrc(existingSpan.crc());
+        _setStorageClassOrLocationCount(existingSpan.locationCount() + 1);
+
+        ALWAYS_ASSERT(locationCount() < INVALID_LOCATION_IDX);
+        // copy existing blocksInfo
+        if (existingSpan.version() == 0) {
+            // SpanBlocksBody is not the same. initialize new one
+            SpanBlocksBodyV0 blocks(existingSpan._data + MIN_SIZE);
+            SpanBlocksBody blocksNew = blocksBody(0);
+            blocksNew.afterAlloc(LocationBlocksInfo(DEFAULT_LOCATION,existingSpan._storageClassOrLocationCount(), blocks.parity(), blocks.stripes()));
+            // now copy the block and crc info. layout is the same
+            memcpy(blocksNew._data + SpanBlocksBody::MIN_SIZE, blocks._data + SpanBlocksBodyV0::MIN_SIZE, blocks.size() - SpanBlocksBodyV0::MIN_SIZE);
+        } else {
+            // when versions are the same just copy []SpanBlockBody over
+            memcpy(_data + MIN_SIZE, existingSpan._data + MIN_SIZE, existingSpan.size() - MIN_SIZE);
+        }
+        // initiate new location
+        SpanBlocksBody newLocation = blocksBody(locationCount() - 1);
+        newLocation.afterAlloc(
+            LocationBlocksInfo(
+                newLocationBlocks.location(),
+                newLocationBlocks.storageClass(),
+                newLocationBlocks.parity(),
+                newLocationBlocks.stripes()));
+        newLocation.setCellSize(newLocationBlocks.cellSize());
+        // now copy the block and crc info. layout is the same
+        memcpy(newLocation._data + SpanBlocksBody::MIN_SIZE, newLocationBlocks.variableDataOffset(), newLocationBlocks.variableDataSize());
     }
 
     uint8_t locationCount() const {
@@ -317,9 +396,9 @@ struct SpanBody {
         return version() == 0 ? 1 : _storageClassOrLocationCount();
     }
 
-    const BlocksBodyReadOnly blocksBodyReadOnly(uint8_t idx) const {
+    BlocksBodyWrapper blocksBodyReadOnly(uint8_t idx) const {
         ALWAYS_ASSERT(idx < locationCount());
-        return BlocksBodyReadOnly(_data, version() == 0 ? _data + MIN_SIZE : _blocksBodyOffset(idx));
+        return BlocksBodyWrapper(_data, version() == 0 ? _data + MIN_SIZE : _blocksBodyOffset(idx));
     }
 
     // we only allow modifications of new format so non const version does not need compatibility wrapper
@@ -350,48 +429,92 @@ struct SpanBody {
         }
         ALWAYS_ASSERT(version() == 1);
         ALWAYS_ASSERT(locationCount() != 0);
+        ALWAYS_ASSERT(locationCount() != INVALID_LOCATION_IDX);
         char* lastOffset = _blocksBodyOffset(locationCount() - 1);
         return lastOffset - _data + SpanBlocksBody(lastOffset).size();
+    }
+
+    // return INVALID_LOCATION_IDX if it doesn't find it
+    uint8_t findBlocksLocIdx(const std::vector<uint64_t>& blockIds) {
+        if (version() == 0) {
+            SpanBlocksBodyV0 blocks(_data + MIN_SIZE);
+            if (blocks.parity().blocks() != blockIds.size()) {
+                return INVALID_LOCATION_IDX;
+            }
+            for (size_t blockIdx = 0; blockIdx < blockIds.size(); ++blockIdx) {
+                if (blocks.block(blockIdx).blockId() != blockIds[blockIdx]) {
+                    return INVALID_LOCATION_IDX;
+                }
+            }
+            return 0;
+        }
+        for(uint8_t i = 0; i < locationCount(); ++i) {
+            SpanBlocksBody blocks(_blocksBodyOffset(i));
+            if (blocks.parity().blocks() != blockIds.size()) {
+                continue;
+            }
+            bool found = true;
+            for (size_t blockIdx = 0; blockIdx < blockIds.size(); ++blockIdx) {
+                if (blocks.block(blockIdx).blockId() != blockIds[blockIdx]) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) {
+                return i;
+            }
+        }
+        return INVALID_LOCATION_IDX;
     }
     SpanBody() : _data(nullptr) {}
     SpanBody(char* data) : _data(data) {}
 };
 
-inline uint8_t BlocksBodyReadOnly::location() const {
+inline uint8_t BlocksBodyWrapper::location() const {
     ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
     return SpanBody(_spanData).version() == 0 ? 0 : SpanBlocksBody(_bodyData).location();
 }
 
-inline uint8_t BlocksBodyReadOnly::storageClass() const {
+inline uint8_t BlocksBodyWrapper::storageClass() const {
     ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
     return SpanBody(_spanData).version() == 0 ? SpanBody(_spanData)._storageClassOrLocationCount() : SpanBlocksBody(_bodyData).storageClass();
 }
 
-inline const Parity BlocksBodyReadOnly::parity() const {
+inline const Parity BlocksBodyWrapper::parity() const {
     ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
     return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).parity() : SpanBlocksBody(_bodyData).parity();
 }
 
-inline uint8_t BlocksBodyReadOnly::stripes() const {
+inline uint8_t BlocksBodyWrapper::stripes() const {
     ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
     return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).stripes() : SpanBlocksBody(_bodyData).stripes();
 }
 
-inline uint32_t BlocksBodyReadOnly::cellSize() const {
+inline uint32_t BlocksBodyWrapper::cellSize() const {
     ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
     return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).cellSize() : SpanBlocksBody(_bodyData).cellSize();
 }
-inline const BlockBody BlocksBodyReadOnly::block(uint64_t ix) const {
+inline const BlockBody BlocksBodyWrapper::block(uint64_t ix) const {
     return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).block(ix) : SpanBlocksBody(_bodyData).block(ix);
 }
 
-inline uint32_t BlocksBodyReadOnly::stripeCrc(uint64_t ix) const {
+inline uint32_t BlocksBodyWrapper::stripeCrc(uint64_t ix) const {
     return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).stripeCrc(ix) : SpanBlocksBody(_bodyData).stripeCrc(ix);
 }
 
-inline size_t BlocksBodyReadOnly::size() const {
+inline size_t BlocksBodyWrapper::size() const {
     ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
     return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).size() : SpanBlocksBody(_bodyData).size();
+}
+
+inline const char* BlocksBodyWrapper::variableDataOffset() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? _bodyData + SpanBlocksBodyV0::MIN_SIZE : _bodyData + SpanBlocksBody::MIN_SIZE;
+}
+
+inline size_t BlocksBodyWrapper::variableDataSize() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).size() - SpanBlocksBodyV0::MIN_SIZE : SpanBlocksBody(_bodyData).size() - SpanBlocksBody::MIN_SIZE;
 }
 
 enum class HashMode : uint8_t {

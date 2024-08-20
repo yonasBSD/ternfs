@@ -157,6 +157,7 @@ struct ShardDBImpl {
     Env _env;
 
     ShardId _shid;
+    uint8_t _locationId;
     Duration _transientDeadlineInterval;
     std::array<uint8_t, 16> _secretKey;
     AES128Key _expandedSecretKey;
@@ -189,12 +190,14 @@ struct ShardDBImpl {
         Logger& logger,
         std::shared_ptr<XmonAgent>& xmon,
         ShardId shid,
+        uint8_t locationId,
         Duration deadlineInterval,
         const SharedRocksDB& sharedDB,
         const BlockServicesCacheDB& blockServicesCache
     ) :
         _env(logger, xmon, "shard_db"),
         _shid(shid),
+        _locationId(locationId),
         _transientDeadlineInterval(deadlineInterval),
         _db(sharedDB.db()),
         _defaultCf(sharedDB.getCF(rocksdb::kDefaultColumnFamilyName)),
@@ -699,7 +702,7 @@ struct ShardDBImpl {
         return _visitInodes(options, _directoriesCf, req, resp);
     }
 
-    EggsError _fileSpans(rocksdb::ReadOptions& options, const LocalFileSpansReq& req, LocalFileSpansResp& resp) {
+    EggsError _localFileSpans(rocksdb::ReadOptions& options, const LocalFileSpansReq& req, LocalFileSpansResp& resp) {
         StaticValue<SpanKey> lowerKey;
         lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
         lowerKey().setOffset(~(uint64_t)0);
@@ -763,8 +766,15 @@ struct ShardDBImpl {
                     auto& respSpanInline = respSpan.setInlineSpan();
                     respSpanInline.body = value().inlineBody();
                 } else {
-                    ALWAYS_ASSERT(value().locationCount() == 1);
-                    auto spanBlock = value().blocksBodyReadOnly(0);
+                    uint8_t locationIdx = 0;
+                    // we try to match location but if we can't we return first one
+                    for (uint8_t i = 0; i < value().locationCount(); ++i) {
+                        if (value().blocksBodyReadOnly(i).location() == _locationId) {
+                            locationIdx = i;
+                            break;
+                        }
+                    }
+                    auto spanBlock = value().blocksBodyReadOnly(locationIdx);
                     auto& respSpanBlock = respSpan.setBlocksSpan(spanBlock.storageClass());
                     respSpanBlock.parity = spanBlock.parity();
                     respSpanBlock.stripes = spanBlock.stripes();
@@ -785,6 +795,133 @@ struct ShardDBImpl {
                     respSpanBlock.stripesCrc.els.resize(spanBlock.stripes());
                     for (int i = 0; i < spanBlock.stripes(); i++) {
                         respSpanBlock.stripesCrc.els[i] = spanBlock.stripeCrc(i);
+                    }
+                }
+                budget -= (int)respSpan.packedSize();
+                if (budget < 0) {
+                    resp.nextOffset = respSpan.header.byteOffset;
+                    resp.spans.els.pop_back();
+                    break;
+                }
+            }
+            ROCKS_DB_CHECKED(it->status());
+        }
+
+        // Check if file does not exist when we have no spans
+        if (resp.spans.els.size() == 0) {
+            std::string fileValue;
+            ExternalValue<FileBody> file;
+            EggsError err = _getFile(options, req.fileId, fileValue, file);
+            if (err != EggsError::NO_ERROR) {
+                // might be a transient file, let's check
+                bool isTransient = false;
+                if (err == EggsError::FILE_NOT_FOUND) {
+                    std::string transientFileValue;
+                    ExternalValue<TransientFileBody> transientFile;
+                    EggsError transError = _getTransientFile(options, 0, true, req.fileId, transientFileValue, transientFile);
+                    if (transError == EggsError::NO_ERROR) {
+                        isTransient = true;
+                    } else if (transError != EggsError::FILE_NOT_FOUND) {
+                        LOG_INFO(_env, "Dropping error gotten when doing fallback transient lookup for id %s: %s", req.fileId, transError);
+                    }
+                }
+                if (!isTransient) {
+                    return err;
+                }
+            }
+        }
+
+        return EggsError::NO_ERROR;
+    }
+
+    EggsError _fileSpans(rocksdb::ReadOptions& options, const FileSpansReq& req, FileSpansResp& resp) {
+        StaticValue<SpanKey> lowerKey;
+        lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
+        lowerKey().setOffset(~(uint64_t)0);
+        auto lowerKeySlice = lowerKey.toSlice();
+        options.iterate_lower_bound = &lowerKeySlice;
+
+        StaticValue<SpanKey> upperKey;
+        upperKey().setFileId(InodeId::FromU64(req.fileId.u64 + 1));
+        upperKey().setOffset(0);
+        auto upperKeySlice = upperKey.toSlice();
+        options.iterate_upper_bound = &upperKeySlice;
+
+        auto inMemoryBlockServicesData = _blockServicesCache.getCache();
+
+        int budget = pickMtu(req.mtu) - ShardRespMsg::STATIC_SIZE - FileSpansResp::STATIC_SIZE;
+        // if -1, we ran out of budget.
+        const auto addBlockService = [&resp, &budget, &inMemoryBlockServicesData](BlockServiceId blockServiceId) -> int {
+            // See if we've placed it already
+            for (int i = 0; i < resp.blockServices.els.size(); i++) {
+                if (resp.blockServices.els.at(i).id == blockServiceId) {
+                    return i;
+                }
+            }
+            // If not, we need to make space for it
+            budget -= (int)BlockService::STATIC_SIZE;
+            if (budget < 0) {
+                return -1;
+            }
+            auto& blockService = resp.blockServices.els.emplace_back();
+            const auto& cache = inMemoryBlockServicesData.blockServices.at(blockServiceId.u64);
+            blockService.id = blockServiceId;
+            blockService.addrs = cache.addrs;
+            blockService.flags = cache.flags;
+            return resp.blockServices.els.size()-1;
+        };
+
+        StaticValue<SpanKey> beginKey;
+        beginKey().setFileId(req.fileId);
+        beginKey().setOffset(req.byteOffset);
+        {
+            std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _spansCf));
+            for (
+                it->SeekForPrev(beginKey.toSlice());
+                it->Valid() && (req.limit == 0 || resp.spans.els.size() < req.limit);
+                it->Next()
+            ) {
+                auto key = ExternalValue<SpanKey>::FromSlice(it->key());
+                if (key().fileId() != req.fileId) {
+                    break;
+                }
+                auto value = ExternalValue<SpanBody>::FromSlice(it->value());
+                if (key().offset()+value().spanSize() < req.byteOffset) { // can only happens if the first cursor is out of bounds
+                    LOG_DEBUG(_env, "exiting early from spans since current key starts at %s and ends at %s, which is less than offset %s", key().offset(), key().offset()+value().spanSize(), req.byteOffset);
+                    break;
+                }
+                auto& respSpan = resp.spans.els.emplace_back();
+                respSpan.header.byteOffset = key().offset();
+                respSpan.header.size = value().spanSize();
+                respSpan.header.crc = value().crc();
+                if (value().isInlineStorage()) {
+                    auto& respSpanInline = respSpan.setInlineSpan();
+                    respSpanInline.body = value().inlineBody();
+                } else {
+                    auto& locations = respSpan.setLocations();
+                    for (uint8_t i = 0; i < value().locationCount(); ++i) {
+                        auto& location = locations.locations.els.emplace_back();
+                        auto spanBlock = value().blocksBodyReadOnly(i);
+                        location.locationId = spanBlock.location();
+                        location.parity = spanBlock.parity();
+                        location.stripes = spanBlock.stripes();
+                        location.cellSize = spanBlock.cellSize();
+                        location.blocks.els.resize(spanBlock.parity().blocks());
+                        for (int j = 0; j < spanBlock.parity().blocks(); j++) {
+                            auto block = spanBlock.block(j);
+                            auto& respBlock = location.blocks.els[j];
+                            respBlock.blockId = block.blockId();
+                            int blockServiceIx = addBlockService(block.blockService());
+                            if (blockServiceIx < 0) {
+                                break; // no need to break in outer loop -- we will break out anyway because budget < 0
+                            }
+                            respBlock.blockServiceIx = blockServiceIx;
+                            respBlock.crc = block.crc();
+                        }
+                        location.stripesCrc.els.resize(spanBlock.stripes());
+                        for (int j = 0; j < spanBlock.stripes(); j++) {
+                            location.stripesCrc.els[j] = spanBlock.stripeCrc(j);
+                        }
                     }
                 }
                 budget -= (int)respSpan.packedSize();
@@ -895,8 +1032,10 @@ struct ShardDBImpl {
             err = _visitDirectories(options, req.getVisitDirectories(), resp.setVisitDirectories());
             break;
         case ShardMessageKind::LOCAL_FILE_SPANS:
-            err = _fileSpans(options, req.getLocalFileSpans(), resp.setLocalFileSpans());
+            err = _localFileSpans(options, req.getLocalFileSpans(), resp.setLocalFileSpans());
             break;
+        case ShardMessageKind::FILE_SPANS:
+            err = _fileSpans(options, req.getFileSpans(), resp.setFileSpans());
         case ShardMessageKind::BLOCK_SERVICE_FILES:
             err = _blockServiceFiles(options, req.getBlockServiceFiles(), resp.setBlockServiceFiles());
             break;
@@ -2612,8 +2751,8 @@ struct ShardDBImpl {
             }
             return EggsError::NO_ERROR;
         }
-        ALWAYS_ASSERT(span().locationCount() == 1);
-        const auto blocks = span().blocksBodyReadOnly(0);
+
+
 
         // Otherwise, we need to condemn it first, and then certify the deletion.
         // Note that we allow to remove dirty spans -- this is important to deal well with
@@ -2626,17 +2765,19 @@ struct ShardDBImpl {
 
         // Fill in the response blocks
         {
-            resp.blocks.els.reserve(blocks.parity().blocks());
-            BlockServicesCache inMemoryBlockServicesData = _blockServicesCache.getCache();
-            for (int i = 0; i < blocks.parity().blocks(); i++) {
-                const auto block = blocks.block(i);
-                const auto& cache = inMemoryBlockServicesData.blockServices.at(block.blockService().u64);
-                auto& respBlock = resp.blocks.els.emplace_back();
-                respBlock.blockServiceAddrs = cache.addrs;
-                respBlock.blockServiceId = block.blockService();
-                respBlock.blockId = block.blockId();
-                respBlock.blockServiceFlags = cache.flags;
-                respBlock.certificate = _blockEraseCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
+            for(uint8_t locIdx = 0; locIdx < span().locationCount(); ++locIdx) {
+                const auto blocks = span().blocksBodyReadOnly(locIdx);
+                BlockServicesCache inMemoryBlockServicesData = _blockServicesCache.getCache();
+                for (int i = 0; i < blocks.parity().blocks(); i++) {
+                    const auto block = blocks.block(i);
+                    const auto& cache = inMemoryBlockServicesData.blockServices.at(block.blockService().u64);
+                    auto& respBlock = resp.blocks.els.emplace_back();
+                    respBlock.blockServiceAddrs = cache.addrs;
+                    respBlock.blockServiceId = block.blockService();
+                    respBlock.blockId = block.blockId();
+                    respBlock.blockServiceFlags = cache.flags;
+                    respBlock.certificate = _blockEraseCertificate(blocks.cellSize()*blocks.stripes(), block, cache.secretKey);
+                }
             }
         }
 
@@ -2661,7 +2802,7 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY), v.toSlice()));
     }
 
-    void _fillInAddSpanInitiate(const BlocksBodyReadOnly blocks, AddSpanInitiateResp& resp) {
+    void _fillInAddSpanInitiate(const BlocksBodyWrapper blocks, AddSpanInitiateResp& resp) {
         resp.blocks.els.reserve(blocks.parity().blocks());
         auto inMemoryBlockServiceData = _blockServicesCache.getCache();
         for (int i = 0; i < blocks.parity().blocks(); i++) {
@@ -2764,7 +2905,7 @@ struct ShardDBImpl {
 
     }
 
-    EggsError _applyAddSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const AddSpanInitiateEntry& entry, AddSpanInitiateResp& resp) {
+    EggsError _applyAddSpanInitiate(EggsTime time, rocksdb::WriteBatch& batch, const AddSpanAtLocationInitiateEntry& entry, AddSpanAtLocationInitiateResp& resp) {
         std::string fileValue;
         ExternalValue<TransientFileBody> file;
         {
@@ -2805,12 +2946,13 @@ struct ShardDBImpl {
                     existingSpan().locationCount() != 1 ||
                     existingSpan().blocksBodyReadOnly(0).cellSize() != entry.cellSize ||
                     existingSpan().blocksBodyReadOnly(0).stripes() != entry.stripes ||
-                    existingSpan().blocksBodyReadOnly(0).parity() != entry.parity
+                    existingSpan().blocksBodyReadOnly(0).parity() != entry.parity ||
+                    existingSpan().blocksBodyReadOnly(0).location() != entry.locationId
                 ) {
                     LOG_DEBUG(_env, "file size does not match, and existing span does not match");
                     return EggsError::SPAN_NOT_FOUND;
                 }
-                _fillInAddSpanInitiate(existingSpan().blocksBodyReadOnly(0), resp);
+                _fillInAddSpanInitiate(existingSpan().blocksBodyReadOnly(0), resp.resp);
                 return EggsError::NO_ERROR;
             }
             LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
@@ -2832,12 +2974,13 @@ struct ShardDBImpl {
 
         // Now manufacture and add the span, also recording the blocks
         // in the block service -> files index.
-        OwnedValue<SpanBody> spanBody(0, entry.storageClass, entry.parity, entry.stripes);
+        OwnedValue<SpanBody> spanBody(LocationBlocksInfo(entry.locationId, entry.storageClass, entry.parity, entry.stripes));
         {
             spanBody().setSpanSize(entry.size);
             spanBody().setCrc(entry.crc.u32);
             auto blocks = spanBody().blocksBody(0);
             blocks.setCellSize(entry.cellSize);
+            blocks.setLocation(entry.locationId);
             uint64_t nextBlockId = _getNextBlockId();
             for (int i = 0; i < entry.parity.blocks(); i++) {
                 const auto& entryBlock = entry.bodyBlocks.els[i];
@@ -2855,7 +2998,7 @@ struct ShardDBImpl {
         }
 
         // Fill in the response
-        _fillInAddSpanInitiate(spanBody().blocksBodyReadOnly(0), resp);
+        _fillInAddSpanInitiate(spanBody().blocksBodyReadOnly(0), resp.resp);
 
         return EggsError::NO_ERROR;
     }
@@ -2991,6 +3134,105 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
+    EggsError _applyAddSpanLocation(EggsTime time, rocksdb::WriteBatch& batch, const AddSpanLocationEntry& entry, AddSpanLocationResp& resp) {
+        std::string destinationFileValue;
+        ExternalValue<FileBody> destinationFile;
+        {
+            EggsError err = _getFile({}, entry.fileId2, destinationFileValue, destinationFile);
+            if (err != EggsError::NO_ERROR) {
+                return err;
+            }
+        }
+
+        std::string sourceFileValue;
+        ExternalValue<TransientFileBody> sourceFile;
+        {
+            EggsError err = _getTransientFile({}, time, false, entry.fileId2, sourceFileValue, sourceFile);
+            if (err != EggsError::NO_ERROR) {
+                return err;
+            }
+        }
+        if (sourceFile().lastSpanState() != SpanState::CLEAN) {
+            return EggsError::LAST_SPAN_STATE_NOT_CLEAN;
+        }
+
+        StaticValue<SpanKey> destinationSpanKey;
+        std::string destinationSpanValue;
+        ExternalValue<SpanBody> destinationSpan;
+        if (!_fetchSpan(entry.fileId2, entry.byteOffset2, destinationSpanKey, destinationSpanValue, destinationSpan)) {
+            return EggsError::SPAN_NOT_FOUND;
+        }
+        if (destinationSpan().isInlineStorage()) {
+            return EggsError::ADD_SPAN_LOCATION_INLINE_STORAGE;
+
+        }
+
+        StaticValue<SpanKey> sourceSpanKey;
+        std::string sourceSpanValue;
+        ExternalValue<SpanBody> sourceSpan;
+        if (!_fetchSpan(entry.fileId1, entry.byteOffset1, sourceSpanKey, sourceSpanValue, sourceSpan)) {
+            // we could have completed the operation already. check for that
+            uint8_t locIdx = destinationSpan().findBlocksLocIdx(entry.blocks1.els);
+            if (locIdx != SpanBody::INVALID_LOCATION_IDX) {
+                // the blocks are already there return no error for idempotency
+                return EggsError::NO_ERROR;
+            }
+            return EggsError::SPAN_NOT_FOUND;
+        }
+
+        if (sourceSpan().isInlineStorage()) {
+
+            return EggsError::SWAP_SPANS_INLINE_STORAGE;
+        }
+
+        // check that size and crc is the same
+        if (sourceSpan().spanSize() != destinationSpan().spanSize()) {
+            return EggsError::ADD_SPAN_LOCATION_MISMATCHING_SIZE;
+        }
+        if (sourceSpan().crc() != destinationSpan().crc()) {
+            return EggsError::ADD_SPAN_LOCATION_MISMATCHING_CRC;
+        }
+
+        // Fetch span state
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().size());
+        if (state1 != SpanState::CLEAN) {
+            return EggsError::ADD_SPAN_LOCATION_NOT_CLEAN;
+        }
+
+        // we should only be adding one location
+        if (sourceSpan().locationCount() != 1) {
+            return EggsError::TRANSIENT_LOCATION_COUNT;
+        }
+
+        auto blocksSource = sourceSpan().blocksBodyReadOnly(0);
+
+        // check if we already added this location
+        for (uint8_t i = 0; i < destinationSpan().locationCount(); ++i) {
+            auto blocksDestination = destinationSpan().blocksBodyReadOnly(i);
+            if (blocksDestination.location() != blocksSource.location()) {
+                continue;
+            }
+            return EggsError::ADD_SPAN_LOCATION_EXISTS;
+        }
+
+        // we're ready to move location, first do the blocks bookkeeping
+        for (int i = 0; i < blocksSource.parity().blocks(); i++) {
+            const auto block = blocksSource.block(i);
+            _addBlockServicesToFiles(batch, block.blockService(), entry.fileId2, +1);
+            _addBlockServicesToFiles(batch, block.blockService(), entry.fileId1, -1);
+        }
+
+        OwnedValue<SpanBody> newDestinationSpan(destinationSpan(), blocksSource);
+        // now persist new state in destination
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, destinationSpanKey.toSlice(), destinationSpan.toSlice()));
+        // and delete span at source
+        ROCKS_DB_CHECKED(batch.Delete(_spansCf, sourceSpanKey.toSlice()));
+        // change size and dirtiness
+        sourceFile().setFileSize(sourceFile().fileSize() - sourceSpan().spanSize());
+
+        return EggsError::NO_ERROR;
+    }
+
     EggsError _applyMakeFileTransient(EggsTime time, rocksdb::WriteBatch& batch, const MakeFileTransientEntry& entry, MakeFileTransientResp& resp) {
         std::string fileValue;
         ExternalValue<FileBody> file;
@@ -3056,8 +3298,6 @@ struct ShardDBImpl {
         if (span().isInlineStorage()) {
             return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
         }
-        ALWAYS_ASSERT(span().locationCount() == 1);
-        auto blocks = span().blocksBodyReadOnly(0);
 
         // Make sure we're condemned
         if (file().lastSpanState() != SpanState::CONDEMNED) {
@@ -3065,24 +3305,31 @@ struct ShardDBImpl {
         }
 
         // Verify proofs
-        if (entry.proofs.els.size() != blocks.parity().blocks()) {
-            return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
-        }
-        {
-            auto inMemoryBlockServiceData = _blockServicesCache.getCache();
-            for (int i = 0; i < blocks.parity().blocks(); i++) {
-                const auto block = blocks.block(i);
-                const auto& proof = entry.proofs.els[i];
-                if (block.blockId() != proof.blockId) {
-                    RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
-                    return EggsError::BAD_BLOCK_PROOF;
-                }
-                if (!_checkBlockDeleteProof(inMemoryBlockServiceData, entry.fileId, block.blockService(), proof)) {
-                    return EggsError::BAD_BLOCK_PROOF;
-                }
-                // record balance change in block service to files
-                _addBlockServicesToFiles(batch, block.blockService(), entry.fileId, -1);
+        uint8_t entryBlockIdx = 0;
+        for (uint8_t i = 0; i < span().locationCount(); ++i) {
+            auto blocks = span().blocksBodyReadOnly(i);
+            if (entry.proofs.els.size() - entryBlockIdx < blocks.parity().blocks()) {
+                return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
             }
+            {
+                auto inMemoryBlockServiceData = _blockServicesCache.getCache();
+                for (int i = 0; i < blocks.parity().blocks(); i++) {
+                    const auto block = blocks.block(i);
+                    const auto& proof = entry.proofs.els[entryBlockIdx++];
+                    if (block.blockId() != proof.blockId) {
+                        RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "bad block proof id for file %s, expected %s, got %s", entry.fileId, block.blockId(), proof.blockId);
+                        return EggsError::BAD_BLOCK_PROOF;
+                    }
+                    if (!_checkBlockDeleteProof(inMemoryBlockServiceData, entry.fileId, block.blockService(), proof)) {
+                        return EggsError::BAD_BLOCK_PROOF;
+                    }
+                    // record balance change in block service to files
+                    _addBlockServicesToFiles(batch, block.blockService(), entry.fileId, -1);
+                }
+            }
+        }
+        if (entryBlockIdx != entry.proofs.els.size()) {
+            return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
         }
 
         // Delete span, set new size, and go back to clean state
@@ -3167,18 +3414,10 @@ struct ShardDBImpl {
         if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
-        if (span1().isInlineStorage() == INLINE_STORAGE || span2().isInlineStorage() == INLINE_STORAGE) {
+        if (span1().isInlineStorage() || span2().isInlineStorage()) {
             return EggsError::SWAP_BLOCKS_INLINE_STORAGE;
         }
-        ALWAYS_ASSERT(span1().locationCount() == 1);
-        ALWAYS_ASSERT(span2().locationCount() == 1);
-        auto blocks1 = span1().blocksBodyReadOnly(0);
-        auto blocks2 = span2().blocksBodyReadOnly(0);
-        uint32_t blockSize1 = blocks1.cellSize()*blocks1.stripes();
-        uint32_t blockSize2 = blocks2.cellSize()*blocks2.stripes();
-        if (blockSize1 != blockSize2) {
-            return EggsError::SWAP_BLOCKS_MISMATCHING_SIZE;
-        }
+
         // Fetch span state
         auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
         auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
@@ -3187,35 +3426,49 @@ struct ShardDBImpl {
             return EggsError::SWAP_BLOCKS_MISMATCHING_STATE;
         }
         // Find blocks
-        const auto findBlock = [](const BlocksBodyReadOnly blocks, uint64_t blockId, BlockBody& block) -> int {
-            for (int i = 0; i < blocks.parity().blocks(); i++) {
-                block = blocks.block(i);
-                if (block.blockId() == blockId) {
-                    return i;
+        const auto findBlock = [](const SpanBody& span, uint64_t blockId, BlockBody& block) -> std::pair<int, int> {
+            uint8_t locIdx = 0;
+            for (; locIdx < span.locationCount(); ++locIdx) {
+                auto blocks = span.blocksBodyReadOnly(locIdx);
+                for (uint8_t blockIdx = 0; blockIdx < blocks.parity().blocks(); ++blockIdx) {
+                    block = blocks.block(blockIdx);
+                    if (block.blockId() == blockId) {
+                        return {locIdx, blockIdx};
+                    }
                 }
             }
-            return -1;
+            return {-1,-1};
         };
         BlockBody block1;
-        int block1Ix = findBlock(blocks1, entry.blockId1, block1);
+        auto block1Ix = findBlock(span1(), entry.blockId1, block1);
         BlockBody block2;
-        int block2Ix = findBlock(blocks2, entry.blockId2, block2);
-        if (block1Ix < 0 || block2Ix < 0) {
+        auto block2Ix = findBlock(span2(), entry.blockId2, block2);
+        if (block1Ix.first < 0 || block2Ix.first < 0) {
             // if neither are found, check if we haven't swapped already, for idempotency
-            if (block1Ix < 0 && block2Ix < 0) {
-                if (findBlock(blocks1, entry.blockId2, block1) >= 0 && findBlock(blocks2, entry.blockId1, block2) >= 0) {
+            if (block1Ix.first < 0 && block2Ix.first < 0) {
+                if (findBlock(span1(), entry.blockId2, block2).first >= 0 && findBlock(span2(), entry.blockId1, block1).first >= 0) {
                     return EggsError::NO_ERROR;
                 }
             }
             return EggsError::BLOCK_NOT_FOUND;
         }
+        auto blocks1 = span1().blocksBodyReadOnly(block1Ix.first);
+        auto blocks2 = span2().blocksBodyReadOnly(block2Ix.first);
+        uint32_t blockSize1 = blocks1.cellSize()*blocks1.stripes();
+        uint32_t blockSize2 = blocks2.cellSize()*blocks2.stripes();
+        if (blockSize1 != blockSize2) {
+            return EggsError::SWAP_BLOCKS_MISMATCHING_SIZE;
+        }
         if (block1.crc() != block2.crc()) {
             return EggsError::SWAP_BLOCKS_MISMATCHING_CRC;
+        }
+        if (blocks1.location() != blocks2.location()) {
+            return EggsError::SWAP_BLOCKS_MISMATCHING_LOCATION;
         }
 
         auto blockServiceCache = _blockServicesCache.getCache();
         // Check that we're not creating a situation where we have two blocks in the same block service
-        const auto checkNoDuplicateBlockServicesOrFailureDomains = [&blockServiceCache](const auto blocks, int blockToBeReplacedIx, const auto newBlock) {
+        const auto checkNoDuplicateBlockServicesOrFailureDomains = [&blockServiceCache](const auto& blocks, int blockToBeReplacedIx, const auto newBlock) {
             auto& newFailureDomain = blockServiceCache.blockServices.at(newBlock.blockService().u64).failureDomain;
             for (int i = 0; i < blocks.parity().blocks(); i++) {
                 if (i == blockToBeReplacedIx) {
@@ -3233,11 +3486,11 @@ struct ShardDBImpl {
             return EggsError::NO_ERROR;
         };
         {
-            EggsError err = checkNoDuplicateBlockServicesOrFailureDomains(blocks1, block1Ix, block2);
+            EggsError err = checkNoDuplicateBlockServicesOrFailureDomains(blocks1, block1Ix.second, block2);
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
-            err = checkNoDuplicateBlockServicesOrFailureDomains(blocks2, block2Ix, block1);
+            err = checkNoDuplicateBlockServicesOrFailureDomains(blocks2, block2Ix.second, block1);
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
@@ -3249,10 +3502,7 @@ struct ShardDBImpl {
         _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId2, +1);
         _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId2, -1);
         // Finally, swap the blocks
-        std::vector<char> tmp(decltype(block1)::SIZE);
-        memcpy(tmp.data(), block1._data, decltype(block1)::SIZE);
-        memcpy(block1._data, block2._data, decltype(block1)::SIZE);
-        memcpy(block2._data, tmp.data(), decltype(block1)::SIZE);
+        swapBlocks(block1, block2);
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span1.toSlice()));
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span2.toSlice()));
         return EggsError::NO_ERROR;
@@ -3357,10 +3607,7 @@ struct ShardDBImpl {
         if (span1().isInlineStorage() || span2().isInlineStorage()) {
             return EggsError::SWAP_SPANS_INLINE_STORAGE;
         }
-        ALWAYS_ASSERT(span1().locationCount() == 1);
-        ALWAYS_ASSERT(span1().locationCount() == 1);
-        auto blocks1 = span1().blocksBodyReadOnly(0);
-        auto blocks2 = span2().blocksBodyReadOnly(0);
+
         // check that size and crc is the same
         if (span1().spanSize() != span2().spanSize()) {
             return EggsError::SWAP_SPANS_MISMATCHING_SIZE;
@@ -3375,29 +3622,36 @@ struct ShardDBImpl {
             return EggsError::SWAP_SPANS_NOT_CLEAN;
         }
         // check if we've already swapped
-        const auto blocksMatch = [](const BlocksBodyReadOnly span, const BincodeList<uint64_t>& blocks) {
-            if (span.parity().blocks() != blocks.els.size()) { return false; }
-            for (int i = 0; i < blocks.els.size(); i++) {
-                if (span.block(i).blockId() != blocks.els[i]) { return false; }
+        const auto blocksMatch = [](const SpanBody& span, const BincodeList<uint64_t>& blocks) {
+            size_t blockIdx = 0;
+            for (uint8_t locIdx = 0; locIdx < span.locationCount(); ++locIdx) {
+                auto blocksBody = span.blocksBodyReadOnly(locIdx);
+                if (blockIdx + blocksBody.parity().blocks() > blocks.els.size()) { return false; }
+                for (int i = 0; i < blocks.els.size(); i++) {
+                    if (blocksBody.block(i).blockId() != blocks.els[blockIdx++]) { return false; }
+                }
             }
             return true;
         };
-        if (blocksMatch(blocks1, entry.blocks2) && blocksMatch(blocks2, entry.blocks1)) {
+        if (blocksMatch(span1(), entry.blocks2) && blocksMatch(span2(), entry.blocks1)) {
             return EggsError::NO_ERROR; // we're already done
         }
-        if (!(blocksMatch(blocks1, entry.blocks1) && blocksMatch(blocks2, entry.blocks2))) {
+        if (!(blocksMatch(span1(), entry.blocks1) && blocksMatch(span2(), entry.blocks2))) {
             return EggsError::SWAP_SPANS_MISMATCHING_BLOCKS;
         }
         // we're ready to swap, first do the blocks bookkeeping
-        const auto adjustBlockServices = [this, &batch](const BlocksBodyReadOnly blocks, InodeId addTo, InodeId subtractFrom) {
-            for (int i = 0; i < blocks.parity().blocks(); i++) {
-                const auto block = blocks.block(i);
-                _addBlockServicesToFiles(batch, block.blockService(), addTo, +1);
-                _addBlockServicesToFiles(batch, block.blockService(), subtractFrom, -1);
+        const auto adjustBlockServices = [this, &batch](const SpanBody& span, InodeId addTo, InodeId subtractFrom) {
+            for (uint8_t locIdx = 0; locIdx < span.locationCount(); ++locIdx) {
+                auto blocksBody = span.blocksBodyReadOnly(locIdx);
+                for (int i = 0; i < blocksBody.parity().blocks(); i++) {
+                    const auto block = blocksBody.block(i);
+                    _addBlockServicesToFiles(batch, block.blockService(), addTo, +1);
+                    _addBlockServicesToFiles(batch, block.blockService(), subtractFrom, -1);
+                }
             }
         };
-        adjustBlockServices(blocks1, entry.fileId2, entry.fileId1);
-        adjustBlockServices(blocks2, entry.fileId1, entry.fileId2);
+        adjustBlockServices(span1(), entry.fileId2, entry.fileId1);
+        adjustBlockServices(span2(), entry.fileId1, entry.fileId2);
         // now do the swap
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span1Key.toSlice(), span2.toSlice()));
         ROCKS_DB_CHECKED(batch.Put(_spansCf, span2Key.toSlice(), span1.toSlice()));
@@ -3544,15 +3798,37 @@ struct ShardDBImpl {
             err = _applyAddInlineSpan(time, batch, logEntryBody.getAddInlineSpan(), resp.setAddInlineSpan());
             break;
         case ShardLogEntryKind::ADD_SPAN_INITIATE: {
+            AddSpanAtLocationInitiateEntry addSpanAtLocationInitiate;
+            addSpanAtLocationInitiate.locationId = DEFAULT_LOCATION;
+            addSpanAtLocationInitiate.withReference = logEntryBody.getAddSpanInitiate().withReference;
+            addSpanAtLocationInitiate.fileId = logEntryBody.getAddSpanInitiate().fileId;
+            addSpanAtLocationInitiate.byteOffset = logEntryBody.getAddSpanInitiate().byteOffset;
+            addSpanAtLocationInitiate.size = logEntryBody.getAddSpanInitiate().size;
+            addSpanAtLocationInitiate.crc = logEntryBody.getAddSpanInitiate().crc;
+            addSpanAtLocationInitiate.storageClass = logEntryBody.getAddSpanInitiate().storageClass;
+            addSpanAtLocationInitiate.parity = logEntryBody.getAddSpanInitiate().parity;
+            addSpanAtLocationInitiate.stripes = logEntryBody.getAddSpanInitiate().stripes;
+            addSpanAtLocationInitiate.cellSize = logEntryBody.getAddSpanInitiate().cellSize;
+            addSpanAtLocationInitiate.bodyBlocks = logEntryBody.getAddSpanInitiate().bodyBlocks;
+            addSpanAtLocationInitiate.bodyStripes = logEntryBody.getAddSpanInitiate().bodyStripes;
+            AddSpanAtLocationInitiateResp respWrapper;
             if (logEntryBody.getAddSpanInitiate().withReference) {
                 auto& refResp = resp.setAddSpanInitiateWithReference();
-                err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), refResp.resp);
+                err = _applyAddSpanInitiate(time, batch, addSpanAtLocationInitiate, respWrapper);
+                refResp.resp = respWrapper.resp;
             } else {
-                err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanInitiate(), resp.setAddSpanInitiate());
+                err = _applyAddSpanInitiate(time, batch, addSpanAtLocationInitiate, respWrapper);
+                resp.setAddSpanInitiate() = respWrapper.resp;
             }
             break; }
+        case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE: {
+            err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanAtLocationInitiate(), resp.setAddSpanAtLocationInitiate());
+        }
         case ShardLogEntryKind::ADD_SPAN_CERTIFY:
             err = _applyAddSpanCertify(time, batch, logEntryBody.getAddSpanCertify(), resp.setAddSpanCertify());
+            break;
+        case ShardLogEntryKind::ADD_SPAN_LOCATION:
+            err = _applyAddSpanLocation(time, batch, logEntryBody.getAddSpanLocation(), resp.setAddSpanLocation());
             break;
         case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
             err = _applyMakeFileTransient(time, batch, logEntryBody.getMakeFileTransient(), resp.setMakeFileTransient());
@@ -3829,8 +4105,8 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     throw EGGS_EXCEPTION("bad message kind %s", kind);
 }
 
-ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB, const BlockServicesCacheDB& blockServicesCache) {
-    _impl = new ShardDBImpl(logger, agent, shid, deadlineInterval, sharedDB, blockServicesCache);
+ShardDB::ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& agent, ShardId shid, uint8_t location, Duration deadlineInterval, const SharedRocksDB& sharedDB, const BlockServicesCacheDB& blockServicesCache) {
+    _impl = new ShardDBImpl(logger, agent, shid, location, deadlineInterval, sharedDB, blockServicesCache);
 }
 
 void ShardDB::close() {

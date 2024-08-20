@@ -48,7 +48,7 @@ public:
     ShardDB() = delete;
 
     // init/teardown
-    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, Duration deadlineInterval, const SharedRocksDB& sharedDB, const BlockServicesCacheDB& blockServicesCache);
+    ShardDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardId shid, uint8_t location, Duration deadlineInterval, const SharedRocksDB& sharedDB, const BlockServicesCacheDB& blockServicesCache);
     ~ShardDB();
     void close();
 

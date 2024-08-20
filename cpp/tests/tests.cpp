@@ -395,7 +395,7 @@ struct TempShardDB {
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
         blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
-        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
+        db = std::make_unique<ShardDB>(logger, xmon, shid, 0, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
     }
 
     // useful to test recovery
@@ -405,7 +405,7 @@ struct TempShardDB {
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
         blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
-        db = std::make_unique<ShardDB>(logger, xmon, shid, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
+        db = std::make_unique<ShardDB>(logger, xmon, shid, 0, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
     }
 
     ~TempShardDB() {

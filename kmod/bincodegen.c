@@ -85,6 +85,13 @@ const char* eggsfs_err_str(int err) {
     case 92: return "CANNOT_CREATE_DB_SNAPSHOT";
     case 93: return "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE";
     case 94: return "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN";
+    case 95: return "TRANSIENT_LOCATION_COUNT";
+    case 96: return "ADD_SPAN_LOCATION_INLINE_STORAGE";
+    case 97: return "ADD_SPAN_LOCATION_MISMATCHING_SIZE";
+    case 98: return "ADD_SPAN_LOCATION_NOT_CLEAN";
+    case 99: return "ADD_SPAN_LOCATION_MISMATCHING_CRC";
+    case 100: return "ADD_SPAN_LOCATION_EXISTS";
+    case 101: return "SWAP_BLOCKS_MISMATCHING_LOCATION";
     default: return "UNKNOWN";
     }
 }

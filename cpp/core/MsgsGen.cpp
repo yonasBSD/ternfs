@@ -262,6 +262,27 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN:
         out << "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN";
         break;
+    case EggsError::TRANSIENT_LOCATION_COUNT:
+        out << "TRANSIENT_LOCATION_COUNT";
+        break;
+    case EggsError::ADD_SPAN_LOCATION_INLINE_STORAGE:
+        out << "ADD_SPAN_LOCATION_INLINE_STORAGE";
+        break;
+    case EggsError::ADD_SPAN_LOCATION_MISMATCHING_SIZE:
+        out << "ADD_SPAN_LOCATION_MISMATCHING_SIZE";
+        break;
+    case EggsError::ADD_SPAN_LOCATION_NOT_CLEAN:
+        out << "ADD_SPAN_LOCATION_NOT_CLEAN";
+        break;
+    case EggsError::ADD_SPAN_LOCATION_MISMATCHING_CRC:
+        out << "ADD_SPAN_LOCATION_MISMATCHING_CRC";
+        break;
+    case EggsError::ADD_SPAN_LOCATION_EXISTS:
+        out << "ADD_SPAN_LOCATION_EXISTS";
+        break;
+    case EggsError::SWAP_BLOCKS_MISMATCHING_LOCATION:
+        out << "SWAP_BLOCKS_MISMATCHING_LOCATION";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

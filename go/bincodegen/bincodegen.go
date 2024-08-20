@@ -1520,6 +1520,7 @@ func main() {
 		"SWAP_SPANS_MISMATCHING_BLOCKS",
 		"EDGE_NOT_OWNED",
 		"CANNOT_CREATE_DB_SNAPSHOT",
+		"BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE",
 	}
 
 	kernelShardReqResps := []reqRespType{

@@ -88,6 +88,7 @@ enum class EggsError : uint16_t {
     SWAP_SPANS_MISMATCHING_BLOCKS = 90,
     EDGE_NOT_OWNED = 91,
     CANNOT_CREATE_DB_SNAPSHOT = 92,
+    BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE = 93,
 };
 
 std::ostream& operator<<(std::ostream& out, EggsError err);
@@ -176,9 +177,10 @@ const std::vector<EggsError> allEggsErrors {
     EggsError::SWAP_SPANS_MISMATCHING_BLOCKS,
     EggsError::EDGE_NOT_OWNED,
     EggsError::CANNOT_CREATE_DB_SNAPSHOT,
+    EggsError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE,
 };
 
-constexpr int maxEggsError = 93;
+constexpr int maxEggsError = 94;
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,

@@ -256,6 +256,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::CANNOT_CREATE_DB_SNAPSHOT:
         out << "CANNOT_CREATE_DB_SNAPSHOT";
         break;
+    case EggsError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE:
+        out << "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

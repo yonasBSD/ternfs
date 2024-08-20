@@ -83,6 +83,7 @@ const char* eggsfs_err_str(int err) {
     case 90: return "SWAP_SPANS_MISMATCHING_BLOCKS";
     case 91: return "EDGE_NOT_OWNED";
     case 92: return "CANNOT_CREATE_DB_SNAPSHOT";
+    case 93: return "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE";
     default: return "UNKNOWN";
     }
 }

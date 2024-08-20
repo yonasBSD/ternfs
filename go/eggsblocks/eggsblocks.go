@@ -1677,11 +1677,17 @@ func main() {
 		}
 	}
 
-	for _, blockService := range blockServices {
-		if err := convertBlockServiceFolderStructureToCrcBased(log, blockService); err != nil {
-			panic(err)
-		}
+	wg := sync.WaitGroup{}
+	for _, bs := range blockServices {
+		wg.Add(1)
+		go func(b *blockService) {
+			defer wg.Done()
+			if err := convertBlockServiceFolderStructureToCrcBased(log, b); err != nil {
+				panic(err)
+			}
+		}(bs)
 	}
+	wg.Wait()
 
 	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))
 	if err != nil {

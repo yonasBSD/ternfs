@@ -1009,6 +1009,7 @@ func main() {
 	findBeforeSpec := findCmd.String("before", "", "If set, only directory entries created before this duration/date will be searched.")
 	findBlockId := findCmd.Uint64("block-id", 0, "If specified, only files which contain the given block will be returned.")
 	findMinSize := findCmd.Uint64("min-size", 0, "If specified, only files of at least this size will be returned.")
+	findCheckBlocks := findCmd.Bool("check-blocks", false, "If true check all blocks in file")
 	findWorkersPerShard := findCmd.Int("workers-per-shard", 5, "")
 	findRun := func() {
 		re := regexp.MustCompile(`.*`)
@@ -1103,6 +1104,36 @@ func main() {
 					}
 					if !found {
 						return nil
+					}
+				}
+				if *findCheckBlocks {
+					if id.Type() == msgs.DIRECTORY {
+						return nil
+					}
+					req := msgs.FileSpansReq{
+						FileId: id,
+					}
+					resp := msgs.FileSpansResp{}
+					for {
+						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+							return err
+						}
+						for _, span := range resp.Spans {
+							if span.Header.StorageClass == msgs.INLINE_STORAGE {
+								continue
+							}
+							body := span.Body.(*msgs.FetchedBlocksSpan)
+							for _, block := range body.Blocks {
+								blockService := &resp.BlockServices[block.BlockServiceIx]
+								if err := c.CheckBlock(log, blockService, block.BlockId, body.CellSize*uint32(body.Stripes), block.Crc); err != nil {
+									log.ErrorNoAlert("while checking block %v in file %v got error %v", block.BlockId, path.Join(parentPath, name), err)
+								}
+							}
+						}
+						req.ByteOffset = resp.NextOffset
+						if req.ByteOffset == 0 {
+							break
+						}
 					}
 				}
 				log.Info("%q", path.Join(parentPath, name))

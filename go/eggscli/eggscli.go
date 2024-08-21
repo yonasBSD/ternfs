@@ -1430,6 +1430,85 @@ func main() {
 		run:   resurrectFileRun,
 	}
 
+	convertCmd := flag.NewFlagSet("convert", flag.ExitOnError)
+	convertDir := convertCmd.String("path", "/", "")
+	convertSnapshot := convertCmd.Bool("snapshot", false, "If set, will search through snapshot directory entries too.")
+	convertOnlySnapshot := convertCmd.Bool("only-snapshot", false, "If set, will convert _only_ snapshot edges.")
+	convertOnlyOwned := convertCmd.Bool("only-owned", false, "If true only owned files will be converted.")
+	convertOnlyHDD := convertCmd.Bool("only-hdd", false, "If true only HDD files will be converted.")
+	convertOnlyFlash := convertCmd.Bool("only-flash", false, "If true only Flash files will be converted.")
+	convertWorkersPerShard := convertCmd.Int("workers-per-shard", 5, "")
+	convertRun := func() {
+		c := getClient()
+		var blocksConverted int64
+		err := client.Parwalk(
+			log,
+			c,
+			&client.ParwalkOptions{
+				WorkersPerShard: *convertWorkersPerShard,
+				Snapshot:        *convertSnapshot,
+			},
+			*convertDir,
+			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
+				if !owned && *convertOnlyOwned {
+					return nil
+				}
+				if current && *convertOnlySnapshot {
+					return nil
+				}
+
+				if id.Type() == msgs.DIRECTORY {
+					return nil
+				}
+				req := msgs.FileSpansReq{
+					FileId: id,
+				}
+				resp := msgs.FileSpansResp{}
+				for {
+					if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						log.ErrorNoAlert("failed to fetch spans with err %v", err)
+						break
+					}
+					for _, span := range resp.Spans {
+						if span.Header.StorageClass == msgs.INLINE_STORAGE {
+							continue
+						}
+						if *convertOnlyHDD && span.Header.StorageClass != msgs.HDD_STORAGE {
+							continue
+						}
+						if *convertOnlyFlash && span.Header.StorageClass != msgs.FLASH_STORAGE {
+							continue
+						}
+						body := span.Body.(*msgs.FetchedBlocksSpan)
+						for _, block := range body.Blocks {
+							blockService := &resp.BlockServices[block.BlockServiceIx]
+							if err := c.ConvertBlock(log, blockService, block.BlockId, body.CellSize*uint32(body.Stripes), block.Crc); err != nil {
+								log.ErrorNoAlert("while convert block %v in file %v got error %v", block.BlockId, path.Join(parentPath, name), err)
+							} else {
+								if atomic.AddInt64(&blocksConverted, 1)%1000000 == 0 {
+									log.Info("converted %v blocks", blocksConverted)
+								}
+							}
+						}
+					}
+					req.ByteOffset = resp.NextOffset
+					if req.ByteOffset == 0 {
+						break
+					}
+				}
+				return nil
+			},
+		)
+		log.Info("converted %v blocks", blocksConverted)
+		if err != nil {
+			panic(err)
+		}
+	}
+	commands["convert"] = commandSpec{
+		flags: convertCmd,
+		run:   convertRun,
+	}
+
 	flag.Parse()
 
 	if *prod {

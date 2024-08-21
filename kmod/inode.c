@@ -48,7 +48,7 @@ struct inode* eggsfs_inode_alloc(struct super_block* sb) {
 
 void eggsfs_inode_evict(struct inode* inode) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
-    eggsfs_debug("enode=%p", enode);
+    eggsfs_debug("evict enode=%p", enode);
     if (S_ISDIR(inode->i_mode)) {
         eggsfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {

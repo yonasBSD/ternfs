@@ -132,6 +132,32 @@ void eggsfs_put_stripe(struct eggsfs_stripe* stripe, bool was_read);
 // a page will pull in all the pages for the stripe.
 struct page* eggsfs_get_stripe_page(struct eggsfs_stripe* stripe, u32 page_ix);
 
+// Fetches pages from block services to fill the supplied list of pages.
+// @pages - original list of pages to be filled. The list is expected to
+//          contain pages with page->index values increasing by 1.
+//          If file offsets in the supplied list fall beyond the end of
+//          the supplied block_span, pages for those offsets are dropped
+//          and removed from the list.
+// @extra_pages - empty list to add fetched pages that fall outside of the
+//                requested range.
+// Pages are taken out of the list, added to required blocks for fetching, 
+// filled with data fetched from block services and then assembled back
+// maintaining the original order to match file offsets. Each supplied page
+// has page->index prefilled as file_offset/PAGE_SIZE. Fetches are done in
+// multiple blocks, but only up to the end of the stripe. If more pages are
+// needed, separate fetch for the next stripe is kicked off. Fetch is kicked
+// off with the same amount of pages in each block, so if any blocks end up
+// having fewer pages, additional padding pages are allocated. If any blocks
+// fail, the fetch for the rest of the blocks in the stripe and required parity
+// blocks is kicked off. These pages and any padding pages have correct
+// page->index set to match the file offset and they are added to the extra_pages
+// list. It is up to the caller how to handle them.
+// If the requested range is larger than span end, the remaining pages are
+// dropped with put_page and not filled. The upstream code only really cares that
+// the first page is filled in by the readahead code, so returning fewer pages or
+// even returning error aggressively is fine.
+int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_space* mapping, struct list_head *pages, unsigned nr_pages, struct list_head *extra_pages);
+
 // Drops all cached stripes not being currently used. Returns number of
 // freed pages.
 u64 eggsfs_drop_all_stripes(void);

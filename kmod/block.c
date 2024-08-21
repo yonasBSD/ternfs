@@ -21,6 +21,8 @@
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
+#define PAGE_CRC_BYTES 4
+
 int eggsfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
 int eggsfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
 int eggsfs_block_service_connect_timeout_jiffies = MSECS_TO_JIFFIES(4 * 1000);
@@ -59,18 +61,33 @@ struct block_ops {
     int (*receive)(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
 };
 
-static void fetch_data_ready(struct sock *sk);
-static void fetch_work(struct work_struct* work);
 static void fetch_complete(struct block_request* req);
-static int fetch_write(struct block_socket* socket, struct block_request* breq);
-static int fetch_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
 
-static struct block_ops fetch_ops = {
-    .data_ready = fetch_data_ready,
-    .work = fetch_work,
+static void fetch_block_pages_data_ready(struct sock *sk);
+static void fetch_block_pages_work(struct work_struct* work);
+static int fetch_block_pages_write(struct block_socket* socket, struct block_request* breq);
+static int fetch_block_pages_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
+
+static struct block_ops fetch_block_pages_ops = {
+    .data_ready = fetch_block_pages_data_ready,
+    .work = fetch_block_pages_work,
     .complete = fetch_complete,
-    .write = fetch_write,
-    .receive = fetch_receive,
+    .write = fetch_block_pages_write,
+    .receive = fetch_block_pages_receive,
+    .timeout_jiffies = &eggsfs_fetch_block_timeout_jiffies,
+};
+
+static void fetch_block_pages_with_crc_data_ready(struct sock *sk);
+static void fetch_block_pages_with_crc_work(struct work_struct* work);
+static int fetch_block_pages_with_crc_write(struct block_socket* socket, struct block_request* breq);
+static int fetch_block_pages_withc_crc_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
+
+static struct block_ops fetch_block_pages_witch_crc_ops = {
+    .data_ready = fetch_block_pages_with_crc_data_ready,
+    .work = fetch_block_pages_with_crc_work,
+    .complete = fetch_complete,
+    .write = fetch_block_pages_with_crc_write,
+    .receive = fetch_block_pages_withc_crc_receive,
     .timeout_jiffies = &eggsfs_fetch_block_timeout_jiffies,
 };
 
@@ -731,8 +748,14 @@ struct fetch_request {
     // Req info
     u64 block_service_id;
     u64 block_id;
+    u32 block_crc;
     u32 offset;
     u32 count;
+    u32 bytes_fetched;
+
+    // When reading blocks with crcs we need to alternate between reading pages
+    // and CRCs. next_read_size will be either PAGE_SIZE or PAGE_CRC_BYTES.
+    u32 next_read_size;
 
     // The cursor inside the current page.
     u16 page_offset;
@@ -753,11 +776,18 @@ struct fetch_request {
 
 static void fetch_complete(struct block_request* breq) {
     struct fetch_request* req = get_fetch_request(breq);
+    int i;
+    // When fetching pages with crc, the pages list needs to be returned in the
+    // exact same order as it was received. We need to restore it back if
+    // reading didn't finish and not all the items got rotated.
+    for (i = 0; i < (req->count - req->bytes_fetched)/PAGE_SIZE; i++) {
+        eggsfs_info("rotating list left: %d: %d %d", i, req->count, req->bytes_fetched);
+        list_rotate_left(&req->pages);
+    }
     eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
     req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->breq.err));
 
     eggsfs_debug("block released socket block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
-
     put_pages_list(&req->pages);
     kmem_cache_free(fetch_request_cachep, req);
 }
@@ -774,48 +804,7 @@ static void fetch_request_constructor(void* ptr) {
 }
 
 int eggsfs_drop_fetch_block_sockets(void) {
-    return drop_sockets(&fetch_ops);
-}
-
-static int fetch_write(struct block_socket* socket, struct block_request* breq) {
-    struct fetch_request* req = get_fetch_request(breq);
-
-    char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_REQ_SIZE];
-    BUG_ON(breq->left_to_write > sizeof(req_msg_buf));
-
-    // we're not done, fill in the req
-    char* req_msg = req_msg_buf;
-    put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
-    put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
-    *(u8*)req_msg = EGGSFS_BLOCKS_FETCH_BLOCK; req_msg += 1;
-    {
-        struct eggsfs_bincode_put_ctx ctx = {
-            .start = req_msg,
-            .cursor = req_msg,
-            .end = req_msg_buf + sizeof(req_msg_buf),
-        };
-        eggsfs_fetch_block_req_put_start(&ctx, start);
-        eggsfs_fetch_block_req_put_block_id(&ctx, start, req_block_id, req->block_id);
-        eggsfs_fetch_block_req_put_offset(&ctx, req_block_id, req_offset, req->offset);
-        eggsfs_fetch_block_req_put_count(&ctx, req_offset, req_count, req->count);
-        eggsfs_fetch_block_req_put_end(ctx, req_count, end);
-        BUG_ON(ctx.cursor != ctx.end);
-    }
-
-    // send message
-    struct msghdr msg = { .msg_flags = MSG_DONTWAIT };
-    eggsfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
-    struct kvec iov = {
-        .iov_base = req_msg_buf + (sizeof(req_msg_buf) - breq->left_to_write),
-        .iov_len = breq->left_to_write,
-    };
-    int err = kernel_sendmsg(socket->sock, &msg, &iov, 1, iov.iov_len);
-    return err == -EAGAIN ? 0 : err;
-}
-
-static void fetch_work(struct work_struct* work) {
-    struct block_socket* socket = container_of(work, struct block_socket, work);
-    block_work(&fetch_ops, socket);
+    return drop_sockets(&fetch_block_pages_ops);
 }
 
 // Returns a negative result if the socket has to be considered corrupted.
@@ -885,7 +874,6 @@ static int fetch_receive_single_req(
     struct skb_seq_state seq;
     u32 read_len = min(req->breq.left_to_read - (u32)header_read, (u32)len);
     skb_prepare_seq_read(skb, offset, offset + read_len, &seq);
-
     u32 block_bytes_read = 0;
     while (block_bytes_read < req->breq.left_to_read) {
         const u8* data;
@@ -894,21 +882,41 @@ static int fetch_receive_single_req(
         avail = min(avail, read_len - block_bytes_read); // avail can exceed the len upper bound
 
         while (avail) {
-            u32 this_len = min3(avail, (u32)PAGE_SIZE - req->page_offset, req->breq.left_to_read - block_bytes_read);
-            memcpy(page_ptr + req->page_offset, data, this_len);
+            u32 this_len = min3(avail, (u32)req->next_read_size - req->page_offset, req->breq.left_to_read - block_bytes_read);
+            eggsfs_debug("read %d bytes of %d", this_len, req->next_read_size);
+            if (req->next_read_size == PAGE_SIZE) {
+                req->bytes_fetched += this_len;
+                memcpy(page_ptr + req->page_offset, data, this_len);
+            } else {
+                memcpy((u8 *)&page->private+req->page_offset, data, this_len);
+            }
             data += this_len;
             req->page_offset += this_len;
             avail -= this_len;
             block_bytes_read += this_len;
 
-            if (req->page_offset >= PAGE_SIZE) {
-                BUG_ON(req->page_offset > PAGE_SIZE);
-
+            if (req->page_offset >= req->next_read_size) {
+                BUG_ON(req->page_offset > req->next_read_size);
+                req->page_offset = 0;
+                if (req->next_read_size == PAGE_SIZE) {
+                    if (req->block_crc > 0) {
+                        //  We are handling BlockWithCrc response, so CRC will follow this page
+                        req->next_read_size = PAGE_CRC_BYTES;
+                        // We only want to rotate the list and map new page
+                        // when we are not expecting CRC after each page. When
+                        // parsing BlockWithCrc response, the list will be
+                        // rotated and new page mapped when we finish reading the CRC.
+                        continue;
+                    }
+                } else {
+                    // We have finished reading the CRC of the last page
+                    // the crc itself was stored in page_crc->crc in the read loop.
+                    req->next_read_size = PAGE_SIZE;
+                }
                 kunmap_atomic(page_ptr);
                 list_rotate_left(&req->pages);
                 page = list_first_entry(&req->pages, struct page, lru);
                 page_ptr = kmap_atomic(page);
-                req->page_offset = 0;
             }
         }
     }
@@ -923,15 +931,191 @@ static int fetch_receive_single_req(
     return header_read + block_bytes_read;
 }
 
-static int fetch_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
+// --------------------------------------------------------------------
+// Fetch pages with crc
+// --------------------------------------------------------------------
+
+static int fetch_block_pages_with_crc_write(struct block_socket* socket, struct block_request* breq) {
+    struct fetch_request* req = get_fetch_request(breq);
+
+    char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE];
+    BUG_ON(breq->left_to_write > sizeof(req_msg_buf));
+
+    // we're not done, fill in the req
+    char* req_msg = req_msg_buf;
+    put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
+    put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
+    *(u8*)req_msg = EGGSFS_BLOCKS_FETCH_BLOCK_WITH_CRC; req_msg += 1;
+    {
+        struct eggsfs_bincode_put_ctx ctx = {
+            .start = req_msg,
+            .cursor = req_msg,
+            .end = req_msg_buf + sizeof(req_msg_buf),
+        };
+        eggsfs_fetch_block_with_crc_req_put_start(&ctx, start);
+        eggsfs_fetch_block_with_crc_req_put_block_id(&ctx, start, req_block_id, req->block_id);
+        eggsfs_fetch_block_with_crc_req_put_block_crc(&ctx, req_block_id, req_block_crc, req->block_crc);
+        eggsfs_fetch_block_with_crc_req_put_offset(&ctx, req_block_crc, req_offset, req->offset);
+        eggsfs_fetch_block_with_crc_req_put_count(&ctx, req_offset, req_count, req->count);
+        eggsfs_fetch_block_with_crc_req_put_end(ctx, req_count, end);
+        BUG_ON(ctx.cursor != ctx.end);
+    }
+
+    // send message
+    struct msghdr msg = { .msg_flags = MSG_DONTWAIT };
+    eggsfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
+    struct kvec iov = {
+        .iov_base = req_msg_buf + (sizeof(req_msg_buf) - breq->left_to_write),
+        .iov_len = breq->left_to_write,
+    };
+    int err = kernel_sendmsg(socket->sock, &msg, &iov, 1, iov.iov_len);
+    return err == -EAGAIN ? 0 : err;
+}
+
+static void fetch_block_pages_with_crc_work(struct work_struct* work) {
+    struct block_socket* socket = container_of(work, struct block_socket, work);
+    block_work(&fetch_block_pages_witch_crc_ops, socket);
+}
+
+static int fetch_block_pages_withc_crc_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
     return block_receive(fetch_receive_single_req, rd_desc, skb, offset, len);
 }
 
-static void fetch_data_ready(struct sock* sk) {
-    block_data_ready(&fetch_ops, sk);
+static void fetch_block_pages_with_crc_data_ready(struct sock* sk) {
+    block_data_ready(&fetch_block_pages_witch_crc_ops, sk);
 }
 
-int eggsfs_fetch_block(
+int eggsfs_fetch_block_pages_with_crc(
+    void (*callback)(void* data, u64 block_id, struct list_head* pages, int err),
+    void* data,
+    struct eggsfs_block_service* bs,
+    struct list_head* pages,
+    u64 block_id,
+    u32 block_crc,
+    u32 offset,
+    u32 count
+) {
+    int err, i;
+
+    if (count%PAGE_SIZE) {
+        // we rely on the pages being filled neatly in the block fetch code
+        // (we could change this easily, but not needed for now)
+        eggsfs_warn("cannot read not page-sized block segment: %u", count);
+        return -EIO;
+    }
+
+    // can't read
+    if (unlikely(bs->flags & EGGSFS_BLOCK_SERVICE_DONT_READ)) {
+        eggsfs_debug("could not fetch block given block flags %02x", bs->flags);
+        return -EIO;
+    }
+
+    struct fetch_request* req = kmem_cache_alloc(fetch_request_cachep, GFP_KERNEL);
+    if (!req) { err = -ENOMEM; goto out_err; }
+
+    req->callback = callback;
+    req->data = data;
+    req->block_service_id = bs->id;
+    req->block_id = block_id;
+    req->block_crc = block_crc;
+    req->offset = offset;
+    req->count = count;
+    req->bytes_fetched = 0;
+    req->page_offset = 0;
+    req->header_read = 0;
+    req->next_read_size = PAGE_SIZE;
+
+    BUG_ON(!list_empty(&req->pages));
+    for (i = 0; i < count/PAGE_SIZE; i++) {
+        struct page *page = list_first_entry_or_null(pages, struct page, lru);
+        BUG_ON(page == NULL);
+        list_del(&page->lru);
+        page->private = 0;
+        list_add_tail(&page->lru, &req->pages);
+    }
+    BUG_ON(!list_empty(pages));
+    err = block_start(
+        &fetch_block_pages_witch_crc_ops,
+        &req->breq,
+        bs,
+        EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE,
+        EGGSFS_BLOCKS_RESP_HEADER_SIZE + EGGSFS_FETCH_BLOCK_WITH_CRC_RESP_SIZE + count + (count / PAGE_SIZE) * PAGE_CRC_BYTES
+    );
+    if (err) {
+        goto out_err_pages;
+    }
+
+    return 0;
+
+out_err_pages:
+    // Transfer pages back to the caller.
+    for (i = 0; i < count/PAGE_SIZE; i++) {
+        struct page *page = list_first_entry_or_null(&req->pages, struct page, lru);
+        BUG_ON(page == NULL);
+        list_del(&page->lru);
+        page->private = 0;
+        list_add_tail(&page->lru, pages);
+    }
+    kmem_cache_free(fetch_request_cachep, req);
+out_err:
+    eggsfs_info("couldn't start fetch block request, err=%d", err);
+    return err;
+}
+
+//
+// Fetch block pages
+//
+
+static int fetch_block_pages_write(struct block_socket* socket, struct block_request* breq) {
+    struct fetch_request* req = get_fetch_request(breq);
+
+    char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_REQ_SIZE];
+    BUG_ON(breq->left_to_write > sizeof(req_msg_buf));
+
+    // we're not done, fill in the req
+    char* req_msg = req_msg_buf;
+    put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
+    put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
+    *(u8*)req_msg = EGGSFS_BLOCKS_FETCH_BLOCK; req_msg += 1;
+    {
+        struct eggsfs_bincode_put_ctx ctx = {
+            .start = req_msg,
+            .cursor = req_msg,
+            .end = req_msg_buf + sizeof(req_msg_buf),
+        };
+        eggsfs_fetch_block_req_put_start(&ctx, start);
+        eggsfs_fetch_block_req_put_block_id(&ctx, start, req_block_id, req->block_id);
+        eggsfs_fetch_block_req_put_offset(&ctx, req_block_id, req_offset, req->offset);
+        eggsfs_fetch_block_req_put_count(&ctx, req_offset, req_count, req->count);
+        eggsfs_fetch_block_req_put_end(ctx, req_count, end);
+        BUG_ON(ctx.cursor != ctx.end);
+    }
+
+    // send message
+    struct msghdr msg = { .msg_flags = MSG_DONTWAIT };
+    eggsfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
+    struct kvec iov = {
+        .iov_base = req_msg_buf + (sizeof(req_msg_buf) - breq->left_to_write),
+        .iov_len = breq->left_to_write,
+    };
+    int err = kernel_sendmsg(socket->sock, &msg, &iov, 1, iov.iov_len);
+    return err == -EAGAIN ? 0 : err;
+}
+
+static void fetch_block_pages_work(struct work_struct* work) {
+    struct block_socket* socket = container_of(work, struct block_socket, work);
+    block_work(&fetch_block_pages_ops, socket);
+}
+
+static int fetch_block_pages_receive(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
+    return block_receive(fetch_receive_single_req, rd_desc, skb, offset, len);
+}
+
+static void fetch_block_pages_data_ready(struct sock* sk) {
+    block_data_ready(&fetch_block_pages_ops, sk);
+}
+
+int eggsfs_fetch_block_pages(
     void (*callback)(void* data, u64 block_id, struct list_head* pages, int err),
     void* data,
     struct eggsfs_block_service* bs,
@@ -962,19 +1146,23 @@ int eggsfs_fetch_block(
     req->block_service_id = bs->id;
     req->block_id = block_id;
     req->offset = offset;
+    req->block_crc = 0; // needs to be 0 to make sure we don't try to fetch CRCs.
     req->count = count;
+    req->bytes_fetched = 0;
     req->page_offset = 0;
     req->header_read = 0;
+    req->next_read_size = PAGE_SIZE;
 
     BUG_ON(!list_empty(&req->pages));
     for (i = 0; i < (count + PAGE_SIZE - 1)/PAGE_SIZE; i++) {
-        struct page* page = alloc_page(GFP_KERNEL);
+        struct page *page = alloc_page(GFP_KERNEL);
         if (!page) { err = -ENOMEM; goto out_err_pages; }
+        page->private = 0;
         list_add_tail(&page->lru, &req->pages);
     }
 
     err = block_start(
-        &fetch_ops,
+        &fetch_block_pages_ops,
         &req->breq,
         bs,
         EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_REQ_SIZE,
@@ -1300,9 +1488,11 @@ out_err:
 
 // Periodically checks all sockets and schedules the timed out ones for deletion
 static void do_timeout_sockets(struct work_struct* w) {
-    timeout_sockets(&fetch_ops);
+    timeout_sockets(&fetch_block_pages_ops);
+    timeout_sockets(&fetch_block_pages_witch_crc_ops);
     timeout_sockets(&write_ops);
-    queue_delayed_work(eggsfs_wq, &timeout_work, min(*fetch_ops.timeout_jiffies, *write_ops.timeout_jiffies));
+    queue_delayed_work(eggsfs_wq, &timeout_work, min(*fetch_block_pages_ops.timeout_jiffies, *write_ops.timeout_jiffies));
+    queue_delayed_work(eggsfs_wq, &timeout_work, min(*fetch_block_pages_witch_crc_ops.timeout_jiffies, *write_ops.timeout_jiffies));
 }
 
 // init/exit
@@ -1328,7 +1518,9 @@ int __init eggsfs_block_init(void) {
     );
     if (!write_request_cachep) { err = -ENOMEM; goto out_fetch_request; }
 
-    block_ops_init(&fetch_ops);
+
+    block_ops_init(&fetch_block_pages_ops);
+    block_ops_init(&fetch_block_pages_witch_crc_ops);
     block_ops_init(&write_ops);
 
     queue_work(eggsfs_wq, &timeout_work.work);
@@ -1354,7 +1546,8 @@ void __cold eggsfs_block_exit(void) {
     // by erroring out each socket and waiting
     // for all sockets to be released.
 
-    block_ops_exit(&fetch_ops);
+    block_ops_exit(&fetch_block_pages_ops);
+    block_ops_exit(&fetch_block_pages_witch_crc_ops);
     block_ops_exit(&write_ops);
 
     // clear caches

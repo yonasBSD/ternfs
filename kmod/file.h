@@ -6,6 +6,8 @@
 extern unsigned eggsfs_atime_update_interval_sec;
 extern unsigned eggsfs_max_write_span_attempts;
 
+extern unsigned eggsfs_page_level_reads;
+
 extern int eggsfs_file_getattr_refresh_time_jiffies; // this is only relevant for mtime/atime updates
 
 ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);

@@ -6,6 +6,7 @@
 #include "net.h"
 
 extern int eggsfs_shuckle_refresh_time_jiffies;
+extern unsigned int eggsfs_readahead_pages;
 
 // We store addresses as atomics so that we can
 // easily refresh them.

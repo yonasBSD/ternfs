@@ -262,10 +262,18 @@ int eggsfs_recover(
         for (b = 0, j = 0; b < B; b++) { // map pages
             if ((1u<<b) & have_blocks) {
                 have_bufs[j] = kmap_atomic(list_first_entry(&pages[b], struct page, lru));
+                if(have_bufs[j] == NULL) {
+                    eggsfs_warn("page %d at block %d for block %d is NULL", i, b, j);
+                    BUG();
+                }
                 j++;
             }
             if ((1u<<b) & want_block) {
                 want_buf = kmap_atomic(list_first_entry(&pages[b], struct page, lru));
+                if(want_buf == NULL) {
+                    eggsfs_warn("target page %d %d %d is NULL", i, j, b);
+                    BUG();
+                }
             }
         }
 

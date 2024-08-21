@@ -36,10 +36,10 @@ cd $SCRIPT_DIR
 
 make KDIR=$SCRIPT_DIR/linux -j kmod
 
-pkill qemu || true
+pkill -9 qemu || true
 tmux kill-session -t uovo || true
 
-sleep 1 # sometimes qemu lingers?
+while [ $(pgrep -c qemu) -gt 0 ]; do echo old qemu still running; sleep 1; done # sometimes qemu lingers?
 
 # Windows:
 #
@@ -72,7 +72,7 @@ fi
 # Create shells
 tmux new-window -t uovo:1 'ssh -i image-key -t fmazzol@localhost -p 2223'
 if [[ "$run" = true ]]; then
-    tmux new-window -t uovo:2 'ssh -i image-key -t fmazzol@localhost -p 2223 "cd eggs && ./eggsrun -verbose -binaries-dir ~/eggs -data-dir ~/eggs-data/"'
+    tmux new-window -t uovo:2 'ssh -i image-key -t fmazzol@localhost -p 2223 "cd eggs && ./eggsrun -verbose -binaries-dir ~/eggs -data-dir ~/eggs-data/ -leader-only"'
 fi
 
 # Attach

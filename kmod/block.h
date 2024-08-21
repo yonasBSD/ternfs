@@ -29,11 +29,32 @@ struct eggsfs_block_service {
 //
 // It's _very_ important that you remember to get a reference to whatever
 // the callback needs! E.g. ihold on the inode.
-int eggsfs_fetch_block(
+int eggsfs_fetch_block_pages(
     void (*callback)(void* data, u64 block_id, struct list_head* pages, int err),
     void* data,
     struct eggsfs_block_service* bs,
     u64 block_id,
+    u32 offset,
+    u32 count
+);
+
+// Returns an error immediately if it can't connect to the block service or anyway
+// if it thinks the block service is no good.
+//
+// It's _very_ important that you remember to get a reference to whatever
+// the callback needs! E.g. ihold on the inode.
+// The crc of the fetched page is stored in the page->private field. This is ok
+// because the field only has meaning when PagePrivate bit is set.
+// `pages` is the list of pages to be filled when fetching blocks. Pages from
+// the supplied list are transferred to block request and then returned back
+// via the callback in `pages `parameter in the callback itself.
+int eggsfs_fetch_block_pages_with_crc(
+    void (*callback)(void* data, u64 block_id, struct list_head* pages, int err),
+    void* data,
+    struct eggsfs_block_service* bs,
+    struct list_head* pages,
+    u64 block_id,
+    u32 block_crc,
     u32 offset,
     u32 count
 );

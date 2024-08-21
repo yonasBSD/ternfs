@@ -1,5 +1,6 @@
 #include "super.h"
 
+#include <linux/backing-dev.h>
 #include <linux/inet.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -22,6 +23,7 @@
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 int eggsfs_shuckle_refresh_time_jiffies = MSECS_TO_JIFFIES(60000);
+unsigned int eggsfs_readahead_pages = 10000;
 
 static void eggsfs_free_fs_info(struct eggsfs_fs_info* info) {
     eggsfs_debug("info=%p", info);
@@ -574,6 +576,9 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     sb->s_blocksize = PAGE_SIZE;
     sb->s_magic = EGGSFS_SUPER_MAGIC;
     sb->s_blocksize_bits = ffs(sb->s_blocksize) - 1;
+
+    sb->s_bdi = &noop_backing_dev_info;
+    sb->s_bdi->ra_pages = eggsfs_readahead_pages;
 
     struct inode* root = eggsfs_get_inode_normal(sb, NULL, EGGSFS_ROOT_INODE);
     if (IS_ERR(root)) { err = PTR_ERR(root); goto out_sb; }

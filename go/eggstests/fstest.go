@@ -317,6 +317,16 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 		panic(err)
 	}
 	defer f.Close()
+
+	fInfo, err := f.Stat()
+	if err != nil {
+		panic(err)
+	}
+	stat, ok := fInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		panic(fmt.Errorf("could not read inode information for %s", fullFilePath))
+	}
+
 	var mm []byte
 	if c.readWithMmap && fullSize > 0 {
 		var err error
@@ -326,7 +336,7 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 		}
 		defer unix.Munmap(mm)
 	}
-	log.Debug("checking for file %v of expected len %v", fullFilePath, fullSize)
+	log.Debug("checking for file %v(ino=%d) of expected len %v", fullFilePath, stat.Ino, fullSize)
 	// First do some random reads, hopefully stimulating span caches in some interesting way
 	if fullSize > 1 {
 		for i := 0; i < 10; i++ {

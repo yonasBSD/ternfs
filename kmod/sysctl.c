@@ -18,7 +18,6 @@
 #endif
 
 int eggsfs_debug_output = 0;
-int eggsfs_prefetch = 0;
 
 #define eggsfs_do_sysctl(__callback) \
     int ret; \
@@ -132,8 +131,6 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .proc_handler = eggsfs_drop_write_block_sockets_sysctl,
     },
 
-    EGGSFS_CTL_BOOL(prefetch),
-
     EGGSFS_CTL_INT_JIFFIES(dir_getattr_refresh_time),
     EGGSFS_CTL_INT_JIFFIES(dir_dentry_refresh_time),
     EGGSFS_CTL_INT_JIFFIES(file_getattr_refresh_time),
@@ -146,8 +143,10 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     EGGSFS_CTL_INT_JIFFIES(overall_cdc_timeout),
     EGGSFS_CTL_INT_JIFFIES(block_service_connect_timeout),
 
+    EGGSFS_CTL_UINT(readahead_pages),
     EGGSFS_CTL_UINT(max_write_span_attempts),
     EGGSFS_CTL_UINT(atime_update_interval_sec),
+    EGGSFS_CTL_UINT(page_level_reads),
     EGGSFS_CTL_UINT(disable_ftruncate),
 
     EGGSFS_CTL_ULONG(stripe_cache_max_size_async),

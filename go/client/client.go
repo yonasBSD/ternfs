@@ -1440,6 +1440,22 @@ func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, s
 	}
 }
 
+func convertBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any) *sendArgs {
+	return &sendArgs{
+		blockService.Id,
+		blockService.Addrs,
+		&msgs.ConvertBlockReq{
+			BlockId: blockId,
+			Size:    size,
+			Crc:     crc,
+		},
+		nil,
+		&msgs.ConvertBlockResp{},
+		nil,
+		extra,
+	}
+}
+
 // An asynchronous version of [CheckBlock] that is currently unused.
 func (c *Client) StartCheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return c.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
@@ -1447,5 +1463,10 @@ func (c *Client) StartCheckBlock(log *lib.Logger, blockService *msgs.BlockServic
 
 func (c *Client) CheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
 	_, err := c.singleBlockReq(log, nil, &c.checkBlockProcessors, checkBlockSendArgs(blockService, blockId, size, crc, nil))
+	return err
+}
+
+func (c *Client) ConvertBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
+	_, err := c.singleBlockReq(log, nil, &c.checkBlockProcessors, convertBlockSendArgs(blockService, blockId, size, crc, nil))
 	return err
 }

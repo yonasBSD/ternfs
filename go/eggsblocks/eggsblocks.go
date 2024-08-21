@@ -108,11 +108,11 @@ type blockServiceStats struct {
 }
 
 type atomicRenameDeleteReq struct {
-	oldPath    string
-	tmpPath    string
-	newPath    string
-	delete     bool
-	deleteDone chan<- error
+	oldPath string
+	tmpPath string
+	newPath string
+	delete  bool
+	done    chan<- error
 }
 
 type env struct {
@@ -357,11 +357,11 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	deleteDone := make(chan error)
 	env.conversionChannels[blockServiceId] <- atomicRenameDeleteReq{
-		oldPath:    blockPathNoCrc,
-		tmpPath:    "",
-		newPath:    blockPathWithCrc,
-		delete:     true,
-		deleteDone: deleteDone,
+		oldPath: blockPathNoCrc,
+		tmpPath: "",
+		newPath: blockPathWithCrc,
+		delete:  true,
+		done:    deleteDone,
 	}
 	err := <-deleteDone
 	if err != nil {
@@ -471,6 +471,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
 		return nil
 	}
+	var reader io.ReadSeeker = f
 	if openedWithCrc {
 		// we try to delete file in old format. this is best effort
 		err = os.Remove(blockPathNoCrc)
@@ -478,40 +479,27 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			log.RaiseAlert("could not remove old block %v, got error: %v", blockPathNoCrc, err)
 		}
 	} else if withCrc {
-		tmpName, actualCrc, err := writeToTempWithCRC(log, env, blockServiceId, path.Join(basePath, "with_crc"), uint64(fi.Size()), f)
+		bufPtr := env.bufPool.Get(int(filePageCount * msgs.EGGS_PAGE_WITH_CRC_SIZE))
+		defer env.bufPool.Put(bufPtr)
+		writer := bytes.NewBuffer((*bufPtr)[:0])
+		actualCrc, err := convertBlockInternal(log, env, f, uint64(fi.Size()), writer)
+		if writer.Len() != int(filePageCount*msgs.EGGS_PAGE_WITH_CRC_SIZE) {
+			log.RaiseAlert("unexpected length when converting storae block %v: expected %v, got %v", blockPathNoCrc, filePageCount*msgs.EGGS_PAGE_WITH_CRC_SIZE, writer.Len())
+			writeBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR_FILE)
+			return nil
+		}
 		if err != nil {
 			log.RaiseAlert("could not convert file %v to crc format, got error: %v", blockPathNoCrc, err)
 			writeBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR_FILE)
 			return nil
 		}
 		if crc != msgs.Crc(actualCrc) {
-			os.Remove(tmpName)
 			log.RaiseAlert("file %v has wrong CRC, expected: %x, got: %x", blockPathNoCrc, crc, actualCrc)
 			writeBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
 			return nil
 		}
-		f.Close()
-		f = nil
-		f, err = os.Open(tmpName)
-		if err != nil {
-			os.Remove(tmpName)
-			log.RaiseAlert("could not open file %v, got error: %v", tmpName, err)
-			writeBlocksResponseError(log, conn, msgs.BLOCK_IO_ERROR_FILE)
-			return nil
-		}
+		reader = bytes.NewReader((*bufPtr)[:writer.Len()])
 		openedWithCrc = true
-		// delegate rename, or delete tmp if channel full
-		select {
-		case env.conversionChannels[blockServiceId] <- atomicRenameDeleteReq{
-			oldPath: blockPathNoCrc,
-			tmpPath: tmpName,
-			newPath: blockPathWithCrc,
-			delete:  false,
-		}:
-		default:
-			atomic.AddUint64(&env.stats[blockServiceId].blockConversionDiscarded, 1)
-			os.Remove(tmpName)
-		}
 	}
 
 	if (openedWithCrc && withCrc) || (!openedWithCrc && !withCrc) {
@@ -520,7 +508,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			count = pageCount * msgs.EGGS_PAGE_WITH_CRC_SIZE
 		}
 
-		if _, err := f.Seek(int64(offset), 0); err != nil {
+		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
 		}
 		var resp msgs.BlocksResponse = &msgs.FetchBlockResp{}
@@ -532,7 +520,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			return err
 		}
 		lf := io.LimitedReader{
-			R: f,
+			R: reader,
 			N: int64(count),
 		}
 		read, err := conn.ReadFrom(&lf)
@@ -546,7 +534,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	} else {
 		// the only remaining case is that we have a file in new format and client wants old format
 		offset = offsetPageCount * msgs.EGGS_PAGE_WITH_CRC_SIZE
-		if _, err := f.Seek(int64(offset), 0); err != nil {
+		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
 		}
 		if err := writeBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
@@ -558,7 +546,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 				count = msgs.EGGS_PAGE_SIZE
 			}
 			lf := io.LimitedReader{
-				R: f,
+				R: reader,
 				N: int64(toRead),
 			}
 			read, err := conn.ReadFrom(&lf)
@@ -569,7 +557,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 				log.RaiseAlert("expected to read at least %v bytes, but only got %v for file %q", toRead, read, blockPathWithCrc)
 				return msgs.INTERNAL_ERROR
 			}
-			f.Seek(4, 1) // skip crc32
+			reader.Seek(4, 1) // skip crc32
 			count -= uint32(read)
 		}
 	}
@@ -599,37 +587,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	// if it doesn't exist in both places then it really is deleted
 	f, err := os.Open(blockPathNoCrc)
 	fileWithCrc := false
-	if err == nil {
-		tmpName, actualCrc, err := writeToTempWithCRC(log, env, blockServiceId, path.Join(basePath, "with_crc"), uint64(expectedSize), f)
-		if err != nil {
-			log.RaiseAlert("could not convert file %v to crc format, got error: %v", blockPathNoCrc, err)
-		} else if crc != msgs.Crc(actualCrc) {
-			os.Remove(tmpName)
-			log.RaiseAlert("file %v has wrong CRC, expected: %x, got: %x", blockPathNoCrc, crc, actualCrc)
-		} else {
-			f.Close()
-			f = nil
-			f, err = os.Open(tmpName)
-			if err != nil {
-				os.Remove(tmpName)
-				log.RaiseAlert("could not open file %v, got error: %v", tmpName, err)
-			} else {
-				fileWithCrc = true
-				// delegate rename, or delete tmp if channel full
-				select {
-				case env.conversionChannels[blockServiceId] <- atomicRenameDeleteReq{
-					oldPath: blockPathNoCrc,
-					tmpPath: tmpName,
-					newPath: blockPathWithCrc,
-					delete:  false,
-				}:
-				default:
-					atomic.AddUint64(&env.stats[blockServiceId].blockConversionDiscarded, 1)
-					os.Remove(tmpName)
-				}
-			}
-		}
-	} else if os.IsNotExist(err) {
+	if err != nil && os.IsNotExist(err) {
 		f, err = os.Open(blockPathWithCrc)
 		fileWithCrc = true
 	}
@@ -722,6 +680,50 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	return nil
 }
 
+func convertBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, expectedSize uint32, crc msgs.Crc, conn *net.TCPConn) error {
+	blockPathNoCrc := path.Join(basePath, "without_crc", blockId.Path())
+	blockPathWithCrc := path.Join(basePath, "with_crc", blockId.Path())
+	blockPath := path.Join(basePath, blockId.Path())
+	log.Debug("converting block id %v at path %v", blockId, blockPath)
+
+	f, err := os.Open(blockPathNoCrc)
+	if err == nil {
+		defer f.Close()
+		if err := os.Mkdir(path.Dir(blockPathWithCrc), 0777); err != nil && !os.IsExist(err) {
+			return err
+		}
+		tmpName, actualCrc, err := writeToTempWithCRC(log, env, blockServiceId, path.Join(basePath, "with_crc"), uint64(expectedSize), f)
+		if err != nil {
+			log.RaiseAlert("could not convert file %v to crc format, got error: %v", blockPathNoCrc, err)
+			return err
+		}
+		if crc != msgs.Crc(actualCrc) {
+			os.Remove(tmpName)
+			log.RaiseAlert("file %v has wrong CRC, expected: %x, got: %x", blockPathNoCrc, crc, actualCrc)
+			return msgs.BAD_BLOCK_CRC
+		}
+		done := make(chan error)
+		env.conversionChannels[blockServiceId] <- atomicRenameDeleteReq{
+			oldPath: blockPathNoCrc,
+			tmpPath: tmpName,
+			newPath: blockPathWithCrc,
+			delete:  false,
+			done:    done,
+		}
+		err = <-done
+		if err != nil {
+			log.RaiseAlert("could not convert block %v to crc format, got error: %v", blockPathNoCrc, err)
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := writeBlocksResponse(log, conn, &msgs.ConvertBlockResp{}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) error {
 	expectedMac, good := certificate.CheckBlockWriteCertificate(cipher, blockServiceId, req)
 	if !good {
@@ -795,10 +797,24 @@ func writeToTempWithCRC(
 			os.Remove(tmpName)
 		}
 	}()
+	crc, err = convertBlockInternal(log, env, reader, size, f)
+	if err != nil {
+		return tmpName, crc, err
+	}
+	if err = f.Sync(); err != nil {
+		return tmpName, crc, err
+	}
+	atomic.AddUint64(&env.stats[blockServiceId].bytesWritten, size)
+	return tmpName, crc, err
+}
+
+func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size uint64, writer io.Writer) (uint32, error) {
 	bufPtr := env.bufPool.Get(1 << 20)
 	defer env.bufPool.Put(bufPtr)
 	readSoFar := uint64(0)
 	pageCRC := uint32(0)
+	crc := uint32(0)
+	var err error = nil
 	for {
 		log.Debug("size=%v readSoFar=%v", size, readSoFar)
 		buf := *bufPtr
@@ -808,9 +824,8 @@ func writeToTempWithCRC(
 		var read int
 		read, err = reader.Read(buf)
 		if err != nil {
-			return tmpName, crc, err
+			return crc, err
 		}
-
 		begin := uint64(0)
 		for begin < uint64(read) {
 			bytesToPageEnd := uint64(msgs.EGGS_PAGE_SIZE) - (readSoFar % uint64(msgs.EGGS_PAGE_SIZE))
@@ -821,31 +836,26 @@ func writeToTempWithCRC(
 			pageCRC = crc32c.Sum(pageCRC, buf[begin:end])
 
 			// Write the data chunk
-			if _, err := f.Write(buf[begin:end]); err != nil {
-				return tmpName, crc, err
+			if _, err := writer.Write(buf[begin:end]); err != nil {
+				return crc, err
 			}
 
 			readSoFar += end - begin
 			begin = end
 			// If at page boundary write out the CRC
 			if readSoFar%uint64(msgs.EGGS_PAGE_SIZE) == 0 {
-				if err := binary.Write(f, binary.LittleEndian, pageCRC); err != nil {
-					return tmpName, crc, err
+				if err := binary.Write(writer, binary.LittleEndian, pageCRC); err != nil {
+					return crc, err
 				}
 				crc = crc32c.Append(crc, pageCRC, int(msgs.EGGS_PAGE_SIZE))
 				pageCRC = uint32(0)
 			}
 		}
-
 		if readSoFar == size {
 			break
 		}
 	}
-	if err = f.Sync(); err != nil {
-		return tmpName, crc, err
-	}
-	atomic.AddUint64(&env.stats[blockServiceId].bytesWritten, size)
-	return tmpName, crc, err
+	return crc, nil
 }
 
 func writeBlock(
@@ -1051,6 +1061,8 @@ func readBlocksRequest(
 		req = &msgs.TestWriteReq{}
 	case msgs.CHECK_BLOCK:
 		req = &msgs.CheckBlockReq{}
+	case msgs.CONVERT_BLOCK:
+		req = &msgs.ConvertBlockReq{}
 	default:
 		log.RaiseAlert("bad blocks request kind %v", kind)
 		return 0, nil, msgs.MALFORMED_REQUEST
@@ -1177,6 +1189,11 @@ func handleSingleRequest(
 		}
 	case *msgs.CheckBlockReq:
 		if err := checkBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Size, whichReq.Crc, conn); err != nil {
+			log.Info("checking block failed, conn %v, err %v", conn.RemoteAddr(), err)
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+		}
+	case *msgs.ConvertBlockReq:
+		if err := convertBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Size, whichReq.Crc, conn); err != nil {
 			log.Info("checking block failed, conn %v, err %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
@@ -1766,62 +1783,64 @@ func main() {
 					if err == nil {
 						dir, err := os.Open(filepath.Dir(req.newPath))
 						if err != nil {
-							req.deleteDone <- err
+							req.done <- err
 							continue
 						}
 						// sync directory before returning response
 						err = dir.Sync()
 						dir.Close()
 						if err != nil {
-							req.deleteDone <- err
+							req.done <- err
 							continue
 						}
 					} else if !os.IsNotExist(err) {
-						req.deleteDone <- err
+						req.done <- err
 						continue
 					}
 					err = os.Remove(req.oldPath)
 					if err == nil {
 						dir, err := os.Open(filepath.Dir(req.oldPath))
 						if err != nil {
-							req.deleteDone <- err
+							req.done <- err
 							continue
 						}
 						// sync directory before returning response
 						err = dir.Sync()
 						dir.Close()
 						if err != nil {
-							req.deleteDone <- err
+							req.done <- err
 							continue
 						}
 					} else if !os.IsNotExist(err) {
-						req.deleteDone <- err
+						req.done <- err
 						continue
 					}
-					req.deleteDone <- nil
+					req.done <- nil
 				} else {
 					err := os.Rename(req.tmpPath, req.newPath)
 					if err != nil {
 						log.ErrorNoAlert("failed to rename block from %v to %v", req.tmpPath, req.newPath)
 						// best effort to remove tmp file
 						os.Remove(req.tmpPath)
+						req.done <- err
 						continue
 					}
 					dir, err := os.Open(filepath.Dir(req.newPath))
 					if err != nil {
-						req.deleteDone <- err
+						req.done <- err
 						continue
 					}
 					// sync directory before returning response
 					err = dir.Sync()
 					dir.Close()
 					if err != nil {
-						req.deleteDone <- err
+						req.done <- err
 						continue
 					}
 					atomic.AddUint64(&bsStats.blocksConverted, 1)
 					// best effort to remove old file
 					os.Remove(req.oldPath)
+					req.done <- nil
 				}
 			}
 		}(env.conversionChannels[bsId], env.stats[bsId])

@@ -2178,6 +2178,14 @@ type CheckBlockReq struct {
 
 type CheckBlockResp struct{}
 
+type ConvertBlockReq struct {
+	BlockId BlockId
+	Size    uint32
+	Crc     Crc
+}
+
+type ConvertBlockResp struct{}
+
 // --------------------------------------------------------------------
 // Distributed log requests/responses
 

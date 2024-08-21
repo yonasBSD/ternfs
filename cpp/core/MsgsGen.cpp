@@ -544,6 +544,9 @@ std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind) {
     case BlocksMessageKind::CHECK_BLOCK:
         out << "CHECK_BLOCK";
         break;
+    case BlocksMessageKind::CONVERT_BLOCK:
+        out << "CONVERT_BLOCK";
+        break;
     case BlocksMessageKind::EMPTY:
         out << "EMPTY";
         break;
@@ -4563,6 +4566,46 @@ bool CheckBlockResp::operator==(const CheckBlockResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const CheckBlockResp& x) {
     out << "CheckBlockResp(" << ")";
+    return out;
+}
+
+void ConvertBlockReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(blockId);
+    buf.packScalar<uint32_t>(size);
+    crc.pack(buf);
+}
+void ConvertBlockReq::unpack(BincodeBuf& buf) {
+    blockId = buf.unpackScalar<uint64_t>();
+    size = buf.unpackScalar<uint32_t>();
+    crc.unpack(buf);
+}
+void ConvertBlockReq::clear() {
+    blockId = uint64_t(0);
+    size = uint32_t(0);
+    crc = Crc(0);
+}
+bool ConvertBlockReq::operator==(const ConvertBlockReq& rhs) const {
+    if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
+    if ((uint32_t)this->size != (uint32_t)rhs.size) { return false; };
+    if ((Crc)this->crc != (Crc)rhs.crc) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ConvertBlockReq& x) {
+    out << "ConvertBlockReq(" << "BlockId=" << x.blockId << ", " << "Size=" << x.size << ", " << "Crc=" << x.crc << ")";
+    return out;
+}
+
+void ConvertBlockResp::pack(BincodeBuf& buf) const {
+}
+void ConvertBlockResp::unpack(BincodeBuf& buf) {
+}
+void ConvertBlockResp::clear() {
+}
+bool ConvertBlockResp::operator==(const ConvertBlockResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ConvertBlockResp& x) {
+    out << "ConvertBlockResp(" << ")";
     return out;
 }
 

@@ -1359,8 +1359,8 @@ int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_s
     // They are not stored in the block service and are filled by the client.
     LIST_HEAD(zero_pages);
     unsigned num_zero_pages = min(nr_pages - span_pages, span_zero_pages);
-    eggsfs_info("zero_pages:%d, num_pages:%d, span_pages:%d, span->start=%lld, span->end=%lld, stripe_size=%d, num_stripes=%d, diff=%lld", num_zero_pages, nr_pages, span_pages, block_span->span.start, block_span->span.end, stripe_size, block_span->num_stripes, block_span->span.end - span_physical_end);
-
+    if (num_zero_pages > 0)
+        eggsfs_info("zero_pages:%d, num_pages:%d, span_pages:%d, span->start=%lld, span->end=%lld, stripe_size=%d, num_stripes=%d, diff=%lld", num_zero_pages, nr_pages, span_pages, block_span->span.start, block_span->span.end, stripe_size, block_span->num_stripes, block_span->span.end - span_physical_end);
 
     unsigned remaining_pages = span_pages;
     struct fetch_span_pages_state *fetches[EGGSFS_MAX_STRIPES];

@@ -1018,7 +1018,7 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
         eggsfs_warn("have %lld blocks, want %d, succeeded: %d, failed:%d, start:%d end:%d", __builtin_popcountll(blocks), want_blocks, blocks, failed_blocks, atomic_read(&st->start_block), atomic_read(&st->end_block));
         BUG();
     }
-    if (unlikely(failed_blocks > 0)) { // we need to recover data using RS
+    if (unlikely(failed_blocks > 0) && D != 1) { // we need to recover data using RS
         for (i = 0; i < D; i++) { // fill in missing data blocks
             if ((1ull<<i) & blocks) { continue; } // we have this one already
             if (list_empty(&st->blocks_pages[i])) {
@@ -1039,10 +1039,22 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
         for (i = 0; i < B; i++) {
             if ((1ull<<i) & blocks) break;
         }
+        // Copy pages over from any non 0 block regardless if it was selected
+        // to spread the load or because any other block failed.
         if (i != 0) {
             // Pages are expected to be stored for block 0 so we transfer them
             // to the selected block for fetching and then back when returning.
-            BUG_ON(!list_empty(&st->blocks_pages[0]));
+            // When initial download is kicked off for block 0 itself, we will
+            // end up with multiple copies in parity blocks.
+            if(!list_empty(&st->blocks_pages[0])) {
+                if (failed_blocks == 1) {
+                    // Nothing has been downloaded to these pages.
+                    // Pages will be moved from the succeeded parity block.
+                    put_pages_list(&st->blocks_pages[0]);
+                } else {
+                    BUG();
+                }
+            }
             BUG_ON(list_empty(&st->blocks_pages[i]));
             struct page* page;
             struct page* tmp;
@@ -1057,6 +1069,7 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
             BUG_ON(list_empty(&st->blocks_pages[i]));
         }
     }
+
     for(i = D; i < B; i++) {
         put_pages_list(&st->blocks_pages[i]);
     }

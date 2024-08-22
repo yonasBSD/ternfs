@@ -53,6 +53,7 @@ int eggsfs_fetch_block_pages_with_crc(
     void* data,
     struct eggsfs_block_service* bs,
     struct list_head* pages,
+    u64 file_id,
     u64 block_id,
     u32 block_crc,
     u32 offset,

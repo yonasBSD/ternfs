@@ -2141,6 +2141,7 @@ type FetchBlockResp struct{}
 
 // Offset needs to be multiple of 4K and count as well
 type FetchBlockWithCrcReq struct {
+	FileId   InodeId
 	BlockId  BlockId
 	BlockCrc Crc
 	Offset   uint32

@@ -1225,7 +1225,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
         int block_err = eggsfs_fetch_block_pages_with_crc(
             &span_block_done,
             (void*)st,
-            &bs, &st->blocks_pages[i], block->id, block->crc, st->start_offset, st->size
+            &bs, &st->blocks_pages[i], span->span.ino, block->id, block->crc, st->start_offset, st->size
         );
         if (block_err) {
             BUG_ON(list_empty(&st->blocks_pages[i]));

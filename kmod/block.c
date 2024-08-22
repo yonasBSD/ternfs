@@ -140,7 +140,7 @@ static u32 eggsfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len)
 
 static void block_ops_init(struct block_ops* ops) {
     int i;
-    hash_init(ops->sockets);    
+    hash_init(ops->sockets);
     for (i = 0; i < BLOCK_SOCKET_BUCKETS; i++) {
         spin_lock_init(&ops->locks[i]);
         atomic_set(&ops->len[i], 0);
@@ -369,7 +369,7 @@ static struct block_socket* get_block_socket(
             spin_unlock(&ops->locks[bucket]);
             write_unlock(&sock->sock->sk->sk_callback_lock);
             eggsfs_info("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
-            // call again rather than trying to `sock_release` with the 
+            // call again rather than trying to `sock_release` with the
             // RCU read lock held, this might not be safe in atomic context.
             sock_release(sock->sock);
             kfree(sock);
@@ -419,7 +419,7 @@ static void remove_block_socket(
 
     if (!socket->terminal) {
         socket->terminal = true;
-    
+
         // First, remove socket from hashmap. After we're done with this,
         // we know nobody's going to add new requests to this.
         spin_lock(&ops->locks[bucket]);
@@ -514,7 +514,7 @@ static void block_work(
         BUG_ON(req->left_to_write == 0);
 
         int sent = ops->write(socket, req);
-        if (sent < 0) { 
+        if (sent < 0) {
             atomic_cmpxchg(&socket->err, 0, sent);
             remove_block_socket(ops, socket); // bail
             return;
@@ -746,6 +746,7 @@ struct fetch_request {
     struct list_head pages;
 
     // Req info
+    u64 file_id;
     u64 block_service_id;
     u64 block_id;
     u32 block_crc;
@@ -953,7 +954,8 @@ static int fetch_block_pages_with_crc_write(struct block_socket* socket, struct 
             .end = req_msg_buf + sizeof(req_msg_buf),
         };
         eggsfs_fetch_block_with_crc_req_put_start(&ctx, start);
-        eggsfs_fetch_block_with_crc_req_put_block_id(&ctx, start, req_block_id, req->block_id);
+        eggsfs_fetch_block_with_crc_req_put_file_id(&ctx, start, req_file_id, req->file_id);
+        eggsfs_fetch_block_with_crc_req_put_block_id(&ctx, req_file_id, req_block_id, req->block_id);
         eggsfs_fetch_block_with_crc_req_put_block_crc(&ctx, req_block_id, req_block_crc, req->block_crc);
         eggsfs_fetch_block_with_crc_req_put_offset(&ctx, req_block_crc, req_offset, req->offset);
         eggsfs_fetch_block_with_crc_req_put_count(&ctx, req_offset, req_count, req->count);
@@ -990,6 +992,7 @@ int eggsfs_fetch_block_pages_with_crc(
     void* data,
     struct eggsfs_block_service* bs,
     struct list_head* pages,
+    u64 file_id,
     u64 block_id,
     u32 block_crc,
     u32 offset,
@@ -1015,6 +1018,7 @@ int eggsfs_fetch_block_pages_with_crc(
 
     req->callback = callback;
     req->data = data;
+    req->file_id = file_id;
     req->block_service_id = bs->id;
     req->block_id = block_id;
     req->block_crc = block_crc;
@@ -1530,7 +1534,7 @@ int __init eggsfs_block_init(void) {
 out_fetch_request:
     kmem_cache_destroy(fetch_request_cachep);
 out_err:
-    return err;   
+    return err;
 }
 
 void __cold eggsfs_block_exit(void) {

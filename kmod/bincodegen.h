@@ -6455,12 +6455,27 @@ static inline void _eggsfs_write_block_resp_put_proof(struct eggsfs_bincode_put_
     { struct eggsfs_write_block_resp_proof* __dummy __attribute__((unused)) = &(prev); }\
     struct eggsfs_write_block_resp_end* next __attribute__((unused)) = NULL
 
-#define EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE 20
+#define EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE 28
 struct eggsfs_fetch_block_with_crc_req_start;
 #define eggsfs_fetch_block_with_crc_req_get_start(ctx, start) struct eggsfs_fetch_block_with_crc_req_start* start = NULL
 
+struct eggsfs_fetch_block_with_crc_req_file_id { u64 x; };
+static inline void _eggsfs_fetch_block_with_crc_req_get_file_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_start** prev, struct eggsfs_fetch_block_with_crc_req_file_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define eggsfs_fetch_block_with_crc_req_get_file_id(ctx, prev, next) \
+    struct eggsfs_fetch_block_with_crc_req_file_id next; \
+    _eggsfs_fetch_block_with_crc_req_get_file_id(ctx, &(prev), &(next))
+
 struct eggsfs_fetch_block_with_crc_req_block_id { u64 x; };
-static inline void _eggsfs_fetch_block_with_crc_req_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_start** prev, struct eggsfs_fetch_block_with_crc_req_block_id* next) {
+static inline void _eggsfs_fetch_block_with_crc_req_get_block_id(struct eggsfs_bincode_get_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_file_id* prev, struct eggsfs_fetch_block_with_crc_req_block_id* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;
@@ -6532,7 +6547,17 @@ static inline void eggsfs_fetch_block_with_crc_req_get_finish(struct eggsfs_binc
 
 #define eggsfs_fetch_block_with_crc_req_put_start(ctx, start) struct eggsfs_fetch_block_with_crc_req_start* start = NULL
 
-static inline void _eggsfs_fetch_block_with_crc_req_put_block_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_start** prev, struct eggsfs_fetch_block_with_crc_req_block_id* next, u64 x) {
+static inline void _eggsfs_fetch_block_with_crc_req_put_file_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_start** prev, struct eggsfs_fetch_block_with_crc_req_file_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define eggsfs_fetch_block_with_crc_req_put_file_id(ctx, prev, next, x) \
+    struct eggsfs_fetch_block_with_crc_req_file_id next; \
+    _eggsfs_fetch_block_with_crc_req_put_file_id(ctx, &(prev), &(next), x)
+
+static inline void _eggsfs_fetch_block_with_crc_req_put_block_id(struct eggsfs_bincode_put_ctx* ctx, struct eggsfs_fetch_block_with_crc_req_file_id* prev, struct eggsfs_fetch_block_with_crc_req_block_id* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);

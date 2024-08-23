@@ -115,6 +115,8 @@ func readShuckleResponse(
 		resp = &msgs.RegisterBlockServicesResp{}
 	case msgs.SHARDS_AT_LOCATION:
 		resp = &msgs.ShardsAtLocationResp{}
+	case msgs.SHARD_BLOCK_SERVICES:
+		resp = &msgs.ShardBlockServicesResp{}
 	default:
 		return nil, fmt.Errorf("bad shuckle response kind %v", kind)
 	}

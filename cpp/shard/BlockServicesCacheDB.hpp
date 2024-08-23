@@ -25,12 +25,12 @@ private:
     std::shared_mutex& _shared_mutex;
 public:
     const std::unordered_map<uint64_t, BlockServiceCache>& blockServices;
-    const std::vector<uint64_t>& currentBlockServices;
+    const std::vector<BlockServiceInfoShort>& currentBlockServices;
 
     BlockServicesCache(
         std::shared_mutex& mutex,
         const std::unordered_map<uint64_t, BlockServiceCache>& blockServices_,
-        const std::vector<uint64_t>& currentBlockServices_
+        const std::vector<BlockServiceInfoShort>& currentBlockServices_
     ) :
         _shared_mutex(mutex), blockServices(blockServices_), currentBlockServices(currentBlockServices_)
     {
@@ -58,13 +58,13 @@ private:
     // Cache of all the block services as an in-memory map.
     std::unordered_map<uint64_t, BlockServiceCache> _blockServices;
     // The block services that we currently want to write to.
-    std::vector<uint64_t> _currentBlockServices;
+    std::vector<BlockServiceInfoShort> _currentBlockServices;
 
 public:
     BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB);
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 
-    void updateCache(const std::vector<BlockServiceInfo>& blockServices, const std::vector<BlockServiceId>& currentBlockServices);
+    void updateCache(const std::vector<BlockServiceInfo>& blockServices, const std::vector<BlockServiceInfoShort>& currentBlockServices);
 
     // We've seen at least one `updateCache()`, or we've loaded the
     // block services from the cache.

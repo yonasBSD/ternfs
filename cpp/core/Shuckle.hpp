@@ -20,7 +20,7 @@ std::pair<int, std::string> fetchBlockServices(
     Duration timeout,
     ShardId shid,
     std::vector<BlockServiceInfo>& blockServices,
-    std::vector<BlockServiceId>& currentBlockServices
+    std::vector<BlockServiceInfoShort>& currentBlockServices
 );
 
 std::pair<int, std::string> registerShard(

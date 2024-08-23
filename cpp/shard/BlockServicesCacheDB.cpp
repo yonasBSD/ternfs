@@ -1,6 +1,10 @@
 #include <rocksdb/db.h>
+#include <vector>
 
+#include "Bincode.hpp"
 #include "BlockServicesCacheDB.hpp"
+#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 
 enum class BlockServicesCacheKey : uint8_t {
@@ -16,41 +20,94 @@ inline rocksdb::Slice blockServicesCacheKey(const BlockServicesCacheKey* k) {
     return rocksdb::Slice((const char*)k, sizeof(*k));
 }
 
-struct CurrentBlockServicesBody {
+struct BlockServiceInfoShortBody {
     FIELDS(
-        LE, uint8_t, length, setLength,
+        LE, uint64_t, blockServiceId, setBlockServiceId,
+        LE, uint8_t, locationId, setLocationId,
+        LE, uint8_t, storageClass, setStorageClass,
         EMIT_OFFSET, MIN_SIZE,
         END
     )
 
-    void checkSize(size_t sz) {
-        ALWAYS_ASSERT(sz >= MIN_SIZE, "sz < MIN_SIZE (%s < %s)", sz, MIN_SIZE);
-        ALWAYS_ASSERT(sz == size(), "sz != size() (%s, %s)", sz, size());
+    BlockServiceInfoShortBody(char* data): _data(data) {}
+
+    static size_t calcSize(const BlockServiceInfoShort& blockServiceInfo) {
+        return SIZE;
     }
 
-    static size_t calcSize(uint64_t numBlockServices) {
-        ALWAYS_ASSERT(numBlockServices < 256);
-        return MIN_SIZE + numBlockServices*sizeof(uint64_t);
+    void afterAlloc(const BlockServiceInfoShort& blockServiceInfo) {
+        setBlockServiceId(blockServiceInfo.id.u64);
+        setLocationId(blockServiceInfo.locationId);
+        setStorageClass(blockServiceInfo.storageClass);
+        BincodeBuf buf(_data + MIN_SIZE, FailureDomain::STATIC_SIZE);
+        blockServiceInfo.failureDomain.pack(buf);
     }
 
-    void afterAlloc(uint64_t numBlockServices) {
-        setLength(numBlockServices);
+    FailureDomain failureDomain() const {
+        BincodeBuf buf(_data + MIN_SIZE, FailureDomain::STATIC_SIZE);
+        FailureDomain fd;
+        fd.unpack(buf);
+        return fd;
     }
 
     size_t size() const {
-        return MIN_SIZE + length()*sizeof(uint64_t);
+        return SIZE;
+    }
+    static constexpr size_t SIZE = MIN_SIZE + FailureDomain::STATIC_SIZE;
+
+};
+struct CurrentBlockServicesBody {
+    FIELDS(
+        // if true (>0) then we have body in old version which is just []BlockServiceId
+        // otherwise it's new version which is length followed by []BlockServiceInfoShortBody
+        LE, uint8_t, oldVersion, _setOldVersion,
+        EMIT_OFFSET, MIN_SIZE_V0,
+        LE, uint8_t, _length, _setLength,
+        EMIT_OFFSET, MIN_SIZE_V1,
+        END
+    )
+
+    uint8_t length() const {
+        return oldVersion() ? oldVersion() : _length();
     }
 
-    uint64_t at(uint64_t ix) const {
+    void checkSize(size_t sz) {
+        ALWAYS_ASSERT(sz >= MIN_SIZE_V0, "sz < MIN_SIZE (%s < %s)", sz, MIN_SIZE_V0);
+        ALWAYS_ASSERT(sz == size(), "sz != size() (%s, %s)", sz, size());
+    }
+
+    static size_t calcSize(const std::vector<BlockServiceInfoShort>& blockServices) {
+        ALWAYS_ASSERT(blockServices.size() < 256);
+        return MIN_SIZE_V1 + blockServices.size()*BlockServiceInfoShortBody::SIZE;
+    }
+
+    void afterAlloc(const std::vector<BlockServiceInfoShort>& blockServices) {
+        _setOldVersion(false);
+        _setLength(blockServices.size());
+        for(size_t i = 0; i < blockServices.size(); ++i) {
+            blockServiceInfoAt(i).afterAlloc(blockServices[i]);
+        }
+    }
+
+    size_t size() const {
+        if (oldVersion()) {
+            return MIN_SIZE_V0 + length()*sizeof(uint64_t);
+        }
+        return MIN_SIZE_V1 + length() * BlockServiceInfoShortBody::SIZE;
+    }
+
+    uint64_t blockIdAt(uint64_t ix) const {
+        ALWAYS_ASSERT(oldVersion());
         ALWAYS_ASSERT(ix < length());
         uint64_t v;
-        memcpy(&v, _data + MIN_SIZE + (ix*sizeof(uint64_t)), sizeof(uint64_t));
+        memcpy(&v, _data + MIN_SIZE_V0 + (ix*sizeof(uint64_t)), sizeof(uint64_t));
         return v;
     }
 
-    void set(uint64_t ix, uint64_t v) {
+    BlockServiceInfoShortBody blockServiceInfoAt(uint64_t ix) const {
+        ALWAYS_ASSERT(!oldVersion());
         ALWAYS_ASSERT(ix < length());
-        memcpy(_data + MIN_SIZE + (ix*sizeof(uint64_t)), &v, sizeof(uint64_t));
+        return BlockServiceInfoShortBody(_data + MIN_SIZE_V1 + ix *BlockServiceInfoShortBody::SIZE);
     }
 };
 
@@ -128,18 +185,11 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
 
     if (!keyExists(_blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY))) {
         LOG_INFO(_env, "initializing current block services (as empty)");
-        OwnedValue<CurrentBlockServicesBody> v(0);
-        v().setLength(0);
+        OwnedValue<CurrentBlockServicesBody> v(std::vector<BlockServiceInfoShort>{});
         ROCKS_DB_CHECKED(_db->Put({}, _blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY), v.toSlice()));
     } else {
         LOG_INFO(_env, "initializing block services cache (from db)");
         std::string buf;
-        ROCKS_DB_CHECKED(_db->Get({}, _blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY), &buf));
-        ExternalValue<CurrentBlockServicesBody> v(buf);
-        _currentBlockServices.resize(v().length());
-        for (int i = 0; i < v().length(); i++) {
-            _currentBlockServices[i] = v().at(i);
-        }
         {
             rocksdb::ReadOptions options;
             static_assert(sizeof(BlockServicesCacheKey) == sizeof(uint8_t));
@@ -166,6 +216,25 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
             }
             ROCKS_DB_CHECKED(it->status());
         }
+        ROCKS_DB_CHECKED(_db->Get({}, _blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY), &buf));
+        ExternalValue<CurrentBlockServicesBody> v(buf);
+        _currentBlockServices.resize(v().length());
+        for (int i = 0; i < v().length(); i++) {
+            auto& current = _currentBlockServices[i];
+            if (v().oldVersion()) {
+                current.id = v().blockIdAt(i);
+                auto& blockServiceInfo = _blockServices[current.locationId];
+                current.locationId = DEFAULT_LOCATION;
+                current.failureDomain.name = blockServiceInfo.failureDomain;
+                current.storageClass = blockServiceInfo.storageClass;
+            } else {
+                auto blockServiceInfo = v().blockServiceInfoAt(i);
+                current.id = blockServiceInfo.blockServiceId();
+                current.locationId = blockServiceInfo.locationId();
+                current.storageClass = blockServiceInfo.storageClass();
+                current.failureDomain = blockServiceInfo.failureDomain();
+            }
+        }
         _haveBlockServices = true;
     }
 }
@@ -174,7 +243,7 @@ BlockServicesCache BlockServicesCacheDB::getCache() const {
     return BlockServicesCache(_mutex, _blockServices, _currentBlockServices);
 }
 
-void BlockServicesCacheDB::updateCache(const std::vector<BlockServiceInfo>& blockServices, const std::vector<BlockServiceId>& currentBlockServices) {
+void BlockServicesCacheDB::updateCache(const std::vector<BlockServiceInfo>& blockServices, const std::vector<BlockServiceInfoShort>& currentBlockServices) {
     LOG_INFO(_env, "Updating block service cache");
 
     std::unique_lock _(_mutex);
@@ -208,13 +277,11 @@ void BlockServicesCacheDB::updateCache(const std::vector<BlockServiceInfo>& bloc
     // then the current block services
     ALWAYS_ASSERT(currentBlockServices.size() < 256); // TODO handle this properly
     _currentBlockServices.clear();
-    for (BlockServiceId id: currentBlockServices) {
-        _currentBlockServices.emplace_back(id.u64);
+    for (auto& bs: currentBlockServices) {
+        _currentBlockServices.emplace_back(bs);
     }
-    OwnedValue<CurrentBlockServicesBody> currentBody(_currentBlockServices.size());
-    for (int i = 0; i < _currentBlockServices.size(); i++) {
-        currentBody().set(i, _currentBlockServices[i]);
-    }
+    OwnedValue<CurrentBlockServicesBody> currentBody(_currentBlockServices);
+
     ROCKS_DB_CHECKED(batch.Put(_blockServicesCF, blockServicesCacheKey(&CURRENT_BLOCK_SERVICES_KEY), currentBody.toSlice()));
 
     // We intentionally do not flush here, it's not critical

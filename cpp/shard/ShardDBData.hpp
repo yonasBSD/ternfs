@@ -338,7 +338,7 @@ struct SpanBody {
     static size_t calcSize(const SpanBody& existingSpan, const BlocksBodyWrapper& newLocationBlocks) {
         ALWAYS_ASSERT(!existingSpan.isInlineStorage());
         size_t size = MIN_SIZE;
-        for (uint8_t locIdx = 0; locIdx <= existingSpan.locationCount(); ++locIdx) {
+        for (uint8_t locIdx = 0; locIdx < existingSpan.locationCount(); ++locIdx) {
             auto blocks = existingSpan.blocksBodyReadOnly(locIdx);
             ALWAYS_ASSERT(blocks.location() != newLocationBlocks.location());
             size += SpanBlocksBody::calcSize(
@@ -372,6 +372,7 @@ struct SpanBody {
             SpanBlocksBodyV0 blocks(existingSpan._data + MIN_SIZE);
             SpanBlocksBody blocksNew = blocksBody(0);
             blocksNew.afterAlloc(LocationBlocksInfo(DEFAULT_LOCATION,existingSpan._storageClassOrLocationCount(), blocks.parity(), blocks.stripes()));
+            blocksNew.setCellSize(existingSpan.blocksBodyReadOnly(0).cellSize());
             // now copy the block and crc info. layout is the same
             memcpy(blocksNew._data + SpanBlocksBody::MIN_SIZE, blocks._data + SpanBlocksBodyV0::MIN_SIZE, blocks.size() - SpanBlocksBodyV0::MIN_SIZE);
         } else {

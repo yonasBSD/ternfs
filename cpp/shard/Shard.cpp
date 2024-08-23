@@ -872,7 +872,26 @@ public:
             req.second.lastSent = now;
             ProxyShardReqMsg reqMsg;
             reqMsg.id = req.first;
-            reqMsg.body = req.second.req.msg.body;
+            switch (req.second.req.msg.body.kind()) {
+                case ShardMessageKind::ADD_SPAN_INITIATE:
+                {
+                    auto& addSpanReq = reqMsg.body.setAddSpanAtLocationInitiate();
+                    addSpanReq.locationId = _shared.options.location;
+                    addSpanReq.req.reference = NULL_INODE_ID;
+                    addSpanReq.req.req = req.second.req.msg.body.getAddSpanInitiate();
+                    break;
+                }
+                case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+                {
+                    auto& addSpanReq = reqMsg.body.setAddSpanAtLocationInitiate();
+                    addSpanReq.locationId = _shared.options.location;
+                    addSpanReq.req = req.second.req.msg.body.getAddSpanInitiateWithReference();
+                    break;
+                }
+                default:
+                    reqMsg.body = req.second.req.msg.body;
+            }
+
             _sender.prepareOutgoingMessage(
                 _env,
                 _shared.sock().addr(),
@@ -982,6 +1001,31 @@ public:
                                 ALWAYS_ASSERT(_shared.options.isProxyLocation());
                                 resp.body = std::move(it->second);
                                 _proxiedResponses.erase(it);
+                            }
+                            if (resp.body.kind() == ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE) {
+                                ShardRespContainer tmpResp;
+                                switch (request.msg.body.kind()) {
+                                    case ShardMessageKind::ADD_SPAN_INITIATE:
+                                    {
+                                        auto& addResp = tmpResp.setAddSpanInitiate();
+                                        addResp.blocks = std::move(resp.body.getAddSpanAtLocationInitiate().resp.blocks);
+                                        resp.body.setAddSpanInitiate().blocks = std::move(addResp.blocks);
+                                        break;
+                                    }
+                                    case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+                                    {
+                                        auto& addResp = tmpResp.setAddSpanInitiateWithReference();
+                                        addResp.resp.blocks = std::move(resp.body.getAddSpanAtLocationInitiate().resp.blocks);
+                                        resp.body.setAddSpanInitiateWithReference().resp.blocks = std::move(addResp.resp.blocks);
+                                        break;
+                                    }
+                                    case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+                                    {
+                                        break;
+                                    }
+                                    default:
+                                        ALWAYS_ASSERT(false, "Unexpected reponse kind %s for requests kind %s", resp.body.kind(), request.msg.body.kind() );
+                                }
                             }
                             packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, request, resp);
                         }
@@ -1712,7 +1756,7 @@ private:
     uint16_t _shucklePort;
     XmonNCAlert _alert;
     std::vector<BlockServiceInfo> _blockServices;
-    std::vector<BlockServiceId> _currentBlockServices;
+    std::vector<BlockServiceInfoShort> _currentBlockServices;
     bool _updatedOnce;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):

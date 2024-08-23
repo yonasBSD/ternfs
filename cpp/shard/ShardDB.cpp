@@ -21,6 +21,7 @@
 #include "Bincode.hpp"
 #include "BlockServicesCacheDB.hpp"
 #include "Common.hpp"
+#include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "crc32c.h"
 #include "Crypto.hpp"
@@ -906,6 +907,7 @@ struct ShardDBImpl {
                         location.parity = spanBlock.parity();
                         location.stripes = spanBlock.stripes();
                         location.cellSize = spanBlock.cellSize();
+                        location.storageClass = spanBlock.storageClass();
                         location.blocks.els.resize(spanBlock.parity().blocks());
                         for (int j = 0; j < spanBlock.parity().blocks(); j++) {
                             auto block = spanBlock.block(j);
@@ -1036,6 +1038,7 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::FILE_SPANS:
             err = _fileSpans(options, req.getFileSpans(), resp.setFileSpans());
+            break;
         case ShardMessageKind::BLOCK_SERVICE_FILES:
             err = _blockServiceFiles(options, req.getBlockServiceFiles(), resp.setBlockServiceFiles());
             break;
@@ -1353,12 +1356,11 @@ struct ShardDBImpl {
 
     bool _blockServiceMatchesBlacklist(
         const std::vector<BlacklistEntry>& blacklists,
-        const std::array<uint8_t, 16>& failureDomain,
-        BlockServiceId blockServiceId,
-        const BlockServiceCache& cache
+        const FailureDomain& failureDomain,
+        BlockServiceId blockServiceId
     ) {
         for (const auto& blacklist: blacklists) {
-            if (blacklist.failureDomain.name.data == failureDomain ||  blacklist.blockService == blockServiceId) {
+            if (blacklist.blockService == blockServiceId || blacklist.failureDomain == failureDomain) {
                 return true;
             }
         }
@@ -1416,7 +1418,8 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
-    EggsError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, EggsTime time, const AddSpanInitiateReq& req, InodeId reference, AddSpanInitiateEntry& entry, bool withReference) {
+    EggsError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, EggsTime time, const AddSpanAtLocationInitiateReq& request, InodeId reference, AddSpanAtLocationInitiateEntry& entry) {
+        auto& req = request.req.req;
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1445,7 +1448,8 @@ struct ShardDBImpl {
         }
 
         // start filling in entry
-        entry.withReference = withReference;
+        entry.locationId = request.locationId;
+        entry.withReference = false;
         entry.fileId = req.fileId;
         entry.byteOffset = req.byteOffset;
         entry.storageClass = req.storageClass;
@@ -1454,6 +1458,11 @@ struct ShardDBImpl {
         entry.cellSize = req.cellSize;
         entry.crc = req.crc;
         entry.stripes = req.stripes;
+
+        //TODO hack for failover to flash in NOK
+        if (entry.locationId == 1 && entry.storageClass == HDD_STORAGE) {
+            entry.storageClass = FLASH_STORAGE;
+        }
 
         // fill stripe CRCs
         for (int s = 0; s < req.stripes; s++) {
@@ -1476,20 +1485,23 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "Starting out with %s current block services", candidateBlockServices.size());
             std::vector<BlacklistEntry> blacklist{req.blacklist.els};
             {
-                for (BlockServiceId id: inMemoryBlockServicesData.currentBlockServices) {
-                    const auto& cache = inMemoryBlockServicesData.blockServices.at(id.u64);
-                    if (cache.storageClass != entry.storageClass) {
-                        LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
+                for (BlockServiceInfoShort bs: inMemoryBlockServicesData.currentBlockServices) {
+                    if (bs.locationId != entry.locationId) {
+                        LOG_DEBUG(_env, "Skipping %s because of location mismatch(%s != %s)", bs.id, (int)bs.locationId, (int)entry.locationId);
                         continue;
                     }
-                    if (_blockServiceMatchesBlacklist(blacklist, cache.failureDomain, id, cache)) {
-                        LOG_DEBUG(_env, "Skipping %s because it matches blacklist", id);
+                    if (bs.storageClass != entry.storageClass) {
+                        LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", bs.id, (int)bs.storageClass, (int)entry.storageClass);
                         continue;
                     }
-                    candidateBlockServices.emplace_back(id);
+                    if (_blockServiceMatchesBlacklist(blacklist, bs.failureDomain, bs.id)) {
+                        LOG_DEBUG(_env, "Skipping %s because it matches blacklist", bs.id);
+                        continue;
+                    }
+                    candidateBlockServices.emplace_back(bs.id);
                     BlacklistEntry newBlacklistEntry;
-                    newBlacklistEntry.failureDomain.name.data = cache.failureDomain;
-                    newBlacklistEntry.blockService = id;
+                    newBlacklistEntry.failureDomain = bs.failureDomain;
+                    newBlacklistEntry.blockService = bs.id;
                     blacklist.emplace_back(std::move(newBlacklistEntry));
                 }
             }
@@ -1683,6 +1695,22 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
+    EggsError _prepareAddSpanLocation(EggsTime time, const AddSpanLocationReq& req, AddSpanLocationEntry& entry) {
+        if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
+        if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        ALWAYS_ASSERT(req.fileId1 != req.fileId2);
+        entry.fileId1 = req.fileId1;
+        entry.byteOffset1 = req.byteOffset1;
+        entry.blocks1 = req.blocks1;
+        entry.fileId2 = req.fileId2;
+        entry.byteOffset2 = req.byteOffset2;
+        return EggsError::NO_ERROR;
+    }
+
     EggsError _prepareMoveSpan(EggsTime time, const MoveSpanReq& req, MoveSpanEntry& entry) {
         if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_DIRECTORY;
@@ -1793,12 +1821,24 @@ struct ShardDBImpl {
             err = _prepareAddInlineSpan(time, req.getAddInlineSpan(), logEntryBody.setAddInlineSpan());
             break;
         case ShardMessageKind::ADD_SPAN_INITIATE: {
-            const auto& addSpanReq = req.getAddSpanInitiate();
-            err = _prepareAddSpanInitiate(options, time, addSpanReq, addSpanReq.fileId, logEntryBody.setAddSpanInitiate(), false);
+            AddSpanAtLocationInitiateReq spanInitiateAtLocationReq;
+            spanInitiateAtLocationReq.locationId = DEFAULT_LOCATION;
+            spanInitiateAtLocationReq.req.reference = NULL_INODE_ID;
+            spanInitiateAtLocationReq.req.req = req.getAddSpanInitiate();
+            err = _prepareAddSpanInitiate(options, time, spanInitiateAtLocationReq, spanInitiateAtLocationReq.req.req.fileId, logEntryBody.setAddSpanAtLocationInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE: {
-            const auto& addSpanReq = req.getAddSpanInitiateWithReference();
-            err = _prepareAddSpanInitiate(options, time, addSpanReq.req, addSpanReq.reference, logEntryBody.setAddSpanInitiate(), true);
+            AddSpanAtLocationInitiateReq spanInitiateAtLocationReq;
+            spanInitiateAtLocationReq.locationId = DEFAULT_LOCATION;
+            spanInitiateAtLocationReq.req = req.getAddSpanInitiateWithReference();
+            err = _prepareAddSpanInitiate(options, time, spanInitiateAtLocationReq, spanInitiateAtLocationReq.req.reference, logEntryBody.setAddSpanAtLocationInitiate());
+            break; }
+        case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE: {
+            auto reference = req.getAddSpanAtLocationInitiate().req.reference;
+            if (reference == NULL_INODE_ID) {
+                reference = req.getAddSpanAtLocationInitiate().req.req.fileId;
+            }
+            err = _prepareAddSpanInitiate(options, time, req.getAddSpanAtLocationInitiate(), reference, logEntryBody.setAddSpanAtLocationInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_CERTIFY:
             err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());
@@ -1826,6 +1866,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::SWAP_SPANS:
             err = _prepareSwapSpans(time, req.getSwapSpans(), logEntryBody.setSwapSpans());
+            break;
+        case ShardMessageKind::ADD_SPAN_LOCATION:
+            err = _prepareAddSpanLocation(time, req.getAddSpanLocation(), logEntryBody.setAddSpanLocation());
             break;
         default:
             throw EGGS_EXCEPTION("bad write shard message kind %s", req.kind());
@@ -3147,7 +3190,7 @@ struct ShardDBImpl {
         std::string sourceFileValue;
         ExternalValue<TransientFileBody> sourceFile;
         {
-            EggsError err = _getTransientFile({}, time, false, entry.fileId2, sourceFileValue, sourceFile);
+            EggsError err = _initiateTransientFileModification(time, false, batch, entry.fileId1, sourceFileValue, sourceFile);
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
@@ -3222,13 +3265,20 @@ struct ShardDBImpl {
             _addBlockServicesToFiles(batch, block.blockService(), entry.fileId1, -1);
         }
 
+
+
+        sourceFile().setFileSize(sourceFile().fileSize() - sourceSpan().spanSize());
+        {
+            auto k = InodeIdKey::Static(entry.fileId1);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), sourceFile.toSlice()));
+        }
         OwnedValue<SpanBody> newDestinationSpan(destinationSpan(), blocksSource);
         // now persist new state in destination
-        ROCKS_DB_CHECKED(batch.Put(_spansCf, destinationSpanKey.toSlice(), destinationSpan.toSlice()));
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, destinationSpanKey.toSlice(), newDestinationSpan.toSlice()));
         // and delete span at source
         ROCKS_DB_CHECKED(batch.Delete(_spansCf, sourceSpanKey.toSlice()));
         // change size and dirtiness
-        sourceFile().setFileSize(sourceFile().fileSize() - sourceSpan().spanSize());
+
 
         return EggsError::NO_ERROR;
     }
@@ -3823,6 +3873,7 @@ struct ShardDBImpl {
             break; }
         case ShardLogEntryKind::ADD_SPAN_AT_LOCATION_INITIATE: {
             err = _applyAddSpanInitiate(time, batch, logEntryBody.getAddSpanAtLocationInitiate(), resp.setAddSpanAtLocationInitiate());
+            break;
         }
         case ShardLogEntryKind::ADD_SPAN_CERTIFY:
             err = _applyAddSpanCertify(time, batch, logEntryBody.getAddSpanCertify(), resp.setAddSpanCertify());

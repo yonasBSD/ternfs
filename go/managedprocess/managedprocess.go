@@ -438,11 +438,53 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	})
 }
 
+type ShuckleProxyOpts struct {
+	Exe       string
+	Dir       string
+	LogLevel  lib.LogLevel
+	Xmon      string
+	Addr1     string
+	Addr2     string
+	ShuckleAddress string
+	Location msgs.Location
+}
+
+func (procs *ManagedProcesses) StartShuckleProxy(ll *lib.Logger, opts *ShuckleProxyOpts) {
+	createDataDir(opts.Dir)
+	args := []string{
+		"-log-file", path.Join(opts.Dir, "log"),
+		"-addr", opts.Addr1,
+		"-shuckle-address", opts.ShuckleAddress,
+		"-location", fmt.Sprintf("%d",opts.Location),
+	}
+	if opts.LogLevel == lib.DEBUG {
+		args = append(args, "-verbose")
+	}
+	if opts.LogLevel == lib.TRACE {
+		args = append(args, "-trace")
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
+	}
+	if opts.Addr2 != "" {
+		args = append(args, "-addr", opts.Addr2)
+	}
+	procs.Start(ll, &ManagedProcessArgs{
+		Name:            "shuckleproxy",
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Dir, "stdout"),
+		StderrFile:      path.Join(opts.Dir, "stderr"),
+		TerminateOnExit: true,
+	})
+}
+
 type GoExes struct {
 	ShuckleExe       string
 	BlocksExe        string
 	FuseExe          string
 	ShuckleBeaconExe string
+	ShuckleProxyExe string
 }
 
 func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
@@ -463,6 +505,7 @@ func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
 		BlocksExe:        path.Join(goDir(repoDir), "eggsblocks", "eggsblocks"),
 		FuseExe:          path.Join(goDir(repoDir), "eggsfuse", "eggsfuse"),
 		ShuckleBeaconExe: path.Join(goDir(repoDir), "eggsshucklebeacon", "eggsshucklebeacon"),
+		ShuckleProxyExe: path.Join(goDir(repoDir), "eggsshuckleproxy", "eggsshuckleproxy"),
 	}
 }
 

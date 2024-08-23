@@ -121,7 +121,7 @@ static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContai
     return {};
 }
 
-std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceInfo>& blockServices, std::vector<BlockServiceId>& currentBlockServices) {
+std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceInfo>& blockServices, std::vector<BlockServiceInfoShort>& currentBlockServices) {
     blockServices.clear();
     currentBlockServices.clear();
 
@@ -153,7 +153,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     // current block services
     {
         ShuckleReqContainer reqContainer;
-        auto& req = reqContainer.setShardBlockServicesDEPRECATED();
+        auto& req = reqContainer.setShardBlockServices();
         req.shardId = shid;
         {
             const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
@@ -166,7 +166,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
             if (err) { FAIL(err, errStr); }
         }
 
-        currentBlockServices = respContainer.getShardBlockServicesDEPRECATED().blockServices.els;
+        currentBlockServices = respContainer.getShardBlockServices().blockServices.els;
     }
 
     // check that all current block services are known -- there's a small race here
@@ -184,14 +184,14 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 
         for (auto storageClass : {HDD_STORAGE, FLASH_STORAGE}) {
             fdSet.clear();
-            for (BlockServiceId bsId : currentBlockServices) {
-                if (bsIdToBlockService[bsId.u64]->storageClass != storageClass) { continue; }
-                if (!knownBlockServices.contains(bsId.u64)) {
+            for (BlockServiceInfoShort bs : currentBlockServices) {
+                if (bs.storageClass != storageClass) { continue; }
+                if (!knownBlockServices.contains(bs.id.u64)) {
                     std::stringstream ss;
-                    ss << "got unknown block service " << bsId << " in current block services, was probably added in the meantime, please retry";
+                    ss << "got unknown block service " << bs.id << " in current block services, was probably added in the meantime, please retry";
                     FAIL(EIO, ss.str());
                 }
-                auto fdName = std::string((const char*)bsIdToBlockService[bsId.u64]->failureDomain.name.data.data(), bsIdToBlockService[bsId.u64]->failureDomain.name.data.size());
+                auto fdName = std::string((const char*)bs.failureDomain.name.data.data(), bs.failureDomain.name.data.size());
                 if (!fdSet.insert(fdName).second) {
                     std::stringstream ss;
                     ss << "got multiple block services in the same failure domain: " << fdName;

@@ -33,7 +33,7 @@ func main() {
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
 	shuckleHttpPort := flag.Uint("shuckle-http-port", 10000, "")
-	startingPort := flag.Uint("start-port", 10002, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
+	startingPort := flag.Uint("start-port", 10003, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	xmon := flag.String("xmon", "", "")
@@ -111,6 +111,7 @@ func main() {
 			ShuckleExe: path.Join(*binariesDir, "eggsshuckle"),
 			BlocksExe:  path.Join(*binariesDir, "eggsblocks"),
 			FuseExe:    path.Join(*binariesDir, "eggsfuse"),
+			ShuckleProxyExe: path.Join(*binariesDir, "eggsshuckleproxy"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
@@ -134,8 +135,11 @@ func main() {
 		Dir:       path.Join(*dataDir, "shuckle"),
 		Xmon:      *xmon,
 		ScriptsJs: *shuckleScriptsJs,
-		Addr1:     "127.0.0.1:10001",
+		Addr1:     shuckleAddress,
 	})
+
+	shuckleProxyPort := *shuckleBincodePort + 1
+	shuckleProxyAddress := fmt.Sprintf("127.0.0.1:%v", shuckleProxyPort)
 
 	numLocations := 1
 	if *multiLocation {
@@ -152,6 +156,17 @@ func main() {
 				panic(fmt.Errorf("failed to create location %v", err))
 			}
 		}
+		procs.StartShuckleProxy(
+			log, &managedprocess.ShuckleProxyOpts{
+				Exe:       goExes.ShuckleProxyExe,
+				LogLevel:  level,
+				Dir:       path.Join(*dataDir, "shuckleproxy"),
+				Xmon:      *xmon,
+				Addr1:     shuckleProxyAddress,
+				ShuckleAddress: shuckleAddress,
+				Location: 1,
+			},
+		)
 		numLocations = 2
 	}
 	replicaCount := 5
@@ -169,6 +184,11 @@ func main() {
 		}
 	}
 	for loc := uint(0); loc < uint(numLocations); loc++ {
+		shuckleAddressToUse := shuckleAddress
+		if loc == 1{
+			shuckleAddressToUse = shuckleProxyAddress
+		}
+
 		for i := uint(0); i < *failureDomains; i++ {
 			dirName := fmt.Sprintf("bs_%d", i)
 			if loc > 0 {
@@ -181,7 +201,7 @@ func main() {
 				FailureDomain:    fmt.Sprintf("%d_%d", i, loc),
 				Location: 		  msgs.Location(loc),
 				LogLevel:         level,
-				ShuckleAddress:   fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
+				ShuckleAddress:   shuckleAddressToUse,
 				Profile:          *profile,
 				Xmon:             *xmon,
 				ReserverdStorage: 10 << 30, // 10GB
@@ -238,6 +258,10 @@ func main() {
 
 	// Start shards
 	for loc := 0; loc < numLocations; loc++ {
+		shuckleAddressToUse := shuckleAddress
+		if loc == 1{
+			shuckleAddressToUse = shuckleProxyAddress
+		}
 		for i := 0; i < 256; i++ {
 			for r := uint8(0); r < uint8(replicaCount); r++ {
 				shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
@@ -251,7 +275,7 @@ func main() {
 					Dir:            path.Join(*dataDir, dirName),
 					LogLevel:       level,
 					Valgrind:       *buildType == "valgrind",
-					ShuckleAddress: shuckleAddress,
+					ShuckleAddress: shuckleAddressToUse,
 					Perf:           *profile,
 					Xmon:           *xmon,
 					Location:       msgs.Location(loc),
@@ -278,17 +302,25 @@ func main() {
 	client.WaitForClient(log, shuckleAddress, waitShuckleFor)
 
 	if !*noFuse {
-		fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-			Exe:               goExes.FuseExe,
-			Path:              path.Join(*dataDir, "fuse"),
-			LogLevel:          level,
-			Wait:              true,
-			ShuckleAddress:    shuckleAddress,
-			Profile:           *profile,
-			UseRandomFetchApi: *useRandomFetchApi,
-		})
+		for loc :=0; loc < numLocations; loc++ {
+			shuckleAddressToUse := shuckleAddress
+			fuseDir := "fuse"
+			if loc == 1 {
+				shuckleAddressToUse = shuckleProxyAddress
+				fuseDir = "fuse1"
+			}
+			fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
+				Exe:               goExes.FuseExe,
+				Path:              path.Join(*dataDir, fuseDir),
+				LogLevel:          level,
+				Wait:              true,
+				ShuckleAddress:    shuckleAddressToUse,
+				Profile:           *profile,
+				UseRandomFetchApi: *useRandomFetchApi,
+			})
 
-		fmt.Printf("operational, mounted at %v\n", fuseMountPoint)
+			fmt.Printf("operational, mounted at %v\n", fuseMountPoint)
+		}
 	} else {
 		fmt.Printf("operational\n")
 	}

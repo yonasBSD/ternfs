@@ -961,10 +961,10 @@ inline int fetch_span_pages_state_need_blocks(struct fetch_span_pages_state* st)
 
 inline void fetch_span_pages_move_list(struct fetch_span_pages_state* st, int src, int dst) {
     BUG_ON(list_empty(&st->blocks_pages[src]));
-    BUG_ON(!list_empty(&st->blocks_pages[dst]));
 
     if (src == dst) return;
 
+    BUG_ON(!list_empty(&st->blocks_pages[dst]));
     struct page* page;
     struct page* tmp;
     int num_pages = 0;

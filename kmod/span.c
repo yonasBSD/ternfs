@@ -959,7 +959,30 @@ inline int fetch_span_pages_state_need_blocks(struct fetch_span_pages_state* st)
     return min(atomic_read(&st->end_block) - atomic_read(&st->start_block), D);
 }
 
-inline void fetch_span_pages_state_request_full_fetch(struct fetch_span_pages_state* st) {
+inline void fetch_span_pages_move_list(struct fetch_span_pages_state* st, int src, int dst) {
+    BUG_ON(list_empty(&st->blocks_pages[src]));
+    BUG_ON(!list_empty(&st->blocks_pages[dst]));
+
+    if (src == dst) return;
+
+    struct page* page;
+    struct page* tmp;
+    int num_pages = 0;
+    list_for_each_entry_safe(page, tmp, &st->blocks_pages[src], lru) {
+        list_del(&page->lru);
+        list_add_tail(&page->lru, &st->blocks_pages[dst]);
+        num_pages++;
+    }
+    BUG_ON(num_pages != st->size/PAGE_SIZE);
+}
+
+inline void fetch_span_pages_state_request_full_fetch(struct fetch_span_pages_state* st, int failed_block) {
+        int D = eggsfs_data_blocks(st->block_span->parity);
+        // Keep the original pages with block 0 when D == 1.
+        // They were transferred to the selected block for fetching and now
+        // they need to be handed back to be passed to the next selected block.
+        if (D == 1) fetch_span_pages_move_list(st, failed_block, 0);
+
         int B = eggsfs_blocks(st->block_span->parity);
         atomic_set(&st->start_block, 0);
         atomic_set(&st->end_block, B);
@@ -1041,33 +1064,7 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
         }
         // Copy pages over from any non 0 block regardless if it was selected
         // to spread the load or because any other block failed.
-        if (i != 0) {
-            // Pages are expected to be stored for block 0 so we transfer them
-            // to the selected block for fetching and then back when returning.
-            // When initial download is kicked off for block 0 itself, we will
-            // end up with multiple copies in parity blocks.
-            if(!list_empty(&st->blocks_pages[0])) {
-                if (failed_blocks == 1) {
-                    // Nothing has been downloaded to these pages.
-                    // Pages will be moved from the succeeded parity block.
-                    put_pages_list(&st->blocks_pages[0]);
-                } else {
-                    BUG();
-                }
-            }
-            BUG_ON(list_empty(&st->blocks_pages[i]));
-            struct page* page;
-            struct page* tmp;
-            int num_pages = 0;
-            list_for_each_entry_safe(page, tmp, &st->blocks_pages[i], lru) {
-                list_del(&page->lru);
-                list_add_tail(&page->lru, &st->blocks_pages[0]);
-                num_pages++;
-            }
-            BUG_ON(num_pages != st->size/PAGE_SIZE);
-        } else {
-            BUG_ON(list_empty(&st->blocks_pages[i]));
-        }
+        fetch_span_pages_move_list(st, i, 0);
     }
 
     for(i = D; i < B; i++) {
@@ -1162,24 +1159,9 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
 
         // We start with pages at index 0 when D=1.
         // If another block is selected above to spread the load, we need to
-        // transfer pages to that block. When handling failure we need to
-        // allocate new pages to fetch another block.
-        if (D == 1) {
-            // Nothing failed yet, we need to transfer pages from block 0 to the selected block.
-            if(failed == 0 && i != 0) {
-                BUG_ON(list_empty(&st->blocks_pages[0]));
-                BUG_ON(!list_empty(&st->blocks_pages[i]));
-                struct page* page;
-                struct page* tmp;
-                int num_pages = 0;
-                list_for_each_entry_safe(page, tmp, &st->blocks_pages[0], lru) {
-                    list_del(&page->lru);
-                    list_add_tail(&page->lru, &st->blocks_pages[i]);
-                    num_pages++;
-                }
-                BUG_ON(num_pages != st->size/PAGE_SIZE);
-            }
-        }
+        // transfer pages to that block.
+        if (D == 1) fetch_span_pages_move_list(st, 0, i);
+
         if(list_empty(&st->blocks_pages[i]) && failed_blocks == 0) {
             eggsfs_warn("empty list at file=%016llx, block %d, stripe %d, offset=%d, size=%d, span_start=%lld, span_end=%lld. blocks=%lld, failed:%d", span->span.ino, i, fetch_span_pages_state_stripe_ix(st), st->start_offset, st->size, span->span.start, span->span.end, blocks, failed_blocks);
         }
@@ -1208,11 +1190,13 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
                 list_add_tail(&page->lru, &st->blocks_pages[i]);
                 BUG_ON(atomic_read(&page->_refcount) < 1);
             }
-            int have_pages = try_fill_from_page_cache(st->mapping, &st->blocks_pages[i], curr_off/PAGE_SIZE, st->size/PAGE_SIZE);
-            if (have_pages == st->size/PAGE_SIZE && curr_off + st->size <= st->block_span->span.end) {
-                eggsfs_info("found all pages in cache block %d, stripe %d", i, fetch_span_pages_state_stripe_ix(st));
-                while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
-                continue;
+            if (i < D && curr_off < span->span.end) {
+                int have_pages = try_fill_from_page_cache(st->mapping, &st->blocks_pages[i], curr_off/PAGE_SIZE, st->size/PAGE_SIZE);
+                if (have_pages == st->size/PAGE_SIZE && curr_off + st->size <= st->block_span->span.end) {
+                    eggsfs_info("found all pages in cache block %d, stripe %d", i, fetch_span_pages_state_stripe_ix(st));
+                    while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
+                    continue;
+                }
             }
         }
 
@@ -1234,7 +1218,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             eggsfs_info("loading block failed %d " LOG_STR, i, LOG_ARGS);
 
             // Downloading some block failed, all blocks + parity will be needed for RS recovery.
-            fetch_span_pages_state_request_full_fetch(st);
+            fetch_span_pages_state_request_full_fetch(st, i);
 
             //fetch_stripe_trace(st, EGGSFS_FETCH_STRIPE_BLOCK_DONE, i, block_err);
             // mark it as failed and not downloading
@@ -1296,8 +1280,9 @@ retry:
         eggsfs_info("block %016llx ix %d failed with %d", block_id, i, err);
         // mark it as failed and not downloading
         while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
+
         // Kick off downloading all blocks + parity for RS recovery.
-        fetch_span_pages_state_request_full_fetch(st);
+        fetch_span_pages_state_request_full_fetch(st, i);
         err = fetch_span_blocks(st);
         // If we failed to restore order, mark the whole thing as failed,
         // and if we were the first ones to notice the error, finish

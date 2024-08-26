@@ -289,6 +289,11 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 
 func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.BlockServicesWithFlagChangeReq) (*msgs.BlockServicesWithFlagChangeResp, error) {
 	resp := msgs.BlockServicesWithFlagChangeResp{}
+	// sometimes clients pass very high ChangedSince (kmod during ci start) which breaks sql as it does not support uint64 converting with high bit set
+	now := msgs.Now()
+	if req.ChangedSince > now {
+		req.ChangedSince = now
+	}
 	blockServices, err := s.selectBlockServices(nil, 0, 0, req.ChangedSince)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)

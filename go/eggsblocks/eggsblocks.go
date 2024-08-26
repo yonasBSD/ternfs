@@ -408,6 +408,60 @@ func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.EggsError) 
 	return nil
 }
 
+type newToOldReadConverter struct {
+	log           *lib.Logger
+	r             io.Reader
+	b             []byte
+	totalRead     int
+	bytesInBuffer int
+}
+
+func (c *newToOldReadConverter) Read(p []byte) (int, error) {
+	var read int = 0
+
+	for len(p) > 0 {
+		c.log.Debug("{len_p: %d, read, %d, bytesInBuffer: %d, totalRead %d}", len(p), read, c.bytesInBuffer, c.totalRead)
+		readFromFile, err := c.r.Read(c.b[c.bytesInBuffer:])
+		if err != nil && err != io.EOF {
+			return read, err
+		}
+		c.bytesInBuffer += readFromFile
+		if c.bytesInBuffer == 0 && err == io.EOF {
+			return read, io.EOF
+		}
+		offsetInBuffer := 0
+		for offsetInBuffer < c.bytesInBuffer && len(p) > 0 {
+			toCopy := c.bytesInBuffer - offsetInBuffer
+			if toCopy > len(p) {
+				toCopy = len(p)
+			}
+			offSetInPage := c.totalRead % int(msgs.EGGS_PAGE_WITH_CRC_SIZE)
+			availableInPage := int(msgs.EGGS_PAGE_SIZE) - offSetInPage
+			if toCopy > availableInPage {
+				toCopy = availableInPage
+			}
+			c.log.Debug("{toCopy: %d, offSetInPage: %d, availableInPage: %d, offsetInBuffer: %d, bytesInBuffer: %d}", toCopy, offSetInPage, availableInPage, offsetInBuffer, c.bytesInBuffer)
+			copy(p, c.b[offsetInBuffer:offsetInBuffer+toCopy])
+			c.totalRead += toCopy
+			read += toCopy
+			p = p[toCopy:]
+			offsetInBuffer += toCopy
+			offSetInPage += toCopy
+			if offSetInPage == int(msgs.EGGS_PAGE_SIZE) {
+				if c.bytesInBuffer-offsetInBuffer < 4 {
+					break
+				}
+				c.totalRead += 4
+				offsetInBuffer += 4
+			}
+		}
+		copy(c.b, c.b[offsetInBuffer:c.bytesInBuffer])
+		c.bytesInBuffer -= offsetInBuffer
+	}
+	c.log.Debug("{len_p: %d, read: %d", len(p), read)
+	return read, nil
+}
+
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, crc msgs.Crc) error {
 	if offset%msgs.EGGS_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
@@ -540,25 +594,26 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 		if err := writeBlocksResponse(log, conn, &msgs.FetchBlockResp{}); err != nil {
 			return err
 		}
-		for count > 0 {
-			toRead := msgs.EGGS_PAGE_SIZE
-			if count < msgs.EGGS_PAGE_SIZE {
-				count = msgs.EGGS_PAGE_SIZE
-			}
-			lf := io.LimitedReader{
-				R: reader,
-				N: int64(toRead),
-			}
-			read, err := conn.ReadFrom(&lf)
-			if err != nil {
-				return err
-			}
-			if read != int64(toRead) {
-				log.RaiseAlert("expected to read at least %v bytes, but only got %v for file %q", toRead, read, blockPathWithCrc)
-				return msgs.INTERNAL_ERROR
-			}
-			reader.Seek(4, 1) // skip crc32
-			count -= uint32(read)
+		buf := env.bufPool.Get(1 << 20)
+		defer env.bufPool.Put(buf)
+		converter := newToOldReadConverter{
+			log:           log,
+			r:             reader,
+			b:             (*buf)[:],
+			totalRead:     0,
+			bytesInBuffer: 0,
+		}
+		lf := io.LimitedReader{
+			R: &converter,
+			N: int64(count),
+		}
+		read, err := conn.ReadFrom(&lf)
+		if err != nil {
+			return err
+		}
+		if read != int64(count) {
+			log.RaiseAlert("expected to read at least %v bytes, but only got %v for file %q", count, read, blockPathWithCrc)
+			return msgs.INTERNAL_ERROR
 		}
 	}
 

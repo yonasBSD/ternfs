@@ -1062,6 +1062,7 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
         for (i = 0; i < B; i++) {
             if ((1ull<<i) & blocks) break;
         }
+        if (failed_blocks) eggsfs_info("recovering block %d, stripe %d, D=%d, want_blocks=%d, blocks=%d, failed_blocks=%d", i, fetch_span_pages_state_stripe_ix(st), D, want_blocks, blocks, failed_blocks);
         // Copy pages over from any non 0 block regardless if it was selected
         // to spread the load or because any other block failed.
         fetch_span_pages_move_list(st, i, 0);
@@ -1215,7 +1216,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             BUG_ON(list_empty(&st->blocks_pages[i]));
             atomic_set(&st->last_block_err, block_err);
             put_fetch_span_pages(st);
-            eggsfs_info("loading block failed %d " LOG_STR, i, LOG_ARGS);
+            eggsfs_info("loading block %d failed " LOG_STR, i, LOG_ARGS);
 
             // Downloading some block failed, all blocks + parity will be needed for RS recovery.
             fetch_span_pages_state_request_full_fetch(st, i);
@@ -1241,12 +1242,13 @@ static void span_block_done(void* data, u64 block_id, struct list_head* pages, i
 
     int D = eggsfs_data_blocks(span->parity);
     int P = eggsfs_parity_blocks(span->parity);
+    int B = eggsfs_blocks(span->parity);
     u32 pages_per_block = st->size/PAGE_SIZE;
 
-    for (i = atomic_read(&st->start_block); i < atomic_read(&st->end_block); i++) {
+    for (i = 0; i < B; i++) {
         if (span->blocks[i].id == block_id) { break; }
     }
-    // eggsfs_info("block ix %d, B=%d", i, B);
+
     BUG_ON(D != 1 && i == atomic_read(&st->end_block));
 
     eggsfs_debug(
@@ -1277,7 +1279,6 @@ retry:
         eggsfs_info("fetching block %016llx (index:%d, D=%d, P=%d, blocks:%lld) in file %016llx failed: %d", block_id, i, D, P, blocks, span->span.ino, err);
         atomic_set(&st->last_block_err, err);
         // it failed, try to restore order
-        eggsfs_info("block %016llx ix %d failed with %d", block_id, i, err);
         // mark it as failed and not downloading
         while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
 
@@ -1491,6 +1492,8 @@ int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_s
         err = fetch_span_blocks(st);
         if (err) { goto out; }
         fetches[stripe_ix] = st;
+        // wait for the fetch to complete before kicking off next stripe
+        down(&st->sema);
         if(remaining_pages == 0) {
             break;
         }
@@ -1509,14 +1512,6 @@ int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_s
     // if span_pages < nr_pages, some pages at the end may be left not filled.
     // It is ok to just drop them as they will be requested in the next readahead request.
     put_pages_list(pages);
-
-    // wait for all fetches to complete
-    for (i = 0; i < block_span->num_stripes; i++) {
-        if (fetches[i] == NULL) {
-            continue;
-        }
-        down(&fetches[i]->sema);
-    }
 
     // collect pages
 

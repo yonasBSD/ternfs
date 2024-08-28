@@ -1303,6 +1303,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
 
     if (span->storage_class == EGGSFS_INLINE_STORAGE) {
         err = -ENOTSUPP;
+        put_pages_list(pages);
         goto out_err;
     } else {
         struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
@@ -1311,7 +1312,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
             err = -EIO;
             goto out_err;
         }
-                
+
         LIST_HEAD(extra_pages);
         err = eggsfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
         if (err) {
@@ -1324,7 +1325,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         process_file_pages(mapping, &extra_pages, 0);
     }
     return 0;
-    
+
 out_err:
     return err;
 }

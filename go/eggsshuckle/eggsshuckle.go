@@ -2408,20 +2408,12 @@ func initDb(dbFile string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.Exec(`DROP TABLE IF EXISTS stats`)
-	if err != nil {
-		return nil, err
-	}
-	_, err = db.Exec(`DROP TABLE IF EXISTS stats_by_time`)
-	if err != nil {
-		return nil, err
-	}
 
 	return db, nil
 }
 
 func initBlockServicesTable(db *sql.DB) error {
-	blockServicesDefinition := `(
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
 		id INT NOT NULL PRIMARY KEY,
 		ip1 BLOB NOT NULL,
 		port1 INT NOT NULL,
@@ -2438,49 +2430,9 @@ func initBlockServicesTable(db *sql.DB) error {
 		last_seen INT NOT NULL,
 		has_files INT NOT NULL,
 		flags_last_changed INT NOT NULL
-	)`
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services` + blockServicesDefinition)
+	)`)
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old cdc table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%flags_last_changed%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'block_services'
-	`)
-
-	var hasNewBlockServiceFormat bool
-	err = row.Scan(&hasNewBlockServiceFormat)
-	if err != nil {
-		return err
-	}
-
-	if !hasNewBlockServiceFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services_` + blockServicesDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO block_services_
-			SELECT id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, ?
-			FROM block_services
-		`, msgs.Now())
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE block_services`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE block_services_ RENAME TO block_services`)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
@@ -2489,7 +2441,6 @@ func initBlockServicesTable(db *sql.DB) error {
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS flags_last_changed_idx_b on block_services (flags_last_changed)")
-
 	return err
 }
 

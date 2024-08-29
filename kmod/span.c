@@ -1436,6 +1436,10 @@ int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_s
                 u32 curr_size = page_count * PAGE_SIZE;
                 while(curr_size < st->size) {
                     struct page* page = __page_cache_alloc(readahead_gfp_mask(mapping));
+                    if (!page) {
+                        err = -ENOMEM;
+                        goto out_pages;
+                    }
                     if(curr_off < block_span->span.end) {
                         // This is a valid page that we want to add in page cache later
                         page->index = curr_off/PAGE_SIZE;

@@ -939,8 +939,6 @@ static int file_flush_internal(struct file* filp, fl_owner_t id) { // can we get
 }
 
 static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
-    if(eggsfs_page_level_reads == 1) return generic_file_read_iter(iocb, to);
-
     struct file* file = iocb->ki_filp;
     struct inode* inode = file->f_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
@@ -953,6 +951,13 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return err; }
 
+    if(eggsfs_page_level_reads == 1) {
+        struct eggsfs_span* span;
+        span = eggsfs_get_span(enode, *ppos);
+        if (span != NULL && span->storage_class != EGGSFS_INLINE_STORAGE) {
+            return generic_file_read_iter(iocb, to);
+        }
+    }
     // Three-level loop:
     // 1. Fetch spans
     // 2. Fetch stripes

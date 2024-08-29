@@ -2232,9 +2232,6 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 					ll.RaiseAlert("error decoding blockService row: %s", err)
 					return
 				}
-				if strings.Contains(string(fd[:]), "fsr87") {
-					continue
-				}
 				bsId := msgs.BlockServiceId(id)
 				badBlockServices[bsId] = struct{}{}
 				alert, found := staleBlockServicesAlerts[bsId]
@@ -2351,7 +2348,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 				continue
 			}
 			fd := bs.FailureDomain.String()
-			if _, found := activeBlockServices[fd]; !found && fd != "REDACTED" && fd != "REDACTED" && fd != "REDACTED" { // fsf113 and fsr126 and fsr87 are currently down
+			if _, found := activeBlockServices[fd]; !found && fd != "REDACTED" && fd != "REDACTED" { // fsf113 and fsr126 are currently down
 				// this alert can go once we start decommissioning entire servers, leaving it in
 				// now for safety
 				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Id, fd)
@@ -2360,7 +2357,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			if bs.HasFiles {
 				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Id, fd, bs.Path)] = struct{}{}
 			}
-			if _, found := activeBlockServices[fd][bs.Path]; !found && fd != "REDACTED" && fd != "REDACTED" && fd != "REDACTED" { // fsf113 and fsr126 and fsr87 are currently down
+			if _, found := activeBlockServices[fd][bs.Path]; !found && fd != "REDACTED" && fd != "REDACTED" { // fsf113 and fsr126 are currently down
 				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
 			}
 		}

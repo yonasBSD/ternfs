@@ -663,6 +663,9 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		log.RaiseAlert("could not read file %v : %v", blockPath, err)
 		return err
 	}
+	s := env.stats[blockServiceId]
+	atomic.AddUint64(&s.blocksChecked, 1)
+	atomic.AddUint64(&s.bytesChecked, uint64(expectedSize))
 	if fileWithCrc {
 		if uint32(fi.Size())%msgs.EGGS_PAGE_WITH_CRC_SIZE != 0 {
 			log.RaiseAlert("size %v for block %v, not multiple of EGGS_PAGE_WITH_CRC_SIZE", uint32(fi.Size()), blockPath)
@@ -859,7 +862,7 @@ func writeBlock(
 	}
 	defer env.bufPool.Put(bufPtr)
 
-	tmpFile, err := writeBufToTemp(path.Dir(filePath), (*bufPtr)[:])
+	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, path.Dir(filePath), (*bufPtr)[:])
 	if err != nil {
 		return err
 	}
@@ -899,7 +902,7 @@ func testWrite(
 	}
 	defer env.bufPool.Put(bufPtr)
 
-	tmpFile, err := writeBufToTemp(basePath, (*bufPtr)[:])
+	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, basePath, (*bufPtr)[:])
 	if err != nil {
 		return err
 	}
@@ -1903,7 +1906,7 @@ func serializerReqProcessor(log *lib.Logger, env *env, terminateChan chan any, r
 					err = nil
 					break
 				}
-				tmpFile, err := writeBufToTemp(path.Dir(req.writeReq.newPath), (*req.writeReq.convertedBuf)[:])
+				tmpFile, err := writeBufToTemp(&bsStats.bytesWritten, path.Dir(req.writeReq.newPath), (*req.writeReq.convertedBuf)[:])
 				if err != nil {
 					log.RaiseAlert("could not write tmp converted file %s, got error: %v", req.writeReq.newPath, err)
 					break
@@ -1940,7 +1943,7 @@ func eraseFileIfExistsAndSyncDir(path string) error {
 	return dir.Sync()
 }
 
-func writeBufToTemp(basePath string, buf []byte) (string, error) {
+func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, error) {
 	if err := os.Mkdir(basePath, 0777); err != nil && !os.IsExist(err) {
 		return "", err
 	}
@@ -1957,6 +1960,7 @@ func writeBufToTemp(basePath string, buf []byte) (string, error) {
 		}
 		f.Close()
 	}()
+	atomic.AddUint64(statBytes, uint64(len(buf)))
 	for len(buf) > 0 {
 		n, err := f.Write(buf)
 		if err != nil {

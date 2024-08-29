@@ -8,6 +8,7 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/cleanup/scratch"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/crc32c"
 	"xtx/eggsfs/lib"
@@ -83,7 +84,7 @@ func defragFileInternal(
 		ByteOffset: 0,
 	}
 	fileSpansResp := msgs.FileSpansResp{}
-	sf := scratchFile{}
+	sf := scratch.NewScratchFile(log, c, fileId.Shard(), fmt.Sprintf("defrag %v", fileId))
 	for {
 		if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 			return err
@@ -129,23 +130,26 @@ func defragFileInternal(
 			if msgs.Crc(crc) != span.Header.Crc {
 				panic(fmt.Errorf("expected crc %v, got %v", span.Header.Crc, msgs.Crc(crc)))
 			}
-			// create scratch file
-			if err := ensureScratchFile(log, c, fileId.Shard(), &sf, fmt.Sprintf("defrag %v", fileId)); err != nil {
-				return err
-			}
-			// create new span in scratch file
-			scratchOffset := sf.size
-			createdBlocks, err := c.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicy, &stripePolicy, sf.id, fileId, sf.cookie, sf.size, span.Header.Size, spanBuf)
+			lockedSF, err := sf.Lock()
 			if err != nil {
 				return err
 			}
-			sf.size += uint64(span.Header.Size)
+
+			// create new span in scratch file
+			scratchOffset := lockedSF.Size()
+			createdBlocks, err := c.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicy, &stripePolicy, lockedSF.FileId(), fileId, lockedSF.Cookie(), lockedSF.Size(), span.Header.Size, spanBuf)
+			if err != nil {
+				lockedSF.ClearOnUnlock(fmt.Sprintf("failed to create span %v", err))
+				lockedSF.Unlock()
+				return err
+			}
+			lockedSF.AddSize(uint64(span.Header.Size))
 			// swap them
 			swapReq := msgs.SwapSpansReq{
 				FileId1:     fileId,
 				ByteOffset1: span.Header.ByteOffset,
 				Blocks1:     []msgs.BlockId{},
-				FileId2:     sf.id,
+				FileId2:     lockedSF.FileId(),
 				ByteOffset2: scratchOffset,
 				Blocks2:     createdBlocks,
 			}
@@ -153,8 +157,11 @@ func defragFileInternal(
 				swapReq.Blocks1 = append(swapReq.Blocks1, block.BlockId)
 			}
 			if err := c.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapSpansResp{}); err != nil {
+				lockedSF.ClearOnUnlock(fmt.Sprintf("failed to swap spans %v", err))
+				lockedSF.Unlock()
 				return err
 			}
+			lockedSF.Unlock()
 		}
 		if fileSpansResp.NextOffset == 0 {
 			break

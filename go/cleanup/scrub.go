@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/eggsfs/cleanup/scratch"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -37,13 +38,10 @@ func scrubFileInternal(
 	stats *ScrubState,
 	timeStats *timeStats,
 	progressReportAlert *lib.XmonNCAlert,
-	scratchFile *scratchFile,
-	scrubbingMu *sync.Mutex,
+	scratchFile scratch.ScratchFile,
 	file msgs.InodeId,
 ) error {
 	log.Debug("starting to scrub file %v", file)
-	scrubbingMu.Lock() // scrubbings don't work in parallel
-	defer scrubbingMu.Unlock()
 
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := c.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
@@ -73,7 +71,7 @@ func scrubWorker(
 	shid msgs.ShardId,
 	workerChan chan *scrubRequest,
 	terminateChan chan any,
-	scratchFile *scratchFile,
+	scratchFile scratch.ScratchFile,
 	scrubbingMu *sync.Mutex,
 	migratingFiles map[msgs.InodeId]struct{},
 	migratingFilesMu *sync.RWMutex,
@@ -109,7 +107,7 @@ func scrubWorker(
 		}
 		err := c.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
 		if badBlockError(err) {
-			if !migrateFileOnError(log, c, stats, shid, terminateChan, scratchFile, scrubbingMu, migratingFiles, migratingFilesMu, req, err, bufPool, blockNotFoundAlert) {
+			if !migrateFileOnError(log, c, stats, shid, terminateChan, scratchFile, migratingFiles, migratingFilesMu, req, err, bufPool, blockNotFoundAlert) {
 				return
 			}
 		} else if err == msgs.BLOCK_IO_ERROR_DEVICE {
@@ -137,8 +135,7 @@ func migrateFileOnError(
 	stats *ScrubState,
 	shid msgs.ShardId,
 	terminateChan chan any,
-	scratchFile *scratchFile,
-	scrubbingMu *sync.Mutex,
+	scratchFile scratch.ScratchFile,
 	migratingFiles map[msgs.InodeId]struct{},
 	migratingFilesMu *sync.RWMutex,
 	req *scrubRequest,
@@ -165,7 +162,7 @@ func migrateFileOnError(
 		atomic.AddUint64(&stats.CheckedBytes, uint64(req.size))
 	}
 	for attempts := 1; ; attempts++ {
-		if err := scrubFileInternal(log, c, bufPool, stats, nil, nil, scratchFile, scrubbingMu, req.file); err != nil {
+		if err := scrubFileInternal(log, c, bufPool, stats, nil, nil, scratchFile, req.file); err != nil {
 			if err == msgs.BLOCK_NOT_FOUND {
 				log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", req.file, attempts)
 				time.Sleep(time.Second)
@@ -259,11 +256,10 @@ func ScrubFile(
 	file msgs.InodeId,
 ) error {
 	bufPool := lib.NewBufPool()
-	scratchFile := scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, c, &scratchFile)
-	defer keepAlive.stop()
-	var scrubbingMu sync.Mutex
-	return scrubFileInternal(log, c, bufPool, stats, nil, nil, &scratchFile, &scrubbingMu, file)
+	scratchFile := scratch.NewScratchFile(log, c, file.Shard(), fmt.Sprintf("scrub file %v", file))
+	defer scratchFile.Close()
+
+	return scrubFileInternal(log, c, bufPool, stats, nil, nil, scratchFile, file)
 }
 
 func ScrubFiles(
@@ -280,9 +276,8 @@ func ScrubFiles(
 	log.Info("starting to scrub files for shard %v", shid)
 	terminateChan := make(chan any, 1)
 	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
-	scratchFile := &scratchFile{}
-	keepAlive := startToKeepScratchFileAlive(log, c, scratchFile)
-	defer keepAlive.stop()
+	scratchFile := scratch.NewScratchFile(log, c, shid, fmt.Sprintf("scrubbing shard %v", shid))
+	defer scratchFile.Close()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -308,23 +303,6 @@ func ScrubFiles(
 		select {
 		case terminateChan <- nil:
 		default:
-		}
-	}()
-
-	scratchResetStopC := make(chan struct{})
-	defer close(scratchResetStopC)
-	scratchResetTicker := time.NewTicker(3 * time.Hour)
-	defer scratchResetTicker.Stop()
-	go func() {
-		select {
-		case <-scratchResetTicker.C:
-			scrubbingMu.Lock()
-			scratchFile.clear()
-			scrubbingMu.Unlock()
-		case _, ok := <-scratchResetStopC:
-			if !ok {
-				return
-			}
 		}
 	}()
 

@@ -408,7 +408,9 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name, char* op
 
     // for the first update we will ask for everything that changed in last day.
     // this is more than enough time for any older changed to be visible to shards and propagated through block info
-    eggsfs_info->block_services_last_changed_time = ktime_get_real_ns() - 86400000000000ull;
+    u64 atime_ns = ktime_get_real_ns();
+    atime_ns -= min(atime_ns, 86400000000000ull);
+    eggsfs_info->block_services_last_changed_time = atime_ns;
 
     INIT_DELAYED_WORK(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_work);
     queue_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);

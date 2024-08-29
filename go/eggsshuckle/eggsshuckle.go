@@ -290,7 +290,8 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.BlockServicesWithFlagChangeReq) (*msgs.BlockServicesWithFlagChangeResp, error) {
 	resp := msgs.BlockServicesWithFlagChangeResp{}
 	// sometimes clients pass very high ChangedSince (kmod during ci start) which breaks sql as it does not support uint64 converting with high bit set
-	now := msgs.Now()
+	tNow := time.Now()
+	now := msgs.MakeEggsTime(tNow)
 	if req.ChangedSince > now {
 		req.ChangedSince = now
 	}
@@ -301,15 +302,13 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 	}
 
 	resp.BlockServices = make([]msgs.BlockService, len(blockServices))
-	resp.LastChange = req.ChangedSince
+	// 10 minutes ago to allow shard propagation path to pick up the change and not override it
+	resp.LastChange = now - msgs.MakeEggsTime(tNow.Add(-10*time.Minute))
 	i := 0
 	for _, bs := range blockServices {
 		resp.BlockServices[i].Id = bs.Id
 		resp.BlockServices[i].Addrs = bs.Addrs
 		resp.BlockServices[i].Flags = bs.Flags
-		if bs.FlagsLastChanged > resp.LastChange {
-			resp.LastChange = bs.FlagsLastChanged
-		}
 		i++
 	}
 

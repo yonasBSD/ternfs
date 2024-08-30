@@ -83,8 +83,16 @@ import (
 //                 goto out;
 //             }
 //             if (read == 0) { break; }
-//             for (long bpos = 0; bpos < read; blocks++) {
-//                 bpos += ((struct linux_dirent*)(buf+bpos))->d_reclen;
+//             long bpos = 0;
+//             while( bpos < read) {
+//                 struct linux_dirent *entry = (struct linux_dirent *)(buf + bpos);
+//                 bpos += entry->d_reclen;
+//                 if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 ||
+//                     strncmp(entry->d_name, "tmp.", 4) == 0) {
+//                         // we only want to count blocks and ignore . and .. and tmp.* files
+//                         continue;
+//                 }
+//                 blocks++;
 //             }
 //         }
 //     }
@@ -176,49 +184,22 @@ func updateBlockServiceInfoBlocks(
 	if err != nil {
 		return err
 	}
-	blocksWithoutCrc, err := countBlocks(path.Join(blockService.path, "without_crc"))
-	if err != nil {
-		return err
+	noCrcPath := path.Join(blockService.path, "without_crc")
+	blocksWithoutCrc := uint64(0)
+	if _, err := os.Stat(noCrcPath); err == nil {
+		blocksWithoutCrc, err = countBlocks(noCrcPath)
+		if err != nil {
+			return err
+		}
+		if blocksWithoutCrc == 0 {
+			os.RemoveAll(noCrcPath)
+		}
 	}
+
 	blockService.extraCachedInfo.BlocksWithCrc = blocksWithCrc
 	blockService.extraCachedInfo.BlocksWithoutCrc = blocksWithoutCrc
 	blockService.cachedInfo.Blocks = blocksWithCrc + blocksWithoutCrc
 	log.Info("done counting blocks for %v in %v. (with_crc: %d, without_crc: %d)", blockService.cachedInfo.Id, time.Since(t), blocksWithCrc, blocksWithoutCrc)
-	return nil
-}
-
-func convertBlockServiceFolderStructureToCrcBased(
-	log *lib.Logger,
-	blockService *blockService,
-) error {
-	t := time.Now()
-	log.Info("starting to convert folder structure for %v", blockService.cachedInfo.Id)
-	if err := os.Mkdir(path.Join(blockService.path, "without_crc"), 0755); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("failed to create 'without_crc' folder: %w", err)
-	}
-	if err := os.Mkdir(path.Join(blockService.path, "with_crc"), 0755); err != nil && !os.IsExist(err) {
-		return fmt.Errorf("failed to create 'with_crc' folder: %w", err)
-	}
-	for i := 0; i < 256; i++ {
-		dirPath := path.Join(blockService.path, fmt.Sprintf("%02x", i))
-		newDirPath := path.Join(blockService.path, "without_crc", fmt.Sprintf("%02x", i))
-		{
-			stat, err := os.Stat(dirPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return err
-			}
-			if !stat.IsDir() {
-				return fmt.Errorf("expected %v to be a directory", dirPath)
-			}
-		}
-		if err := os.Rename(dirPath, newDirPath); err != nil {
-			return fmt.Errorf("failed to rename %v to %v: %w", dirPath, newDirPath, err)
-		}
-	}
-	log.Info("done converting folder structure for %v in %v", blockService.cachedInfo.Id, time.Since(t))
 	return nil
 }
 
@@ -1272,6 +1253,10 @@ func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
 		if err := binary.Write(keyFile, binary.LittleEndian, keyCrc); err != nil {
 			panic(err)
 		}
+		log.Info("creating directory structure")
+		if err := os.Mkdir(path.Join(dir, "with_crc"), 0755); err != nil && !os.IsExist(err) {
+			panic(fmt.Errorf("failed to create folder %s error: %v", path.Join(dir, "with_crc"), err))
+		}
 	} else if read != 16 {
 		panic(fmt.Errorf("short secret key (%v rather than 16 bytes)", read))
 	} else {
@@ -1716,18 +1701,6 @@ func main() {
 			}
 		}
 	}
-
-	wg := sync.WaitGroup{}
-	for _, bs := range blockServices {
-		wg.Add(1)
-		go func(b *blockService) {
-			defer wg.Done()
-			if err := convertBlockServiceFolderStructureToCrcBased(log, b); err != nil {
-				panic(err)
-			}
-		}(bs)
-	}
-	wg.Wait()
 
 	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))
 	if err != nil {

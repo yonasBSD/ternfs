@@ -777,13 +777,16 @@ struct fetch_request {
 
 static void fetch_complete(struct block_request* breq) {
     struct fetch_request* req = get_fetch_request(breq);
-    int i;
     // When fetching pages with crc, the pages list needs to be returned in the
     // exact same order as it was received. We need to restore it back if
     // reading didn't finish and not all the items got rotated.
-    for (i = 0; i < (req->count - req->bytes_fetched)/PAGE_SIZE && req->bytes_fetched > 0; i++) {
+    struct page* first_page = list_first_entry(&req->pages, struct page, lru);
+    struct page* last_page = list_last_entry(&req->pages, struct page, lru);
+    while(last_page->index < first_page->index) {
         list_rotate_left(&req->pages);
-        eggsfs_info("rotating list left: %d: %d %d, head_page:%ld", i, req->count, req->bytes_fetched, page_index(list_first_entry_or_null(&req->pages, struct page, lru)));
+        eggsfs_info("rotating list left: %d %d, first_page:%ld, last_page:%ld", req->count, req->bytes_fetched, first_page->index, last_page->index);
+        first_page = list_first_entry(&req->pages, struct page, lru);
+        last_page = list_last_entry(&req->pages, struct page, lru);
     }
     eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
     req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->breq.err));

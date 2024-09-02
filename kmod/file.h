@@ -5,6 +5,7 @@
 
 extern unsigned eggsfs_atime_update_interval_sec;
 extern unsigned eggsfs_max_write_span_attempts;
+extern unsigned eggsfs_file_io_timeout_sec;
 
 extern unsigned eggsfs_page_level_reads;
 

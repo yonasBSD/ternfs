@@ -21,6 +21,8 @@
 
 unsigned eggsfs_atime_update_interval_sec = 0;
 
+extern unsigned eggsfs_file_io_timeout_sec = 86400;
+
 unsigned eggsfs_max_write_span_attempts = 5;
 
 unsigned eggsfs_page_level_reads = 1;
@@ -1276,6 +1278,7 @@ void process_file_pages(struct address_space *mapping, struct list_head *pages, 
 
 static int file_readpages(struct file *filp, struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {
     int err = 0;
+    int span_read_attempts = 0;
 
     if (eggsfs_page_level_reads != 1) {
         err = -ENOTSUPP;
@@ -1288,7 +1291,9 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
     eggsfs_debug("enode=%p, ino=%ld, offset=%lld, nr_pages=%u", enode, inode->i_ino, off, nr_pages);
 
     struct eggsfs_span* span = NULL;
+    struct timespec64 start_ts = ns_to_timespec64(ktime_get_real_ns());
 
+retry:
     span = eggsfs_get_span(enode, off);
     if (IS_ERR(span)) {
         eggsfs_warn("eggsfs_get_span_failed at pos %llu", off);
@@ -1308,7 +1313,6 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
 
     if (span->storage_class == EGGSFS_INLINE_STORAGE) {
         err = -ENOTSUPP;
-        put_pages_list(pages);
         goto out_err;
     } else {
         struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
@@ -1322,8 +1326,19 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         err = eggsfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
         if (err) {
             eggsfs_warn("reading page at off=%lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
-            put_pages_list(pages);
             put_pages_list(&extra_pages);
+            if (span_read_attempts == 0) {
+                // see comment in read_file_iter for rationale here
+                eggsfs_warn("reading page %lld in file %016lx failed with error %d, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, err);
+                eggsfs_unlink_span(enode, span);
+                span_read_attempts++;
+                goto retry;
+            }
+            struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
+            if ((end_ts.tv_sec - start_ts.tv_sec) < eggsfs_file_io_timeout_sec) {
+                goto retry;
+            }
+            eggsfs_warn("reading page at off=%lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
             goto out_err;
         }
         process_file_pages(mapping, pages, nr_pages);
@@ -1332,6 +1347,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
     return 0;
 
 out_err:
+    put_pages_list(pages);
     return err;
 }
 
@@ -1341,10 +1357,11 @@ static int file_readpage(struct file* filp, struct page* page) {
     u64 off = page_offset(page);
     int err = 0;
 
-    // TODO retry like in file_read_iter
     struct eggsfs_span* span = NULL;
     struct eggsfs_stripe* stripe = NULL;
     int span_read_attempts = 0;
+
+    struct timespec64 start_ts = ns_to_timespec64(ktime_get_real_ns());
 
 retry:
     span = eggsfs_get_span(enode, off);
@@ -1380,12 +1397,8 @@ retry:
             err = -EIO;
             goto out;
         }
-        stripe = eggsfs_get_stripe(block_span, span_offset);
-        BUG_ON(stripe == NULL);
 
         struct page* stripe_page = NULL;
-        u64 stripe_offset = (span_offset - stripe->stripe_ix*eggsfs_stripe_size(block_span));
-        u32 page_ix = stripe_offset/PAGE_SIZE;
 
         if (eggsfs_page_level_reads == 1) {
             LIST_HEAD(pages);
@@ -1398,10 +1411,28 @@ retry:
             list_add_tail(&stripe_page->lru, &pages);
             LIST_HEAD(extra_pages);
             err = eggsfs_span_get_pages(block_span, filp->f_mapping, &pages, 1, &extra_pages);
-            if (err) goto out;
             process_file_pages(filp->f_mapping, &extra_pages, 0);
+            if (err) {
+                if (span_read_attempts == 0) {
+                    // see comment in read_file_iter for rationale here
+                    eggsfs_warn("reading page %lld in file %016lx failed with error %d, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, err);
+                    eggsfs_unlink_span(enode, span);
+                    span_read_attempts++;
+                    goto retry;
+                }
+                struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
+                if ((end_ts.tv_sec - start_ts.tv_sec) < eggsfs_file_io_timeout_sec) {
+                    goto retry;
+                }
+                eggsfs_warn("reading page at off=%lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
+                goto out;
+            }
             list_del(&stripe_page->lru);
         } else {
+            stripe = eggsfs_get_stripe(block_span, span_offset);
+            BUG_ON(stripe == NULL);
+            u64 stripe_offset = (span_offset - stripe->stripe_ix*eggsfs_stripe_size(block_span));
+            u32 page_ix = stripe_offset/PAGE_SIZE;
             stripe_page = eggsfs_get_stripe_page(stripe, page_ix);
             if (IS_ERR(stripe_page)) {
                 err = PTR_ERR(stripe_page);

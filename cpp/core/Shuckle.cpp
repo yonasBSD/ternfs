@@ -198,6 +198,11 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
                     FAIL(EIO, ss.str());
                 }
             }
+            if (fdSet.size() < 14) {
+                std::stringstream ss;
+                ss << "we need at least 14 block services per storage class but we got " << storageClass << ": " << fdSet.size();
+                FAIL(EIO, ss.str());
+            }
         }
     }
 

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <fcntl.h>
 #include <sstream>
 #include <string>
@@ -10,9 +11,12 @@
 #include <sys/time.h>
 #include <array>
 #include <netinet/tcp.h>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "Bincode.hpp"
+#include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "Protocol.hpp"
 #include "Shuckle.hpp"
 #include "Exception.hpp"
@@ -167,16 +171,32 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 
     // check that all current block services are known -- there's a small race here
     // the caller should just retry in these cases.
+    // check that all current block services are from different failure domains
+    // shuckle should guarantee that when sending response but verify the invariant
     {
         std::unordered_set<uint64_t> knownBlockServices;
+        std::unordered_map<uint64_t, const BlockServiceInfo* > bsIdToBlockService;
+        std::unordered_set<std::string> fdSet;
         for (const auto& bs : blockServices) {
             knownBlockServices.insert(bs.id.u64);
+            bsIdToBlockService[bs.id.u64] = &bs;
         }
-        for (BlockServiceId bsId : currentBlockServices) {
-            if (!knownBlockServices.contains(bsId.u64)) {
-                std::stringstream ss;
-                ss << "got unknown block service " << bsId << " in current block services, was probably added in the meantime, please retry";
-                FAIL(EIO, ss.str());
+
+        for (auto storageClass : {HDD_STORAGE, FLASH_STORAGE}) {
+            fdSet.clear();
+            for (BlockServiceId bsId : currentBlockServices) {
+                if (bsIdToBlockService[bsId.u64]->storageClass != storageClass) { continue; }
+                if (!knownBlockServices.contains(bsId.u64)) {
+                    std::stringstream ss;
+                    ss << "got unknown block service " << bsId << " in current block services, was probably added in the meantime, please retry";
+                    FAIL(EIO, ss.str());
+                }
+                auto fdName = std::string((const char*)bsIdToBlockService[bsId.u64]->failureDomain.name.data.data(), bsIdToBlockService[bsId.u64]->failureDomain.name.data.size());
+                if (!fdSet.insert(fdName).second) {
+                    std::stringstream ss;
+                    ss << "got multiple block services in the same failure domain: " << fdName;
+                    FAIL(EIO, ss.str());
+                }
             }
         }
     }

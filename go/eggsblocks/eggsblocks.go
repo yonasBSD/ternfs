@@ -41,6 +41,7 @@ import (
 // #include <errno.h>
 // #include <stdio.h>
 // #include <stdlib.h>
+// #include <string.h>
 // #include <sys/syscall.h>
 //
 // struct linux_dirent {
@@ -190,9 +191,6 @@ func updateBlockServiceInfoBlocks(
 		blocksWithoutCrc, err = countBlocks(noCrcPath)
 		if err != nil {
 			return err
-		}
-		if blocksWithoutCrc == 0 {
-			os.RemoveAll(noCrcPath)
 		}
 	}
 

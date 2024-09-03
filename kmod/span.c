@@ -1337,6 +1337,11 @@ retry:
 int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_space * mapping, struct list_head *pages, unsigned nr_pages, struct list_head *extra_pages) {
     int err;
 
+    if (list_empty(pages)) {
+        eggsfs_warn("called with empty list of pages for file %016llx", block_span->span.ino);
+        return -EIO;
+    }
+
     loff_t off_start = page_offset(lru_to_page(pages));
     unsigned long page_ix;
     unsigned long first_page_index = page_index(lru_to_page(pages));

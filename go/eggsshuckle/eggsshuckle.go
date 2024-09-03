@@ -83,6 +83,10 @@ type state struct {
 	// speed up generating proof for decommed block deletion
 	decommedBlockServices   map[msgs.BlockServiceId]msgs.BlockServiceInfo
 	decommedBlockServicesMu sync.RWMutex
+	// periodically calculated evenly spread writable block services across all shards
+	currentShardBlockServicesLastUpdate msgs.EggsTime
+	currentShardBlockServices           map[msgs.ShardId][]msgs.BlockServiceId
+	currentShardBlockServicesMu         sync.RWMutex
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -206,11 +210,12 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 }
 
 type shuckleConfig struct {
-	blockServiceMinFreeBytes  uint64
-	addrs                     msgs.AddrsInfo
-	minAutoDecomInterval      time.Duration
-	maxDecommedWithFiles      int
-	maxFailureDomainsPerShard int
+	blockServiceMinFreeBytes          uint64
+	addrs                             msgs.AddrsInfo
+	minAutoDecomInterval              time.Duration
+	maxDecommedWithFiles              int
+	maxFailureDomainsPerShard         int
+	currentBlockServiceUpdateInterval time.Duration
 }
 
 func newState(
@@ -219,12 +224,16 @@ func newState(
 	conf *shuckleConfig,
 ) (*state, error) {
 	st := &state{
-		db:                      db,
-		mutex:                   sync.Mutex{},
-		config:                  conf,
-		decommedBlockServices:   make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
-		decommedBlockServicesMu: sync.RWMutex{},
+		db:                                  db,
+		mutex:                               sync.Mutex{},
+		config:                              conf,
+		decommedBlockServices:               make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
+		decommedBlockServicesMu:             sync.RWMutex{},
+		currentShardBlockServices:           make(map[msgs.ShardId][]msgs.BlockServiceId),
+		currentShardBlockServicesMu:         sync.RWMutex{},
+		currentShardBlockServicesLastUpdate: 0,
 	}
+
 	blockServices, err := st.selectBlockServices(nil, 0, 0, 0)
 	if err != nil {
 		return nil, err
@@ -266,6 +275,170 @@ func newState(
 func (st *state) resetTimings() {
 	for _, t := range st.counters {
 		t.Reset()
+	}
+}
+
+type shardFailureDomain struct {
+	shard  msgs.ShardId
+	domain msgs.FailureDomain
+}
+
+type shardBlockServiceCount struct {
+	shard msgs.ShardId
+	count int
+}
+
+type currentBlockServicesStats struct {
+	blockServicesConsidered        int
+	maxBlockServicesPerShard       int
+	minBlockServicesPerShard       int
+	duplicateBlockServicesAssigned int
+}
+
+func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
+	updatesSkipped := 0
+	for {
+		blockServicesMap, err := s.selectBlockServices(nil, 0, 0, s.currentShardBlockServicesLastUpdate)
+		if err != nil {
+			log.RaiseAlert("failed to select block services: %v", err)
+		}
+		// if nothing changed since we last calculated shard block services, nothing to do
+		if len(blockServicesMap) == 0 && 10*time.Second*time.Duration(updatesSkipped) < s.config.currentBlockServiceUpdateInterval {
+			updatesSkipped++
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		updatesSkipped = 0
+		// we only have all updated block services now later it will be filtered, update last updated
+		for _, bs := range blockServicesMap {
+			if bs.FlagsLastChanged > s.currentShardBlockServicesLastUpdate {
+				s.currentShardBlockServicesLastUpdate = bs.FlagsLastChanged
+			}
+		}
+
+		blockServicesMap, err = s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, s.config.blockServiceMinFreeBytes, 0)
+		if err != nil {
+			log.RaiseAlert("failed to select block services: %v", err)
+			continue
+		}
+
+		currentShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceId{}
+
+		for _, storageClass := range []msgs.StorageClass{msgs.FLASH_STORAGE, msgs.HDD_STORAGE} {
+			// divide them by failure domain
+			blockServicesByFailureDomain := make(map[msgs.FailureDomain][]msgs.BlockServiceId)
+			failureDomains := []msgs.FailureDomain{}
+			stats := currentBlockServicesStats{
+				minBlockServicesPerShard: len(blockServicesMap),
+			}
+			for _, bs := range blockServicesMap {
+				if bs.StorageClass != storageClass {
+					continue
+				}
+				blockServices, ok := blockServicesByFailureDomain[bs.FailureDomain]
+				if !ok {
+					failureDomains = append(failureDomains, bs.FailureDomain)
+				}
+				blockServicesByFailureDomain[bs.FailureDomain] = append(blockServices, bs.Id)
+				stats.blockServicesConsidered++
+			}
+
+			// check minimum number of failure domainsavailable.  we try to get at least 28 different if available
+			// we hard fail if there are less than 14
+			minFailureDomains := 28
+			if minFailureDomains > len(blockServicesByFailureDomain) {
+				minFailureDomains = len(blockServicesByFailureDomain)
+			}
+
+			if len(blockServicesByFailureDomain) < 14 {
+				log.RaiseAlert("could not pick block services for storage class %v. there are only %d failure domains and we need at least 14", storageClass, len(blockServicesByFailureDomain))
+				continue
+			}
+
+			// shuffle failure domains and block services within failure domains and populate initial structures
+			candidateFailureDomainIdx := 0
+			failureDomainCandidateBsIdx := make(map[msgs.FailureDomain]int)
+			rand.Shuffle(len(failureDomains), func(i, j int) {
+				failureDomains[i], failureDomains[j] = failureDomains[j], failureDomains[i]
+			})
+			for _, failureDomain := range failureDomains {
+				failureDomainCandidateBsIdx[failureDomain] = 0
+				blockServices := blockServicesByFailureDomain[failureDomain]
+				rand.Shuffle(len(blockServices), func(i, j int) {
+					blockServices[i], blockServices[j] = blockServices[j], blockServices[i]
+				})
+			}
+			perStorageClassShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceId{}
+			shardFailureDomainSet := map[shardFailureDomain]struct{}{}
+			blockServiceSet := map[msgs.BlockServiceId]struct{}{}
+
+			// first populate all shards with minimum number of failure domains
+			for i := 0; i < 256; i++ {
+				currentBlockServices := []msgs.BlockServiceId{}
+				for j := 0; j < minFailureDomains; j++ {
+					failureDomain := failureDomains[candidateFailureDomainIdx%len(failureDomains)]
+					blockServices := blockServicesByFailureDomain[failureDomain]
+					candidateBsIdx := failureDomainCandidateBsIdx[failureDomain]
+					blockServiceId := blockServices[candidateBsIdx%len(blockServices)]
+					currentBlockServices = append(currentBlockServices, blockServiceId)
+					failureDomainCandidateBsIdx[failureDomain]++
+					candidateFailureDomainIdx++
+					shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain}] = struct{}{}
+					if _, ok := blockServiceSet[blockServiceId]; !ok {
+						blockServiceSet[blockServiceId] = struct{}{}
+					} else {
+						stats.duplicateBlockServicesAssigned++
+					}
+				}
+				perStorageClassShardBlockServices[msgs.ShardId(i)] = currentBlockServices
+			}
+			// then spread the rest of block services across shards while giving at most one block service from a failure domain to shard and trying to keep number of block sevices per shard as equal as possible
+			// up to maxFailureDomainsPerShard
+			for _, failureDomain := range failureDomains {
+				blockServices := blockServicesByFailureDomain[failureDomain]
+				candidateBsIdx := failureDomainCandidateBsIdx[failureDomain]
+				if candidateBsIdx >= len(blockServices) {
+					continue
+				}
+				candidateShards := []shardBlockServiceCount{}
+				for i := 0; i < 256; i++ {
+					if _, ok := shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain}]; !ok && len(perStorageClassShardBlockServices[msgs.ShardId(i)]) < s.config.maxFailureDomainsPerShard {
+						candidateShards = append(candidateShards, shardBlockServiceCount{shard: msgs.ShardId(i), count: len(perStorageClassShardBlockServices[msgs.ShardId(i)])})
+					}
+				}
+				sort.Slice(candidateShards, func(i, j int) bool { return candidateShards[i].count < candidateShards[j].count })
+
+				for _, shard := range candidateShards {
+					if candidateBsIdx >= len(blockServices) {
+						break
+					}
+					blockServiceId := blockServices[candidateBsIdx]
+					if _, ok := blockServiceSet[blockServiceId]; !ok {
+						blockServiceSet[blockServiceId] = struct{}{}
+					} else {
+						panic(fmt.Sprintf("duplicate block service %s, this should not happen in this part of assigment", blockServiceId))
+					}
+					perStorageClassShardBlockServices[shard.shard] = append(perStorageClassShardBlockServices[shard.shard], blockServices[candidateBsIdx])
+					candidateBsIdx++
+					shardFailureDomainSet[shardFailureDomain{shard: shard.shard, domain: failureDomain}] = struct{}{}
+				}
+			}
+			for shard, blockServices := range perStorageClassShardBlockServices {
+				if len(blockServices) > stats.maxBlockServicesPerShard {
+					stats.maxBlockServicesPerShard = len(blockServices)
+				}
+				if len(blockServices) < stats.minBlockServicesPerShard {
+					stats.minBlockServicesPerShard = len(blockServices)
+				}
+				currentShardBlockServices[shard] = append(currentShardBlockServices[shard], blockServices...)
+			}
+
+			log.Info("finished calculating current block services for storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d}",
+				storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard)
+		}
+		s.currentShardBlockServicesMu.Lock()
+		s.currentShardBlockServices = currentShardBlockServices
+		s.currentShardBlockServicesMu.Unlock()
 	}
 }
 
@@ -870,50 +1043,13 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 }
 
 func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
-	// only select block services we're willing to write
-	blockServicesMap, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, s.config.blockServiceMinFreeBytes, 0)
-	if err != nil {
-		log.RaiseAlert("error reading block services: %s", err)
-		return nil, err
+	s.currentShardBlockServicesMu.RLock()
+	defer s.currentShardBlockServicesMu.RUnlock()
+	currentBlockServices, ok := s.currentShardBlockServices[req.ShardId]
+	if !ok {
+		return &msgs.ShardBlockServicesResp{}, nil
 	}
-	// divide them by storage class
-	blockServicesByStorage := make(map[msgs.StorageClass][]msgs.BlockServiceInfo)
-	for _, bs := range blockServicesMap {
-		if _, found := blockServicesByStorage[bs.StorageClass]; !found {
-			blockServicesByStorage[bs.StorageClass] = []msgs.BlockServiceInfo{}
-		}
-		blockServicesByStorage[bs.StorageClass] = append(blockServicesByStorage[bs.StorageClass], bs)
-	}
-	// Shuffle them, then climb up to the maximum number of failure domains. This is a cheap
-	// way to select block services from many failure domains (which we need to do since
-	// we need at least 14 disks for a file, plus some slack), while picking block services
-	// with a single available disk (maybe because it was just replaced and the others are
-	// full) rarely.
-	resp := &msgs.ShardBlockServicesResp{
-		BlockServices: []msgs.BlockServiceId{},
-	}
-	for _, blockServices := range blockServicesByStorage {
-		rand.Shuffle(len(blockServices), func(i, j int) {
-			blockServices[i], blockServices[j] = blockServices[j], blockServices[i]
-		})
-		selectedBlockServices := []msgs.BlockServiceId{}
-		seenFailureDomains := make(map[msgs.FailureDomain]struct{})
-		for i := range blockServices {
-			if len(selectedBlockServices) >= s.config.maxFailureDomainsPerShard {
-				break
-			}
-			if _, found := seenFailureDomains[blockServices[i].FailureDomain]; found {
-				continue
-			}
-			seenFailureDomains[blockServices[i].FailureDomain] = struct{}{}
-			selectedBlockServices = append(selectedBlockServices, blockServices[i].Id)
-		}
-		if len(blockServices) < 14 { // we need at least as many to create files
-			return nil, msgs.COULD_NOT_PICK_BLOCK_SERVICES
-		}
-		resp.BlockServices = append(resp.BlockServices, selectedBlockServices...)
-	}
-	return resp, nil
+	return &msgs.ShardBlockServicesResp{currentBlockServices}, nil
 }
 
 func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderReq) (*msgs.MoveShardLeaderResp, error) {
@@ -2202,6 +2338,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			n("flags_last_changed", uint64(now)),
 			n("thresh", thresh),
 		)
+
 		st.mutex.Unlock()
 		if err != nil {
 			ll.RaiseAlert("error setting block services stale: %s", err)
@@ -2566,6 +2703,7 @@ func main() {
 	minDecomInterval := flag.Duration("min-decom-interval", 2*time.Hour, "Minimum interval between calls to decommission blockservices by automation")
 	maxDecommedWithFiles := flag.Int("max-decommed-with-files", 3, "Maximum number of migrating decommissioned blockservices before rejecting further automated decommissions")
 	maxFailureDomainsPerShard := flag.Int("max-failure-domains-per-shard", 28, "Maximum number of failure domains per storage class that shards use for assigning blocks at a single point in time")
+	currentBlockServiceUpdateInterval := flag.Duration("current-block-service-update-interval", 30*time.Minute, "Maximum interval between re-calculating current block services")
 	scriptsJs := flag.String("scripts-js", "", "")
 
 	flag.Parse()
@@ -2674,11 +2812,12 @@ func main() {
 	}
 
 	config := &shuckleConfig{
-		addrs:                     msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
-		blockServiceMinFreeBytes:  *bsMinBytes,
-		minAutoDecomInterval:      *minDecomInterval,
-		maxDecommedWithFiles:      *maxDecommedWithFiles,
-		maxFailureDomainsPerShard: *maxFailureDomainsPerShard,
+		addrs:                             msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
+		blockServiceMinFreeBytes:          *bsMinBytes,
+		minAutoDecomInterval:              *minDecomInterval,
+		maxDecommedWithFiles:              *maxDecommedWithFiles,
+		maxFailureDomainsPerShard:         *maxFailureDomainsPerShard,
+		currentBlockServiceUpdateInterval: *currentBlockServiceUpdateInterval,
 	}
 	state, err := newState(log, db, config)
 	if err != nil {
@@ -2696,6 +2835,11 @@ func main() {
 	setupRouting(log, state, *scriptsJs)
 
 	terminateChan := make(chan any)
+
+	go func() {
+		defer func() { lib.HandleRecoverPanic(log, recover()) }()
+		assignWritableBlockServicesToShards(log, state)
+	}()
 
 	startBincodeHandler := func(listener net.Listener) {
 		go func() {

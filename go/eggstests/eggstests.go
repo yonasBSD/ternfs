@@ -1116,7 +1116,7 @@ func main() {
 
 	// wait for block services first, so we know that shards will immediately have all of them
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	blockServices := client.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), waitShuckleFor)
+	blockServices := client.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), true, waitShuckleFor)
 	blockServicesPorts := make(map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16

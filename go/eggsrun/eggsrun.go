@@ -169,7 +169,7 @@ func main() {
 		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	client.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), waitShuckleFor)
+	client.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices), true, waitShuckleFor)
 
 	// Start CDC
 	{

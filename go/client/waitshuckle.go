@@ -7,7 +7,7 @@ import (
 	"xtx/eggsfs/msgs"
 )
 
-func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockServices int, timeout time.Duration) []msgs.BlockServiceInfo {
+func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockServices int, waitCurrentServicesCalcuation bool, timeout time.Duration) []msgs.BlockServiceInfo {
 	var err error
 	for {
 		var resp msgs.ShuckleResponse
@@ -25,6 +25,13 @@ func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockSe
 		}
 		if len(bss) > expectedBlockServices {
 			panic(fmt.Errorf("got more block services than expected (%v > %v)", len(bss), expectedBlockServices))
+		}
+		if waitCurrentServicesCalcuation {
+			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShardBlockServicesReq{0})
+			if err != nil || len(resp.(*msgs.ShardBlockServicesResp).BlockServices) == 0 {
+				ll.Debug("current block services not calculated, will keep waiting")
+				goto KeepChecking
+			}
 		}
 		return bss
 	KeepChecking:

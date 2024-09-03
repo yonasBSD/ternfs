@@ -40,6 +40,7 @@ func main() {
 	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
+	useRandomFetchApi := flag.Bool("use-random-fetch-api", false, "if set randomly uses api with or without crc when fetching from block service")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -248,12 +249,13 @@ func main() {
 
 	if !*noFuse {
 		fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
-			Exe:            goExes.FuseExe,
-			Path:           path.Join(*dataDir, "fuse"),
-			LogLevel:       level,
-			Wait:           true,
-			ShuckleAddress: shuckleAddress,
-			Profile:        *profile,
+			Exe:               goExes.FuseExe,
+			Path:              path.Join(*dataDir, "fuse"),
+			LogLevel:          level,
+			Wait:              true,
+			ShuckleAddress:    shuckleAddress,
+			Profile:           *profile,
+			UseRandomFetchApi: *useRandomFetchApi,
 		})
 
 		fmt.Printf("operational, mounted at %v\n", fuseMountPoint)

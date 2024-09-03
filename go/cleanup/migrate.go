@@ -50,7 +50,7 @@ func fetchBlock(
 ) (*bytes.Buffer, error) {
 	blockService := &blockServices[block.BlockServiceIx]
 	// fail immediately to other block services
-	data, err := c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, 0, blockSize)
+	data, err := c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, 0, blockSize, block.Crc)
 	if err != nil {
 		log.Info("couldn't fetch block %v in file %v in block service %v: %v", block.BlockId, fileId, blockService, err)
 		return nil, err

@@ -476,7 +476,7 @@ func (c *Client) fetchCell(
 	blockService := &blockServices[block.BlockServiceIx]
 	var data *bytes.Buffer
 	// fail immediately to other block services
-	data, err = c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize)
+	data, err = c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize, block.Crc)
 	if err != nil {
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, err

@@ -691,6 +691,7 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
 	initialCDCTimeout := flag.Duration("initial-cdc-timeout", 0, "")
+	useRandomFetchApi := flag.Bool("use-random-fetch-api", false, "if set randomly uses api with or without crc when fetching from block service")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -746,6 +747,8 @@ func main() {
 		panic(err)
 	}
 	c.SetCounters(counters)
+
+	c.SetUseRandomFetchApi(*useRandomFetchApi)
 
 	shardTimeouts := client.DefaultShardTimeout
 	if *initialShardTimeout != 0 {

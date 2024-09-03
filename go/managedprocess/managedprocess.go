@@ -332,6 +332,7 @@ type FuseOpts struct {
 	Profile             bool
 	InitialShardTimeout time.Duration
 	InitialCDCTimeout   time.Duration
+	UseRandomFetchApi   bool
 }
 
 func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string {
@@ -362,6 +363,9 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 	}
 	if opts.InitialShardTimeout != 0 {
 		args = append(args, "-initial-shard-timeout", opts.InitialShardTimeout.String())
+	}
+	if opts.UseRandomFetchApi {
+		args = append(args, "-use-random-fetch-api")
 	}
 	args = append(args, mountPoint)
 	procs.Start(ll, &ManagedProcessArgs{

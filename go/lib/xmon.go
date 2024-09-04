@@ -276,6 +276,7 @@ Reconnect:
 	}
 	// we're in, start loop
 	gotHeartbeatAt := time.Time{}
+	lastReadAttempt := time.Time{}
 	for {
 		// reconnect when too much time has passed
 		if !x.onlyLogging && !gotHeartbeatAt.Equal(time.Time{}) && time.Since(gotHeartbeatAt) > time.Second*2*time.Duration(heartbeatIntervalSecs) {
@@ -393,6 +394,13 @@ Reconnect:
 			time.Sleep(time.Millisecond * 100)
 		} else {
 			for {
+				currentReadAttempt := time.Now()
+				if lastReadAttempt.Equal(time.Time{}) {
+					lastReadAttempt = currentReadAttempt
+				}
+				if currentReadAttempt.Sub(lastReadAttempt) > time.Second*2 {
+					log.ErrorNoAlert("large delay between atempts to read xmon connection %v ", currentReadAttempt.Sub(lastReadAttempt))
+				}
 				if err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * 100)); err != nil {
 					log.ErrorNoAlert("could not set deadline: %v", err)
 					goto Reconnect

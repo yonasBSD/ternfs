@@ -570,9 +570,11 @@ type migrator struct {
 	fileMigratorsNewFile      [256]chan msgs.InodeId
 	statsC                    chan MigrateStats
 	stopC                     chan bool
+
+	logOnly bool
 }
 
-func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int) *migrator {
+func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int, logOnly bool) *migrator {
 	res := migrator{
 		shuckleAddress,
 		log,
@@ -589,7 +591,8 @@ func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, num
 		make(chan fileMigrationResult, 256*numFilesPerShard),
 		[256]chan msgs.InodeId{},
 		make(chan MigrateStats, 10),
-		make(chan bool)}
+		make(chan bool),
+		logOnly}
 	for i := 0; i < len(res.fileMigratorsNewFile); i++ {
 		res.fileFetchers[i] = make(chan msgs.BlockServiceId, 500)
 		res.fileMigratorsNewFile[i] = make(chan msgs.InodeId, res.numFilesPerShard)
@@ -802,6 +805,10 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 				if !ok {
 					m.log.Debug("received stop in fileAggregator")
 					return
+				}
+				if m.logOnly {
+					m.log.Info("would migrate file %v but logOnly set", newFileId)
+					continue
 				}
 				if errorCount, ok := inProgressFiles[newFileId]; ok {
 					inProgressFiles[newFileId] = errorCount + 1

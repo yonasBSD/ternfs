@@ -405,6 +405,7 @@ Reconnect:
 					log.ErrorNoAlert("could not set deadline: %v", err)
 					goto Reconnect
 				}
+				lastReadAttempt = currentReadAttempt
 				var respType int32
 				if err = binary.Read(conn, binary.BigEndian, &respType); err != nil {
 					if netErr, ok := err.(net.Error); ok && netErr.Timeout() { // nothing to read

@@ -51,7 +51,7 @@ func NewScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, note 
 func (f *lockedScratchFile) Unlock() {
 	f.locked = false
 	if f.clearOnUnlock {
-		f.log.Debug("closing scratch file %v, reason: %s", f.id, f.clearReason)
+		f.log.Info("closing scratch file %v, reason: %s", f.id, f.clearReason)
 		f.clearOnUnlock = false
 		f.clearReason = ""
 		f.id = msgs.NULL_INODE_ID
@@ -141,7 +141,7 @@ func (s *scratchFile) Lock() (*lockedScratchFile, error) {
 			s.mu.Unlock()
 			return nil, err
 		}
-		s.log.Debug("created scratch file %v", resp.Id)
+		s.log.Info("created scratch file %v", resp.Id)
 		s.id = resp.Id
 		s.cookie = resp.Cookie
 		s.size = 0

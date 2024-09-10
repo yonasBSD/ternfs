@@ -13,7 +13,7 @@ if len(sys.argv) == 1:
 else:
     build_type = sys.argv[1]
 
-cpp_dir = Path(__file__).parent
+cpp_dir = Path(__file__).resolve().parent
 repo_dir = cpp_dir.parent
 
 build_dir = cpp_dir / 'build' / build_type

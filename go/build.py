@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import argparse
 
-go_dir = Path(__file__).parent
+go_dir = Path(__file__).resolve().parent
 repo_dir = go_dir.parent
 
 parser = argparse.ArgumentParser()

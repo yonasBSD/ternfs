@@ -3694,24 +3694,32 @@ std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeRes
 }
 
 void RegisterShardReq::pack(BincodeBuf& buf) const {
-    id.pack(buf);
+    shrid.pack(buf);
+    buf.packScalar<bool>(isLeader);
     addrs.pack(buf);
+    buf.packScalar<uint8_t>(location);
 }
 void RegisterShardReq::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
+    shrid.unpack(buf);
+    isLeader = buf.unpackScalar<bool>();
     addrs.unpack(buf);
+    location = buf.unpackScalar<uint8_t>();
 }
 void RegisterShardReq::clear() {
-    id = ShardId();
+    shrid = ShardReplicaId();
+    isLeader = bool(0);
     addrs.clear();
+    location = uint8_t(0);
 }
 bool RegisterShardReq::operator==(const RegisterShardReq& rhs) const {
-    if ((ShardId)this->id != (ShardId)rhs.id) { return false; };
+    if ((ShardReplicaId)this->shrid != (ShardReplicaId)rhs.shrid) { return false; };
+    if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
     if (addrs != rhs.addrs) { return false; };
+    if ((uint8_t)this->location != (uint8_t)rhs.location) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterShardReq& x) {
-    out << "RegisterShardReq(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ")";
+    out << "RegisterShardReq(" << "Shrid=" << x.shrid << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ", " << "Location=" << (int)x.location << ")";
     return out;
 }
 
@@ -3730,20 +3738,32 @@ std::ostream& operator<<(std::ostream& out, const RegisterShardResp& x) {
 }
 
 void RegisterCdcReq::pack(BincodeBuf& buf) const {
+    replica.pack(buf);
+    buf.packScalar<uint8_t>(location);
+    buf.packScalar<bool>(isLeader);
     addrs.pack(buf);
 }
 void RegisterCdcReq::unpack(BincodeBuf& buf) {
+    replica.unpack(buf);
+    location = buf.unpackScalar<uint8_t>();
+    isLeader = buf.unpackScalar<bool>();
     addrs.unpack(buf);
 }
 void RegisterCdcReq::clear() {
+    replica = ReplicaId();
+    location = uint8_t(0);
+    isLeader = bool(0);
     addrs.clear();
 }
 bool RegisterCdcReq::operator==(const RegisterCdcReq& rhs) const {
+    if ((ReplicaId)this->replica != (ReplicaId)rhs.replica) { return false; };
+    if ((uint8_t)this->location != (uint8_t)rhs.location) { return false; };
+    if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
     if (addrs != rhs.addrs) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReq& x) {
-    out << "RegisterCdcReq(" << "Addrs=" << x.addrs << ")";
+    out << "RegisterCdcReq(" << "Replica=" << x.replica << ", " << "Location=" << (int)x.location << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ")";
     return out;
 }
 
@@ -4123,19 +4143,23 @@ std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedR
 
 void MoveShardLeaderReq::pack(BincodeBuf& buf) const {
     shrid.pack(buf);
+    buf.packScalar<uint8_t>(location);
 }
 void MoveShardLeaderReq::unpack(BincodeBuf& buf) {
     shrid.unpack(buf);
+    location = buf.unpackScalar<uint8_t>();
 }
 void MoveShardLeaderReq::clear() {
     shrid = ShardReplicaId();
+    location = uint8_t(0);
 }
 bool MoveShardLeaderReq::operator==(const MoveShardLeaderReq& rhs) const {
     if ((ShardReplicaId)this->shrid != (ShardReplicaId)rhs.shrid) { return false; };
+    if ((uint8_t)this->location != (uint8_t)rhs.location) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const MoveShardLeaderReq& x) {
-    out << "MoveShardLeaderReq(" << "Shrid=" << x.shrid << ")";
+    out << "MoveShardLeaderReq(" << "Shrid=" << x.shrid << ", " << "Location=" << (int)x.location << ")";
     return out;
 }
 
@@ -4155,19 +4179,23 @@ std::ostream& operator<<(std::ostream& out, const MoveShardLeaderResp& x) {
 
 void ClearShardInfoReq::pack(BincodeBuf& buf) const {
     shrid.pack(buf);
+    buf.packScalar<uint8_t>(location);
 }
 void ClearShardInfoReq::unpack(BincodeBuf& buf) {
     shrid.unpack(buf);
+    location = buf.unpackScalar<uint8_t>();
 }
 void ClearShardInfoReq::clear() {
     shrid = ShardReplicaId();
+    location = uint8_t(0);
 }
 bool ClearShardInfoReq::operator==(const ClearShardInfoReq& rhs) const {
     if ((ShardReplicaId)this->shrid != (ShardReplicaId)rhs.shrid) { return false; };
+    if ((uint8_t)this->location != (uint8_t)rhs.location) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ClearShardInfoReq& x) {
-    out << "ClearShardInfoReq(" << "Shrid=" << x.shrid << ")";
+    out << "ClearShardInfoReq(" << "Shrid=" << x.shrid << ", " << "Location=" << (int)x.location << ")";
     return out;
 }
 

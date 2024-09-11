@@ -91,7 +91,7 @@ type state struct {
 
 func (s *state) selectCDC() (*cdcState, error) {
 	var cdc cdcState
-	rows, err := s.db.Query("SELECT ip1, port1, ip2, port2, last_seen FROM cdc WHERE is_leader = true")
+	rows, err := s.db.Query("SELECT ip1, port1, ip2, port2, last_seen FROM cdc WHERE is_leader = true AND location_id = 0")
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc: %s", err)
 	}
@@ -134,7 +134,8 @@ func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
 		var id int
 		var replicaId int
 		var isLeader bool
-		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
+		var loc msgs.Location
+		err = rows.Scan(&id, &replicaId, &loc, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
@@ -162,7 +163,8 @@ func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 		var id int
 		var replicaId int
 		var isLeader bool
-		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
+		var loc msgs.Location
+		err = rows.Scan(&id, &replicaId, &loc, &isLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
@@ -195,7 +197,8 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 	for rows.Next() {
 		bs := msgs.BlockServiceInfo{}
 		var ip1, ip2, fd, sk []byte
-		err = rows.Scan(&bs.Id, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles, &bs.FlagsLastChanged)
+		var location msgs.Location
+		err = rows.Scan(&bs.Id, &location, &ip1, &bs.Addrs.Addr1.Port, &ip2, &bs.Addrs.Addr2.Port, &bs.StorageClass, &fd, &sk, &bs.Flags, &bs.CapacityBytes, &bs.AvailableBytes, &bs.Blocks, &bs.Path, &bs.LastSeen, &bs.HasFiles, &bs.FlagsLastChanged)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding blockService row: %s", err)
 		}
@@ -531,9 +534,9 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 		}
 		res, err := tx.Exec(`
 				INSERT INTO block_services
-					(id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
+					(id, location_id,ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
 				VALUES
-					(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					(?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT DO UPDATE SET
 					flags = (flags & ~?) | (excluded.flags & ?),
 					capacity_bytes = excluded.capacity_bytes,
@@ -760,7 +763,8 @@ func handleShardsWithReplicas(ll *lib.Logger, s *state, req *msgs.ShardsWithRepl
 		var ip1, ip2 []byte
 		var id int
 		var replicaId int
-		err = rows.Scan(&id, &replicaId, &si.IsLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
+		var loc msgs.Location
+		err = rows.Scan(&id, &replicaId, &loc, &si.IsLeader, &ip1, &si.Addrs.Addr1.Port, &ip2, &si.Addrs.Addr2.Port, &si.LastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
@@ -785,7 +789,7 @@ func handleShard(ll *lib.Logger, s *state, req *msgs.ShardReq) (*msgs.ShardResp,
 }
 
 func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
-	err := handleRegisterShardCommon(ll, s, &msgs.RegisterShardReplicaReq{msgs.MakeShardReplicaId(req.Id, 0), true, req.Addrs})
+	err := handleRegisterShardCommon(ll, s, req)
 	if err != nil {
 		return nil, err
 	}
@@ -796,7 +800,7 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 }
 
 func handleRegisterShardReplica(ll *lib.Logger, s *state, req *msgs.RegisterShardReplicaReq) (*msgs.RegisterShardReplicaResp, error) {
-	err := handleRegisterShardCommon(ll, s, req)
+	err := handleRegisterShardCommon(ll, s, &msgs.RegisterShardReq{req.Shrid, req.IsLeader, req.Addrs, 0})
 	if err != nil {
 		return nil, err
 	}
@@ -806,7 +810,7 @@ func handleRegisterShardReplica(ll *lib.Logger, s *state, req *msgs.RegisterShar
 	return &msgs.RegisterShardReplicaResp{}, err
 }
 
-func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShardReplicaReq) error {
+func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) error {
 	if req.Shrid.Replica() > 4 {
 		return msgs.INVALID_REPLICA
 	}
@@ -818,12 +822,12 @@ func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShard
 		UPDATE shards
 		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
 		WHERE
-		id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND
+		id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
 		(
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)
-		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
+		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("location_id", req.Location), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
 	)
 	if err != nil {
 		ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
@@ -848,7 +852,7 @@ func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShard
 func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (*msgs.ShardReplicasResp, error) {
 	var ret [5]msgs.AddrsInfo
 	n := sql.Named
-	rows, err := s.db.Query("SELECT * FROM shards WHERE last_seen IS NOT NULL AND id = :id", n("id", req.Id))
+	rows, err := s.db.Query("SELECT * FROM shards WHERE last_seen IS NOT NULL AND id = :id AND location_id = 0", n("id", req.Id))
 	if err != nil {
 		return nil, fmt.Errorf("error selecting shard replicas: %s", err)
 	}
@@ -866,7 +870,8 @@ func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (
 		var replicaId int
 		var isLeader bool
 		var lastSeen uint64
-		err = rows.Scan(&id, &replicaId, &isLeader, &ip1, &si.Addr1.Port, &ip2, &si.Addr2.Port, &lastSeen)
+		var loc msgs.Location
+		err = rows.Scan(&id, &replicaId, &loc, &isLeader, &ip1, &si.Addr1.Port, &ip2, &si.Addr2.Port, &lastSeen)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding shard row: %s", err)
 		}
@@ -897,7 +902,7 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 
 func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasReq) (*msgs.CdcWithReplicasResp, error) {
 	var ret []msgs.CdcWithReplicasInfo
-	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc")
+	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc AND location_id = 0")
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc replicas: %s", err)
 	}
@@ -920,7 +925,7 @@ func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasR
 
 func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*msgs.CdcReplicasResp, error) {
 	var ret [5]msgs.AddrsInfo
-	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2 FROM cdc")
+	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2 FROM cdc WHERE location_id = 0")
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc replicas: %s", err)
 	}
@@ -949,7 +954,7 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*ms
 }
 
 func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
-	err := registerCDCReplicaCommon(log, s, &msgs.RegisterCdcReplicaReq{0, true, req.Addrs})
+	err := registerCDCReplicaCommon(log, s, req)
 	if err != nil {
 		log.RaiseAlert("error registering cdc: %s", err)
 		return nil, err
@@ -961,7 +966,7 @@ func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*ms
 }
 
 func handleRegisterCDCReplica(log *lib.Logger, s *state, req *msgs.RegisterCdcReplicaReq) (*msgs.RegisterCdcReplicaResp, error) {
-	err := registerCDCReplicaCommon(log, s, req)
+	err := registerCDCReplicaCommon(log, s, &msgs.RegisterCdcReq{req.Replica, 0, req.IsLeader, req.Addrs})
 	if err != nil {
 		log.RaiseAlert("error registering cdc replica: %s", err)
 		return nil, err
@@ -972,7 +977,7 @@ func handleRegisterCDCReplica(log *lib.Logger, s *state, req *msgs.RegisterCdcRe
 	return &msgs.RegisterCdcReplicaResp{}, nil
 }
 
-func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcReplicaReq) error {
+func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) error {
 	if req.Replica > 4 {
 		return msgs.INVALID_REPLICA
 	}
@@ -983,12 +988,13 @@ func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcRe
 	res, err := s.db.Exec(`
 		UPDATE cdc
 		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
-		WHERE replica_id = :replica_id AND is_leader = :is_leader AND
+		WHERE replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
 		(
 			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
 			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
 		)`,
 		n("replica_id", req.Replica),
+		n("location_id", req.Location),
 		n("is_leader", req.IsLeader),
 		n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port),
 		n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port),
@@ -1055,8 +1061,8 @@ func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockSer
 func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderReq) (*msgs.MoveShardLeaderResp, error) {
 	n := sql.Named
 	res, err := s.db.Exec(
-		"UPDATE shards SET is_leader = (replica_id = :replica_id) WHERE id = :id",
-		n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()),
+		"UPDATE shards SET is_leader = (replica_id = :replica_id) WHERE id = :id AND location_id = :location_id",
+		n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("location_id", req.Location),
 	)
 	if err != nil {
 		panic(err)
@@ -1077,9 +1083,9 @@ func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq
 	res, err := s.db.Exec(`
 		UPDATE shards
 		SET ip1 = `+zeroIPString+`, port1 = 0, ip2 = `+zeroIPString+`, port2 = 0, last_seen = 0
-		WHERE id = :id AND replica_id = :replica_id AND is_leader = false
+		WHERE id = :id AND replica_id = :replica_id AND is_leader = false AND location_id = :location_id
 		`,
-		n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()),
+		n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("location_id", req.Location),
 	)
 	if err != nil {
 		panic(err)
@@ -2530,6 +2536,8 @@ func initDb(dbFile string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	err = initLocationTable(db)
+
 	err = initCDCTable(db)
 
 	if err != nil {
@@ -2550,9 +2558,27 @@ func initDb(dbFile string) (*sql.DB, error) {
 	return db, nil
 }
 
-func initBlockServicesTable(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services(
+func initLocationTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS location(
 		id INT NOT NULL PRIMARY KEY,
+		name TEXT NOT NULL,
+	)`)
+	if err != nil {
+		return err
+	}
+
+	// populate default location if it does not exist
+	_, err = db.Exec("INSERT OR IGNORE INTO location VALUES(0, 'DEFAULT')")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func initBlockServicesTable(db *sql.DB) error {
+	tableDefinition := `(
+		id INT NOT NULL,
+		location_id INT NOT NULL,
 		ip1 BLOB NOT NULL,
 		port1 INT NOT NULL,
 		ip2 BLOB NOT NULL,
@@ -2567,10 +2593,49 @@ func initBlockServicesTable(db *sql.DB) error {
 		path TEXT NOT NULL,
 		last_seen INT NOT NULL,
 		has_files INT NOT NULL,
-		flags_last_changed INT NOT NULL
-	)`)
+		flags_last_changed INT NOT NULL,
+		PRIMARY KEY (id, location_id)
+	)`
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services` + tableDefinition)
 	if err != nil {
 		return err
+	}
+
+	// detect and convert old table format
+	row := db.QueryRow(`
+		SELECT IIF(sql LIKE '%location_id%', 1, 0)
+		FROM sqlite_schema
+		WHERE name = 'block_services'
+	`)
+
+	var hasNewFormat bool
+	err = row.Scan(&hasNewFormat)
+	if err != nil {
+		return err
+	}
+	if !hasNewFormat {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services_` + tableDefinition)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`
+			INSERT INTO block_services_ (id, location_id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
+			SELECT id, 0, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed FROM block_services
+		`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`DROP TABLE block_services`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`ALTER TABLE block_services_ RENAME TO block_services`)
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
@@ -2583,45 +2648,65 @@ func initBlockServicesTable(db *sql.DB) error {
 }
 
 func initCDCTable(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc(
-		replica_id INT PRIMARY KEY,
+	tableDefinition := `(
+		replica_id INT,
+		location_id INT NOT NULL,
 		is_leader BOOL NOT NULL,
 		ip1 BLOB NOT NULL,
 		port1 INT NOT NULL,
 		ip2 BLOB NOT NULL,
 		port2 INT NOT NULL,
-		last_seen INT NOT NULL
-	)`)
+		last_seen INT NOT NULL,
+		PRIMARY KEY (replica_id, location_id)
+	)`
+
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc` + tableDefinition)
 
 	if err != nil {
 		return err
 	}
 
-	// Prepopulate cdc rows to simplify register operation checking if ip has changed
-	rows, err := db.Query("SELECT replica_id FROM cdc")
+	// detect and convert old table format
+	row := db.QueryRow(`
+		SELECT IIF(sql LIKE '%location_id%', 1, 0)
+		FROM sqlite_schema
+		WHERE name = 'cdc'
+	`)
+
+	var hasNewFormat bool
+	err = row.Scan(&hasNewFormat)
 	if err != nil {
 		return err
 	}
-	usedReplicaIds := [5]bool{}
-	for rows.Next() {
-		var replicaId int
-		err = rows.Scan(&replicaId)
+	if !hasNewFormat {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cdc_` + tableDefinition)
 		if err != nil {
 			return err
 		}
-		usedReplicaIds[replicaId] = true
-	}
-	err = rows.Close()
-	if err != nil {
-		return err
+
+		_, err = db.Exec(`
+			INSERT INTO cdc_ (replica_id, location_id, is_leader, ip1, port1, ip2, port2, last_seen)
+			SELECT replica_id, 0, is_leader, ip1, port1, ip2, port2, last_seen FROM cdc
+		`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`DROP TABLE cdc`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`ALTER TABLE cdc_ RENAME TO cdc`)
+		if err != nil {
+			return err
+		}
 	}
 
+	// Prepopulate cdc rows to simplify register operation checking if ip has changed
 	for replicaId := 0; replicaId < 5; replicaId++ {
-		if usedReplicaIds[replicaId] {
-			continue
-		}
 		n := sql.Named
-		_, err = db.Exec("INSERT INTO cdc VALUES(:replica_id, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("replica_id", replicaId), n("is_leader", replicaId == 0))
+		_, err = db.Exec("INSERT OR IGNORE INTO cdc VALUES(:replica_id, 0, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("replica_id", replicaId), n("is_leader", replicaId == 0))
 		if err != nil {
 			return err
 		}
@@ -2631,10 +2716,10 @@ func initCDCTable(db *sql.DB) error {
 }
 
 func initAndPopulateShardsTable(db *sql.DB) error {
-
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS shards(
+	tableDefinition := `(
 		id INT NOT NULL,
 		replica_id INT NOT NULL,
+		location_id INT NOT NULL,
 		is_leader BOOL NOT NULL,
 		ip1 BLOB NOT NULL,
 		port1 INT NOT NULL,
@@ -2642,9 +2727,47 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 		port2 INT NOT NULL,
 		last_seen INT NOT NULL,
 		PRIMARY KEY (id, replica_id)
-	)`)
+	)`
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS shards` + tableDefinition)
 	if err != nil {
 		return err
+	}
+
+	// detect and convert old table format
+	row := db.QueryRow(`
+		SELECT IIF(sql LIKE '%location_id%', 1, 0)
+		FROM sqlite_schema
+		WHERE name = 'shards'
+	`)
+
+	var hasNewFormat bool
+	err = row.Scan(&hasNewFormat)
+	if err != nil {
+		return err
+	}
+	if !hasNewFormat {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS shards_` + tableDefinition)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`
+			INSERT INTO shards_ (id, replica_id, location_id, is_leader, ip1, port1, ip2, port2, last_seen)
+			SELECT id, replica_id, 0, is_leader, ip1, port1, ip2, port2, last_seen FROM shards
+		`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`DROP TABLE shards`)
+		if err != nil {
+			return err
+		}
+
+		_, err = db.Exec(`ALTER TABLE shards_ RENAME TO shards`)
+		if err != nil {
+			return err
+		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_s ON shards (last_seen)")
@@ -2653,31 +2776,9 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 	}
 
 	// Prepopulate shard rows to simplify register operation checking if ip has changed
-	rows, err := db.Query("SELECT id, replica_id FROM shards")
-	if err != nil {
-		return err
-	}
-	usedShrids := map[msgs.ShardReplicaId]any{}
-	for rows.Next() {
-		var id, replicaId int
-		err = rows.Scan(&id, &replicaId)
-		if err != nil {
-			return err
-		}
-		shrid := msgs.MakeShardReplicaId(msgs.ShardId(id), msgs.ReplicaId(replicaId))
-		usedShrids[shrid] = nil
-	}
-	err = rows.Close()
-	if err != nil {
-		return err
-	}
-
 	for id := msgs.MakeShardReplicaId(0, 0); id < msgs.MakeShardReplicaId(0, 5); id++ {
-		if _, ok := usedShrids[id]; ok {
-			continue
-		}
 		n := sql.Named
-		_, err = db.Exec("INSERT INTO shards VALUES(:id, :replica_id, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("id", id.Shard()), n("replica_id", id.Replica()), n("is_leader", id.Replica() == 0))
+		_, err = db.Exec("INSERT OR IGNORE INTO shards VALUES(:id, :replica_id, 0, :is_leader, "+zeroIPString+", 0, "+zeroIPString+", 0, 0)", n("id", id.Shard()), n("replica_id", id.Replica()), n("is_leader", id.Replica() == 0))
 		if err != nil {
 			return err
 		}

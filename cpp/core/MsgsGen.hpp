@@ -3378,16 +3378,20 @@ struct BlockServicesWithFlagChangeResp {
 std::ostream& operator<<(std::ostream& out, const BlockServicesWithFlagChangeResp& x);
 
 struct RegisterShardReq {
-    ShardId id;
+    ShardReplicaId shrid;
+    bool isLeader;
     AddrsInfo addrs;
+    uint8_t location;
 
-    static constexpr uint16_t STATIC_SIZE = 1 + AddrsInfo::STATIC_SIZE; // id + addrs
+    static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 1; // shrid + isLeader + addrs + location
 
     RegisterShardReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += 1; // id
+        _size += 2; // shrid
+        _size += 1; // isLeader
         _size += addrs.packedSize(); // addrs
+        _size += 1; // location
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3416,13 +3420,19 @@ struct RegisterShardResp {
 std::ostream& operator<<(std::ostream& out, const RegisterShardResp& x);
 
 struct RegisterCdcReq {
+    ReplicaId replica;
+    uint8_t location;
+    bool isLeader;
     AddrsInfo addrs;
 
-    static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE; // addrs
+    static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE; // replica + location + isLeader + addrs
 
     RegisterCdcReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
+        _size += 1; // replica
+        _size += 1; // location
+        _size += 1; // isLeader
         _size += addrs.packedSize(); // addrs
         return _size;
     }
@@ -3833,13 +3843,15 @@ std::ostream& operator<<(std::ostream& out, const SetBlockServiceDecommissionedR
 
 struct MoveShardLeaderReq {
     ShardReplicaId shrid;
+    uint8_t location;
 
-    static constexpr uint16_t STATIC_SIZE = 2; // shrid
+    static constexpr uint16_t STATIC_SIZE = 2 + 1; // shrid + location
 
     MoveShardLeaderReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // shrid
+        _size += 1; // location
         return _size;
     }
     void pack(BincodeBuf& buf) const;
@@ -3869,13 +3881,15 @@ std::ostream& operator<<(std::ostream& out, const MoveShardLeaderResp& x);
 
 struct ClearShardInfoReq {
     ShardReplicaId shrid;
+    uint8_t location;
 
-    static constexpr uint16_t STATIC_SIZE = 2; // shrid
+    static constexpr uint16_t STATIC_SIZE = 2 + 1; // shrid + location
 
     ClearShardInfoReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // shrid
+        _size += 1; // location
         return _size;
     }
     void pack(BincodeBuf& buf) const;

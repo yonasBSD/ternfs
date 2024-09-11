@@ -41,6 +41,7 @@ type Cookie [8]byte
 type LogIdx uint64
 type LeaderToken uint64
 type Ip [4]byte
+type Location uint8
 
 // These four below are the magic number to identify UDP packets. After a three-letter
 // string identifying the service we have a version number. The idea is that when the
@@ -1964,8 +1965,10 @@ type AddrsInfo struct {
 }
 
 type RegisterShardReq struct {
-	Id    ShardId
-	Addrs AddrsInfo
+	Shrid    ShardReplicaId
+	IsLeader bool
+	Addrs    AddrsInfo
+	Location Location
 }
 
 type RegisterShardResp struct{}
@@ -1989,7 +1992,10 @@ type ShardReplicasResp struct {
 }
 
 type RegisterCdcReq struct {
-	Addrs AddrsInfo
+	Replica  ReplicaId
+	Location Location
+	IsLeader bool
+	Addrs    AddrsInfo
 }
 
 type RegisterCdcResp struct{}
@@ -2085,13 +2091,15 @@ type ShardsWithReplicasResp struct {
 }
 
 type MoveShardLeaderReq struct {
-	Shrid ShardReplicaId
+	Shrid    ShardReplicaId
+	Location Location
 }
 
 type MoveShardLeaderResp struct{}
 
 type ClearShardInfoReq struct {
-	Shrid ShardReplicaId
+	Shrid    ShardReplicaId
+	Location Location
 }
 
 type ClearShardInfoResp struct{}

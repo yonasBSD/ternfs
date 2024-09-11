@@ -4691,20 +4691,32 @@ func (v *RegisterShardReq) ShuckleRequestKind() ShuckleMessageKind {
 }
 
 func (v *RegisterShardReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint8(v.Id)); err != nil {
+	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
 		return err
 	}
 	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (v *RegisterShardReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.Id)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
 		return err
 	}
 	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
 		return err
 	}
 	return nil
@@ -4727,6 +4739,15 @@ func (v *RegisterCdcReq) ShuckleRequestKind() ShuckleMessageKind {
 }
 
 func (v *RegisterCdcReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.Replica)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
+		return err
+	}
 	if err := v.Addrs.Pack(w); err != nil {
 		return err
 	}
@@ -4734,6 +4755,15 @@ func (v *RegisterCdcReq) Pack(w io.Writer) error {
 }
 
 func (v *RegisterCdcReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Replica)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
+		return err
+	}
 	if err := v.Addrs.Unpack(r); err != nil {
 		return err
 	}
@@ -5172,11 +5202,17 @@ func (v *MoveShardLeaderReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (v *MoveShardLeaderReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
 		return err
 	}
 	return nil
@@ -5202,11 +5238,17 @@ func (v *ClearShardInfoReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
 	return nil
 }
 
 func (v *ClearShardInfoReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
 		return err
 	}
 	return nil

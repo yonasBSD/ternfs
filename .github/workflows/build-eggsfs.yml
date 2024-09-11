@@ -1,0 +1,45 @@
+name: Build and Package EggsFS
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  build:
+    runs-on: [self-hosted, restech]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set Build Number
+      shell: bash
+      run: |
+        echo "BUILD_NUMBER=$((${{ github.run_number }} + 1000))" >> "$GITHUB_ENV"
+        # Package naming format is just `eggsfs-bundle-####.tar.gz`
+        echo "PACKAGE_NAME=eggsfs-bundle-${{ env.BUILD_NUMBER }}.tar.gz" >> "$GITHUB_ENV"
+
+    - name: Build
+      shell: bash
+      run: build.sh ubuntu
+    - name: Package EggsFS
+      shell: bash
+      run: |
+        # Create an archive dir to hold all build and deployment artifacts
+        mkdir -p archive/bin
+        # Copy the binaries into the archive
+        cp build/ubuntu/* archive/bin
+        # Copy the deploy folder into the archive
+        cp -r deploy archive/
+        # Ball it all up
+        tar -czvf "${{ env.PACKAGE_NAME }}" archive
+    - name: Publish EggsFS
+      shell: bash
+      run: |
+        export PACKAGE="${{ env.PACKAGE_NAME }}" ; \
+        /bin/curl -v --fail -k -XPUT \
+        -H "X-Checksum-Sha1: `sha1sum ${PACKAGE} | awk '{print $1}'`" \
+        -H "X-Checksum: `md5sum ${PACKAGE} | awk '{print $1}'`" \
+        -H "X-Checksum-Sha256: `sha256sum ${PACKAGE} | awk '{print $1}'`" \
+        -u REDACTED  \
+        "https://REDACTED`basename ${PACKAGE}`" \
+        -T ${PACKAGE}

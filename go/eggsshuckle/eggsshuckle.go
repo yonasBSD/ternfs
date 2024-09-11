@@ -902,7 +902,7 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 
 func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasReq) (*msgs.CdcWithReplicasResp, error) {
 	var ret []msgs.CdcWithReplicasInfo
-	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc AND location_id = 0")
+	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc WHERE location_id = 0")
 	if err != nil {
 		return nil, fmt.Errorf("error selecting cdc replicas: %s", err)
 	}

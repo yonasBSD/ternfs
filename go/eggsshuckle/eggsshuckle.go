@@ -2490,7 +2490,8 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 				log.RaiseAlert("did not find any active block service for block service %v in failure domain %q", bs.Id, fd)
 				continue
 			}
-			if bs.HasFiles {
+			// transient files should go away within 36 hours of decommissioning
+			if bs.HasFiles && bs.FlagsLastChanged < msgs.MakeEggsTime(time.Now().Add(-36*time.Hour)) {
 				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Id, fd, bs.Path)] = struct{}{}
 			}
 			if _, found := activeBlockServices[fd][bs.Path]; !found && fd != "REDACTED" && fd != "REDACTED" { // fsf113 and fsr126 are currently down

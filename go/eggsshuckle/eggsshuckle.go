@@ -2576,66 +2576,29 @@ func initLocationTable(db *sql.DB) error {
 }
 
 func initBlockServicesTable(db *sql.DB) error {
-	tableDefinition := `(
-		id INT NOT NULL,
-		location_id INT NOT NULL,
-		ip1 BLOB NOT NULL,
-		port1 INT NOT NULL,
-		ip2 BLOB NOT NULL,
-		port2 INT NOT NULL,
-		storage_class INT NOT NULL,
-		failure_domain BLOB NOT NULL,
-		secret_key BLOB NOT NULL,
-		flags INT NOT NULL,
-		capacity_bytes INT NOT NULL,
-		available_bytes INT NOT NULL,
-		blocks INT NOT NULL,
-		path TEXT NOT NULL,
-		last_seen INT NOT NULL,
-		has_files INT NOT NULL,
-		flags_last_changed INT NOT NULL,
-		PRIMARY KEY (id, location_id)
-	)`
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS block_services` + tableDefinition)
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS block_services(
+			id INT NOT NULL,
+			location_id INT NOT NULL,
+			ip1 BLOB NOT NULL,
+			port1 INT NOT NULL,
+			ip2 BLOB NOT NULL,
+			port2 INT NOT NULL,
+			storage_class INT NOT NULL,
+			failure_domain BLOB NOT NULL,
+			secret_key BLOB NOT NULL,
+			flags INT NOT NULL,
+			capacity_bytes INT NOT NULL,
+			available_bytes INT NOT NULL,
+			blocks INT NOT NULL,
+			path TEXT NOT NULL,
+			last_seen INT NOT NULL,
+			has_files INT NOT NULL,
+			flags_last_changed INT NOT NULL,
+			PRIMARY KEY (id, location_id)
+		)`)
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%location_id%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'block_services'
-	`)
-
-	var hasNewFormat bool
-	err = row.Scan(&hasNewFormat)
-	if err != nil {
-		return err
-	}
-	if !hasNewFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS block_services_` + tableDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO block_services_ (id, location_id, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed)
-			SELECT id, 0, ip1, port1, ip2, port2, storage_class, failure_domain, secret_key, flags, capacity_bytes, available_bytes, blocks, path, last_seen, has_files, flags_last_changed FROM block_services
-		`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE block_services`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE block_services_ RENAME TO block_services`)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_b on block_services (last_seen)")
@@ -2648,59 +2611,21 @@ func initBlockServicesTable(db *sql.DB) error {
 }
 
 func initCDCTable(db *sql.DB) error {
-	tableDefinition := `(
-		replica_id INT,
-		location_id INT NOT NULL,
-		is_leader BOOL NOT NULL,
-		ip1 BLOB NOT NULL,
-		port1 INT NOT NULL,
-		ip2 BLOB NOT NULL,
-		port2 INT NOT NULL,
-		last_seen INT NOT NULL,
-		PRIMARY KEY (replica_id, location_id)
-	)`
-
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS cdc` + tableDefinition)
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS cdc(
+			replica_id INT,
+			location_id INT NOT NULL,
+			is_leader BOOL NOT NULL,
+			ip1 BLOB NOT NULL,
+			port1 INT NOT NULL,
+			ip2 BLOB NOT NULL,
+			port2 INT NOT NULL,
+			last_seen INT NOT NULL,
+			PRIMARY KEY (replica_id, location_id)
+		)`)
 
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%location_id%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'cdc'
-	`)
-
-	var hasNewFormat bool
-	err = row.Scan(&hasNewFormat)
-	if err != nil {
-		return err
-	}
-	if !hasNewFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS cdc_` + tableDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO cdc_ (replica_id, location_id, is_leader, ip1, port1, ip2, port2, last_seen)
-			SELECT replica_id, 0, is_leader, ip1, port1, ip2, port2, last_seen FROM cdc
-		`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE cdc`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE cdc_ RENAME TO cdc`)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Prepopulate cdc rows to simplify register operation checking if ip has changed
@@ -2716,58 +2641,21 @@ func initCDCTable(db *sql.DB) error {
 }
 
 func initAndPopulateShardsTable(db *sql.DB) error {
-	tableDefinition := `(
-		id INT NOT NULL,
-		replica_id INT NOT NULL,
-		location_id INT NOT NULL,
-		is_leader BOOL NOT NULL,
-		ip1 BLOB NOT NULL,
-		port1 INT NOT NULL,
-		ip2 BLOB NOT NULL,
-		port2 INT NOT NULL,
-		last_seen INT NOT NULL,
-		PRIMARY KEY (id, replica_id)
-	)`
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS shards` + tableDefinition)
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS shards(
+			id INT NOT NULL,
+			replica_id INT NOT NULL,
+			location_id INT NOT NULL,
+			is_leader BOOL NOT NULL,
+			ip1 BLOB NOT NULL,
+			port1 INT NOT NULL,
+			ip2 BLOB NOT NULL,
+			port2 INT NOT NULL,
+			last_seen INT NOT NULL,
+			PRIMARY KEY (id, replica_id)
+		)`)
 	if err != nil {
 		return err
-	}
-
-	// detect and convert old table format
-	row := db.QueryRow(`
-		SELECT IIF(sql LIKE '%location_id%', 1, 0)
-		FROM sqlite_schema
-		WHERE name = 'shards'
-	`)
-
-	var hasNewFormat bool
-	err = row.Scan(&hasNewFormat)
-	if err != nil {
-		return err
-	}
-	if !hasNewFormat {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS shards_` + tableDefinition)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`
-			INSERT INTO shards_ (id, replica_id, location_id, is_leader, ip1, port1, ip2, port2, last_seen)
-			SELECT id, replica_id, 0, is_leader, ip1, port1, ip2, port2, last_seen FROM shards
-		`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`DROP TABLE shards`)
-		if err != nil {
-			return err
-		}
-
-		_, err = db.Exec(`ALTER TABLE shards_ RENAME TO shards`)
-		if err != nil {
-			return err
-		}
 	}
 
 	_, err = db.Exec("CREATE INDEX IF NOT EXISTS last_seen_idx_s ON shards (last_seen)")

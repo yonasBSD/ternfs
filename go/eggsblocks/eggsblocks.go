@@ -812,6 +812,10 @@ func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size int6
 		size -= int64(availablePages) * int64(msgs.EGGS_PAGE_SIZE)
 		dataInReadBuffer = copy(readBuffer[:], readBuffer[availablePages*int(msgs.EGGS_PAGE_SIZE):dataInReadBuffer])
 	}
+	if !readerHasMoreData && (size-int64(dataInReadBuffer) > 0) {
+		log.Debug("failed converting block, reached EOF in input stream, missing %d bytes", size-int64(dataInReadBuffer))
+		return nil, io.EOF
+	}
 	if dataInReadBuffer != 0 || size != 0 {
 		log.Debug("failed converting block, unexpected data size. left in read buffer %d, remaining size %d", dataInReadBuffer, size)
 		err = msgs.BAD_BLOCK_CRC

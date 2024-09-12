@@ -882,7 +882,7 @@ public:
     virtual ~CDCRegisterer() = default;
 
     virtual bool periodicStep() override {
-        LOG_DEBUG(_env, "Registering ourselves (CDC %s, %s) with shuckle", _replicaId, _shared.socks[CDC_SOCK].addr());
+        LOG_DEBUG(_env, "Registering ourselves (CDC %s, location %s,  %s) with shuckle", _replicaId, (int)_location, _shared.socks[CDC_SOCK].addr());
         {
             const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _location, _shared.isLeader.load(std::memory_order_relaxed), _shared.socks[CDC_SOCK].addr());
             if (err == EINTR) { return false; }

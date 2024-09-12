@@ -918,7 +918,7 @@ public:
 
     virtual bool periodicStep() {
         {
-            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with shuckle", _shrid, _location, _shared.sock().addr());
+            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with shuckle", _shrid, (int)_location, _shared.sock().addr());
             const auto [err, errStr] = registerShard(_shuckleHost, _shucklePort, 10_sec, _shrid, _location, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
             if (err == EINTR) { return false; }
             if (err) {

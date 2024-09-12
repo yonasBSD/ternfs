@@ -683,6 +683,9 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		err = <-done
 		if err != nil {
 			log.RaiseAlert("could not convert block %v to crc format, got error: %v", blockPathNoCrc, err)
+			if err == io.EOF {
+				err = msgs.BAD_BLOCK_CRC
+			}
 		}
 	}
 

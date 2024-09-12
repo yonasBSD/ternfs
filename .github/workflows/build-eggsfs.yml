@@ -2,7 +2,12 @@ name: Build and Package EggsFS
 
 on:
   workflow_dispatch:
-
+    inputs:
+      environment:
+        description: "One of 'prod', 'staging', or 'dev'"
+        required: true
+        type: string
+        default: "prod"
 jobs:
 
   build:
@@ -41,5 +46,5 @@ jobs:
         -H "X-Checksum: `md5sum ${PACKAGE} | awk '{print $1}'`" \
         -H "X-Checksum-Sha256: `sha256sum ${PACKAGE} | awk '{print $1}'`" \
         -u REDACTED  \
-        "https://REDACTED`basename ${PACKAGE}`" \
+        "https://REDACTED${INPUTS_ENVIRONMENT}/`basename ${PACKAGE}`" \
         -T ${PACKAGE}

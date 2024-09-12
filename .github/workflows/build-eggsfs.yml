@@ -34,10 +34,10 @@ jobs:
       run: |
         # Create an archive dir to hold all build and deployment artifacts
         mkdir -p archive/bin
-        # Copy the binaries into the archive
-        cp build/ubuntu/* archive/bin
-        # Copy the deploy folder into the archive
-        cp -r deploy archive/
+        # Move the binaries into the archive (we don't copy because it's unecessary and slow)
+        mv build/ubuntu/* archive/bin
+        # Move the deploy folder into the archive
+        mv deploy/ archive/
         # Ball it all up
         tar -czvf "${{ env.PACKAGE_NAME }}" archive
     - name: Publish EggsFS

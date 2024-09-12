@@ -16,7 +16,7 @@
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
 static void usage(const char* binary) {
-    fprintf(stderr, "Usage: %s DIRECTORY SHARD_ID [REPLICA_ID]\n\n", binary);
+    fprintf(stderr, "Usage: %s DIRECTORY SHARD_ID REPLICA_ID [LOCATION_ID]\n\n", binary);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, " -log-level trace|debug|info|error\n");
     fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
@@ -42,6 +42,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER. Default is FOLLOWER.\n");
     fprintf(stderr, " -force-last-released LogIdx\n");
     fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
+    fprintf(stderr, " -app-name-suffix suffix\n");
+    fprintf(stderr, "    	Suffix to use in app name, app name format is 'eggsshard{suffix}_shardId_replicaId'\n");
 }
 
 static double parseDouble(const std::string& arg) {
@@ -227,7 +229,9 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-force-last-released") {
             options.forcedLastReleased = parseLogIdx(getNextArg());
-        } else{
+        } else if (arg == "-app-name-suffix") {
+            options.appNameSuffix = getNextArg();
+        } else {
             args.emplace_back(std::move(arg));
         }
     }
@@ -237,13 +241,13 @@ int main(int argc, char** argv) {
         dieWithUsage();
     }
 
-    if (args.size() < 2 || args.size() > 3) {
-        fprintf(stderr, "Expecting two or three positional arguments (DIRECTORY SHARD_ID [REPLICA_ID]), got %ld.\n", args.size());
+    if (args.size() < 3 || args.size() > 4) {
+        fprintf(stderr, "Expecting three or four positional arguments (DIRECTORY SHARD_ID REPLICA_ID [LOCATION_ID]), got %ld.\n", args.size());
         dieWithUsage();
     }
 
-    // Add default 0 for replica id to simplify rollout
-    if (args.size() == 2) {
+    // Add default location ID if not specified
+    if (args.size() == 3) {
         args.emplace_back("0");
     }
 
@@ -271,16 +275,22 @@ int main(int argc, char** argv) {
             throw EXPLICIT_SYSCALL_EXCEPTION(err.value(), "mkdir");
         }
     }
+    options.dbDir = dbDir;
 
     size_t processed;
     int shardId = std::stoi(args.at(1), &processed);
     if (processed != args.at(1).size() || shardId < 0 || shardId > 255) {
         die("Invalid shard '%s', expecting a number between 0 and 255.\n", args.at(1).c_str());
     }
+    options.shrid = {shardId, parseReplicaId(args.at(2))} ;
 
-    ShardReplicaId shrid(shardId, parseReplicaId(args.at(2)));
+    int location = std::stoi(args.at(3), &processed);
+    if (processed != args.at(3).size() || location < 0 || location > 255) {
+        die("Invalid location '%s', expecting a number between 0 and 255.\n", args.at(3).c_str());
+    }
+    options.location = location;
 
-    runShard(shrid, dbDir, options);
+    runShard(options);
 
     return 0;
 }

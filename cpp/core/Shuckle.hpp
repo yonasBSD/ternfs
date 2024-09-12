@@ -23,11 +23,12 @@ std::pair<int, std::string> fetchBlockServices(
     std::vector<BlockServiceId>& currentBlockServices
 );
 
-std::pair<int, std::string> registerShardReplica(
+std::pair<int, std::string> registerShard(
     const std::string& shuckleHost,
     uint16_t shucklePort,
     Duration timeout,
     ShardReplicaId shrid,
+    uint8_t location,
     bool isLeader,
     const AddrsInfo& addrs
 );

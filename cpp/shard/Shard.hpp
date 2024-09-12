@@ -1,10 +1,18 @@
 #pragma once
 
 #include "Env.hpp"
+#include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "ShardDB.hpp"
+#include <cstdint>
 
 struct ShardOptions {
+    ShardReplicaId shrid;
+    uint8_t location = 0;
+    std::string appNameSuffix;
+    std::string dbDir;
+
+    uint16_t port;
     LogLevel logLevel = LogLevel::LOG_INFO;
     std::string logFile = ""; // if empty, stdout
     std::string shuckleHost = "";
@@ -26,4 +34,4 @@ struct ShardOptions {
     LogIdx forcedLastReleased = 0;
 };
 
-void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& options);
+void runShard(ShardOptions& options);

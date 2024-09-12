@@ -211,8 +211,8 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 #undef FAIL
 }
 
-std::pair<int, std::string> registerShardReplica(
-    const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, bool isLeader,
+std::pair<int, std::string> registerShard(
+    const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, uint8_t location, bool isLeader,
     const AddrsInfo& addrs
 ) {
     const auto [sock, errStr] = shuckleSock(addr, port, timeout);
@@ -221,8 +221,9 @@ std::pair<int, std::string> registerShardReplica(
     }
 
     ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setRegisterShardReplica();
+    auto& req = reqContainer.setRegisterShard();
     req.shrid = shrid;
+    req.location = location;
     req.isLeader = isLeader;
     req.addrs = addrs;
     {
@@ -235,7 +236,7 @@ std::pair<int, std::string> registerShardReplica(
         const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
-    respContainer.getRegisterShardReplica();
+    respContainer.getRegisterShard(); // check that the response is of the right type
 
     return {};
 }

@@ -179,6 +179,7 @@ private:
 };
 
 struct ShardShared {
+    const ShardOptions& options;
     SharedRocksDB& sharedDB;
     BlockServicesCacheDB& blockServicesCache;
     ShardDB& shardDB;
@@ -194,7 +195,8 @@ struct ShardShared {
     std::atomic<bool> isLeader;
 
     ShardShared() = delete;
-    ShardShared(SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock) :
+    ShardShared(const ShardOptions& options_, SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock) :
+        options(options_),
         sharedDB(sharedDB_),
         blockServicesCache(blockServicesCache_),
         shardDB(shardDB_),
@@ -352,10 +354,10 @@ private:
     std::unique_ptr<UDPSender> _sender;
     std::unique_ptr<MultiplexedChannel<4, std::array<uint32_t, 4>{SHARD_REQ_PROTOCOL_VERSION, SHARD_CHECK_POINTED_REQ_PROTOCOL_VERSION, LOG_REQ_PROTOCOL_VERSION, LOG_RESP_PROTOCOL_VERSION}>> _channel;
 public:
-    ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
+    ShardServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
         Loop(logger, xmon, "server"),
         _shared(shared),
-        _shrid(shrid),
+        _shrid(shared.options.shrid),
         _packetDropRand(eggsNow().ns),
         _outgoingPacketDropProbability(0)
     {
@@ -366,7 +368,7 @@ public:
                 ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
             }
         };
-        convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
+        convertProb("outgoing", _shared.options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         expandKey(ShardKey, _expandedShardKey);
         expandKey(CDCKey, _expandedCDCKey);
         _receiver = std::make_unique<UDPReceiver<1>>(UDPReceiverConfig{.perSockMaxRecvMsg = MAX_RECV_MSGS, .maxMsgSize = MAX_UDP_MTU});
@@ -610,14 +612,14 @@ private:
     }
 
 public:
-    ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared, std::string basePath) :
+    ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
         Loop(logger, xmon, "writer"),
-        _basePath(std::move(basePath)),
+        _basePath(shared.options.dbDir),
         _shared(shared),
         _maxWritesAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
         _snapshotRequest({0,0,0,{},0}),
         _logsDB(shared.logsDB),
-        _dontDoReplication(options.dontDoReplication),
+        _dontDoReplication(_shared.options.dontDoReplication),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(eggsNow().ns),
         _outgoingPacketDropProbability(0)
@@ -632,7 +634,7 @@ public:
                 ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
             }
         };
-        convertProb("outgoing", options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
+        convertProb("outgoing", _shared.options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(_maxWritesAtOnce);
 
         // In case of force leader it immediately detects and promotes us to leader
@@ -892,18 +894,20 @@ struct ShardRegisterer : PeriodicLoop {
 private:
     ShardShared& _shared;
     const ShardReplicaId _shrid;
+    const uint8_t _location;
     const bool _dontDoReplication;
     const std::string _shuckleHost;
     const uint16_t _shucklePort;
     XmonNCAlert _alert;
 public:
-    ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared) :
+    ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
         PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 1_mins, 0.1}),
         _shared(shared),
-        _shrid(shrid),
-        _dontDoReplication(options.dontDoReplication),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort)
+        _shrid(_shared.options.shrid),
+        _location(_shared.options.location),
+        _dontDoReplication(_shared.options.dontDoReplication),
+        _shuckleHost(_shared.options.shuckleHost),
+        _shucklePort(_shared.options.shucklePort)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -914,8 +918,8 @@ public:
 
     virtual bool periodicStep() {
         {
-            LOG_INFO(_env, "Registering ourselves (shard %s, %s) with shuckle", _shrid, _shared.sock().addr());
-            const auto [err, errStr] = registerShardReplica(_shuckleHost, _shucklePort, 10_sec, _shrid, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
+            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with shuckle", _shrid, _location, _shared.sock().addr());
+            const auto [err, errStr] = registerShard(_shuckleHost, _shucklePort, 10_sec, _shrid, _location, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
@@ -969,12 +973,12 @@ private:
     std::vector<BlockServiceId> _currentBlockServices;
     bool _updatedOnce;
 public:
-    ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, const ShardOptions& options, ShardShared& shared):
+    ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
         PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.isLeader.load(std::memory_order_relaxed) ? 2_mins : 1_mins}),
         _shared(shared),
-        _shrid(shrid),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
+        _shrid(_shared.options.shrid),
+        _shuckleHost(_shared.options.shuckleHost),
+        _shucklePort(_shared.options.shucklePort),
         _updatedOnce(false)
     {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
@@ -1132,10 +1136,10 @@ private:
     std::array<XmonNCAlert, 2> _sockQueueAlerts;
     XmonNCAlert _writeQueueAlert;
 public:
-    ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId shrid, ShardShared& shared):
+    ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _shared(shared),
-        _shrid(shrid),
+        _shrid(_shared.options.shrid),
         _sendMetricsAlert(XmonAppType::DAYTIME, 5_mins),
         _sockQueueAlerts({XmonAppType::NEVER, XmonAppType::NEVER}),
         _writeQueueAlert(XmonAppType::NEVER)
@@ -1219,7 +1223,7 @@ public:
     }
 };
 
-void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& options) {
+void runShard(ShardOptions& options) {
     int logOutFd = STDOUT_FILENO;
     if (!options.logFile.empty()) {
         logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
@@ -1237,7 +1241,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     Env env(logger, xmon, "startup");
 
     {
-        LOG_INFO(env, "Running shard %s with options:", shrid);
+        LOG_INFO(env, "Running shard %s at location %s, with options:", options.shrid, (int)options.location);
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
         LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
@@ -1259,7 +1263,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
         XmonConfig config;
         {
             std::ostringstream ss;
-            ss << "eggsshard" << shrid.shardId() << "_" << shrid.replicaId();
+            ss << "eggsshard" << options.appNameSuffix << "_" << options.shrid.shardId() << "_" << options.shrid.replicaId();
             config.appInstance =  ss.str();
         }
         config.prod = options.xmonProd;
@@ -1272,7 +1276,7 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
     XmonNCAlert dbInitAlert;
     env.updateAlert(dbInitAlert, "initializing database");
 
-    SharedRocksDB sharedDB(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
+    SharedRocksDB sharedDB(logger, xmon, options.dbDir + "/db", options.dbDir + "/db-statistics.txt");
     sharedDB.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
@@ -1290,22 +1294,22 @@ void runShard(ShardReplicaId shrid, const std::string& dbDir, ShardOptions& opti
 
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
 
-    ShardDB shardDB(logger, xmon, shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
-    LogsDB logsDB(logger, xmon, sharedDB, shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased);
+    ShardDB shardDB(logger, xmon, options.shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
+    LogsDB logsDB(logger, xmon, sharedDB, options.shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased);
     env.clearAlert(dbInitAlert);
 
     if (options.dontDoReplication) {
         options.forcedLastReleased.u64 = shardDB.lastAppliedLogEntry();
     }
 
-    ShardShared shared(sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.shardAddrs));
+    ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.shardAddrs));
 
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shrid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shrid, options, shared, dbDir)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shrid, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shrid, options, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shared)));
     if (options.metrics) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shrid, shared)));
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shared)));
     }
 
     // from this point on termination on SIGINT/SIGTERM will be graceful

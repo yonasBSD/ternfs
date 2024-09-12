@@ -4,10 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "One of 'prod', 'staging', or 'dev'"
         required: true
-        type: string
-        default: "prod"
+        type: choice
+        default: prod
+        options:
+          - prod
+          - staging
+          - dev
 jobs:
 
   build:

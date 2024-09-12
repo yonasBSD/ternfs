@@ -49,5 +49,5 @@ jobs:
         -H "X-Checksum: `md5sum ${PACKAGE} | awk '{print $1}'`" \
         -H "X-Checksum-Sha256: `sha256sum ${PACKAGE} | awk '{print $1}'`" \
         -u REDACTED  \
-        "https://REDACTED${INPUTS_ENVIRONMENT}/`basename ${PACKAGE}`" \
+        "https://REDACTED${{ inputs.environment }}/`basename ${PACKAGE}`" \
         -T ${PACKAGE}

@@ -252,10 +252,10 @@ private:
     std::unordered_map<uint64_t, std::vector<CDCReqInfo>> _logEntryIdxToReqInfos;
     std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicas;
 public:
-    CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCOptions& options, CDCShared& shared, const std::string& basePath) :
+    CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCOptions& options, CDCShared& shared) :
         Loop(logger, xmon, "req_server"),
         _shared(shared),
-        _basePath(basePath),
+        _basePath(options.dbDir),
         _seenShards(false),
         _currentLogIndex(_shared.db.lastAppliedLogEntry()),
         // important to not catch stray requests from previous executions
@@ -862,6 +862,7 @@ public:
 struct CDCRegisterer : PeriodicLoop {
     CDCShared& _shared;
     const ReplicaId _replicaId;
+    const uint8_t _location;
     const bool _dontDoReplication;
     const std::string _shuckleHost;
     const uint16_t _shucklePort;
@@ -871,6 +872,7 @@ public:
         PeriodicLoop(logger, xmon, "registerer", { 1_sec, 1_mins }),
         _shared(shared),
         _replicaId(options.replicaId),
+        _location(options.location),
         _dontDoReplication(options.dontDoReplication),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
@@ -882,7 +884,7 @@ public:
     virtual bool periodicStep() override {
         LOG_DEBUG(_env, "Registering ourselves (CDC %s, %s) with shuckle", _replicaId, _shared.socks[CDC_SOCK].addr());
         {
-            const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _shared.isLeader.load(std::memory_order_relaxed), _shared.socks[CDC_SOCK].addr());
+            const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _location, _shared.isLeader.load(std::memory_order_relaxed), _shared.socks[CDC_SOCK].addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
@@ -1126,7 +1128,7 @@ public:
 };
 
 
-void runCDC(const std::string& dbDir, CDCOptions& options) {
+void runCDC(CDCOptions& options) {
     int logOutFd = STDOUT_FILENO;
     if (!options.logFile.empty()) {
         logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
@@ -1172,7 +1174,7 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
 
-    SharedRocksDB sharedDb(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
+    SharedRocksDB sharedDb(logger, xmon, options.dbDir + "/db", options.dbDir + "/db-statistics.txt");
     sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     sharedDb.registerCFDescriptors(CDCDB::getColumnFamilyDescriptors());
 
@@ -1195,7 +1197,7 @@ void runCDC(const std::string& dbDir, CDCOptions& options) {
     LOG_INFO(env, "Spawning server threads");
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCShardUpdater>(logger, xmon, options, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared, dbDir)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCRegisterer>(logger, xmon, options, shared)));
     if (options.metrics) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, shared, options.replicaId)));

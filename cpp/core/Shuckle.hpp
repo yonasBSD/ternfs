@@ -46,6 +46,7 @@ std::pair<int, std::string> registerCDCReplica(
     uint16_t shucklePort,
     Duration timeout,
     ReplicaId replicaId,
+    uint8_t location,
     bool isLeader,
     const AddrsInfo& addrs
 );

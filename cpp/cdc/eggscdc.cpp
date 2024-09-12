@@ -9,7 +9,7 @@
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 
 void usage(const char* binary) {
-    fprintf(stderr, "Usage: %s DIRECTORY [REPLICA_ID]\n\n", binary);
+    fprintf(stderr, "Usage: %s DIRECTORY REPLICA_ID [LOCATION_ID]\n\n", binary);
     fprintf(stderr, "Options:\n");
     fprintf(stderr, " -log-level trace|debug|info|error\n");
     fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
@@ -33,6 +33,8 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER. Default is FOLLOWER.\n");
     fprintf(stderr, " -force-last-released LogIdx\n");
     fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
+    fprintf(stderr, " -app-name-suffix suffix\n");
+    fprintf(stderr, "    	Suffix to use in app name, app name format is 'eggscdc{suffix}_shardId_replicaId'\n");
 }
 
 static bool parseIpv4(const std::string& arg, sockaddr_in& addrOut) {
@@ -193,16 +195,18 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-force-last-released") {
             options.forcedLastReleased = parseLogIdx(getNextArg());
+        } else if (arg == "-app-name-suffix") {
+            options.appNameSuffix = getNextArg();
         } else {
             args.emplace_back(std::move(arg));
         }
     }
 
-    if (args.size() == 0 || args.size() > 2) {
-        fprintf(stderr, "Expecting one or two positional argument (DIRECTORY) [REPLICA_ID], got %ld.\n", args.size());
+    if (args.size() < 2 || args.size() > 3) {
+        fprintf(stderr, "Expecting two or three positional argument (DIRECTORY REPLICA_ID [LOCATION_ID]), got %ld.\n", args.size());
         dieWithUsage();
     }
-    if (args.size() < 2) {
+    if (args.size() < 3) {
         args.emplace_back("0");
     }
 
@@ -235,9 +239,17 @@ int main(int argc, char** argv) {
             throw EXPLICIT_SYSCALL_EXCEPTION(err.value(), "mkdir");
         }
     }
+    options.dbDir = dbDir;
     options.replicaId = parseReplicaId(args.at(1));
 
-    runCDC(dbDir, options);
+    size_t processed;
+    int location = std::stoi(args.at(2), &processed);
+    if (processed != args.at(2).size() || location < 0 || location > 255) {
+        die("Invalid location '%s', expecting a number between 0 and 255.\n", args.at(2).c_str());
+    }
+    options.location = location;
+
+    runCDC(options);
 
     return 0;
 }

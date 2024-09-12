@@ -274,15 +274,16 @@ std::pair<int, std::string> fetchShardReplicas(
     return {};
 }
 
-std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, bool isLeader, const AddrsInfo& addrs) {
+std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, uint8_t location, bool isLeader, const AddrsInfo& addrs) {
     const auto [sock, errStr] = shuckleSock(host, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
     }
 
     ShuckleReqContainer reqContainer;
-    auto& req = reqContainer.setRegisterCdcReplica();
+    auto& req = reqContainer.setRegisterCdc();
     req.replica = replicaId;
+    req.location = location;
     req.isLeader = isLeader;
     req.addrs = addrs;
     {
@@ -295,7 +296,7 @@ std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t
         const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
-    respContainer.getRegisterCdcReplica();
+    respContainer.getRegisterCdc();
 
     return {};
 }

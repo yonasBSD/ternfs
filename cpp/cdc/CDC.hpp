@@ -20,7 +20,12 @@ struct CDCOptions {
     bool xmon = false;
     bool xmonProd = false;
     bool metrics = false;
-    ReplicaId replicaId = 0;
+    ReplicaId replicaId;
+    uint8_t location;
+    std::string appNameSuffix;
+
+    std::string dbDir;
+
 
     // LogsDB settings
     bool dontDoReplication = false;
@@ -28,4 +33,4 @@ struct CDCOptions {
     LogIdx forcedLastReleased = 0;
 };
 
-void runCDC(const std::string& dbDir, CDCOptions& options);
+void runCDC(CDCOptions& options);

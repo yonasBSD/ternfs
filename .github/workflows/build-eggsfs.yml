@@ -22,8 +22,8 @@ jobs:
     - name: Set Build Number
       shell: bash
       run: |
-        echo "BUILD_NUMBER=$((${{ github.run_number }} + 1000))" >> "$GITHUB_ENV"
-        # Package naming format is just `eggsfs-bundle-####.tar.gz`
+        BUILD_NUMBER=$((${{ github.run_number }} + 1000))
+        echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
         echo "PACKAGE_NAME=deployment-bundle-${BUILD_NUMBER}.tar.gz" >> "$GITHUB_ENV"
 
     - name: Build

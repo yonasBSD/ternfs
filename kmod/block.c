@@ -781,12 +781,18 @@ static void fetch_complete(struct block_request* breq) {
     // exact same order as it was received. We need to restore it back if
     // reading didn't finish and not all the items got rotated.
     struct page* first_page = list_first_entry(&req->pages, struct page, lru);
+    struct page *first_seen = first_page;
     struct page* last_page = list_last_entry(&req->pages, struct page, lru);
-    while(last_page->index < first_page->index) {
+    while(last_page->index < first_page->index || first_page->index == (unsigned long)-1) {
         list_rotate_left(&req->pages);
         eggsfs_info("rotating list left: %d %d, first_page:%ld, last_page:%ld", req->count, req->bytes_fetched, first_page->index, last_page->index);
         first_page = list_first_entry(&req->pages, struct page, lru);
         last_page = list_last_entry(&req->pages, struct page, lru);
+        if (first_page == first_seen) {
+            // Can only happen when page index is -1.
+            // We've gone a full circle and we are still back at page out of range.
+            break;
+        }
     }
     eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
     req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->breq.err));

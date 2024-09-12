@@ -1844,15 +1844,15 @@ static void free_span_stripes(struct eggsfs_block_span* block_span) {
     struct eggsfs_stripe_lru *lru;
     struct eggsfs_stripe *stripe;
 
-    for (i = 0; i < EGGSFS_MAX_STRIPES; i++) {
+    for (i = 0; i < block_span->num_stripes; i++) {
         lru = get_stripe_lru(&block_span->span);
         spin_lock(&lru->lock);
         stripe = block_span->stripes[i];
-        spin_unlock(&lru->lock);
         if (stripe != NULL) {
             stripe_validate_and_remove_from_lru(stripe, lru);
             free_stripe(stripe, NULL);
         }
+        spin_unlock(&lru->lock);
     }
 }
 

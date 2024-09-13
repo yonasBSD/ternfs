@@ -35,8 +35,7 @@ jobs:
         # Create an archive dir to hold all build and deployment artifacts
         mkdir -p archive/bin
         # Stamp some build information into the package.
-        echo "commit, $(git describe --always --dirty)" >> archive/build.info
-        echo "timestamp, $(date +"%Y%m%dT%H%M%S")" >> archive/build.info
+        echo "$(git describe --always --dirty)-$(date +"%Y%m%dT%H%M%S")" > archive/build.id
         # Move the binaries into the archive (we don't copy because it's unecessary and slow)
         mv build/ubuntu/* archive/bin
         # Move the deploy folder into the archive

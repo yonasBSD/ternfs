@@ -126,7 +126,7 @@ func defragFileInternal(
 				return err
 			}
 			defer bufPool.Put(spanBuf)
-			crc := crc32c.Sum(0, *spanBuf)
+			crc := crc32c.Sum(0, spanBuf.Bytes())
 			if msgs.Crc(crc) != span.Header.Crc {
 				panic(fmt.Errorf("expected crc %v, got %v", span.Header.Crc, msgs.Crc(crc)))
 			}
@@ -137,7 +137,7 @@ func defragFileInternal(
 
 			// create new span in scratch file
 			scratchOffset := lockedSF.Size()
-			createdBlocks, err := c.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicy, &stripePolicy, lockedSF.FileId(), fileId, lockedSF.Cookie(), lockedSF.Size(), span.Header.Size, spanBuf)
+			createdBlocks, err := c.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicy, &stripePolicy, lockedSF.FileId(), fileId, lockedSF.Cookie(), lockedSF.Size(), span.Header.Size, spanBuf.BytesPtr())
 			if err != nil {
 				lockedSF.ClearOnUnlock(fmt.Sprintf("failed to create span %v", err))
 				lockedSF.Unlock()

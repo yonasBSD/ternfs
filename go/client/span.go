@@ -385,19 +385,20 @@ func (c *Client) WriteFile(
 	maxSpanSize := spanPolicies.Entries[len(spanPolicies.Entries)-1].MaxSize
 	spanBuf := bufPool.Get(int(maxSpanSize))
 	defer bufPool.Put(spanBuf)
+	spanBufPtr := spanBuf.BytesPtr()
 	offset := uint64(0)
 	for {
-		*spanBuf = (*spanBuf)[:maxSpanSize]
-		read, err := io.ReadFull(r, *spanBuf)
+		*spanBufPtr = (*spanBufPtr)[:maxSpanSize]
+		read, err := io.ReadFull(r, *spanBufPtr)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return err
 		}
 		if err == io.EOF {
 			break
 		}
-		*spanBuf = (*spanBuf)[:read]
+		*spanBufPtr = (*spanBufPtr)[:read]
 		_, err = c.CreateSpan(
-			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy, fileId, msgs.NULL_INODE_ID, cookie, offset, uint32(read), spanBuf,
+			log, []msgs.BlacklistEntry{}, &spanPolicies, &blockPolicies, &stripePolicy, fileId, msgs.NULL_INODE_ID, cookie, offset, uint32(read), spanBufPtr,
 		)
 		if err != nil {
 			return err
@@ -445,7 +446,7 @@ func (c *Client) CreateFile(
 }
 
 type FetchedStripe struct {
-	Buf   *[]byte
+	Buf   *lib.Buf
 	Start uint64
 	owned bool
 }
@@ -465,7 +466,7 @@ func (c *Client) fetchCell(
 	body *msgs.FetchedBlocksSpan,
 	blockIx uint8,
 	cell uint8,
-) (buf *[]byte, err error) {
+) (buf *lib.Buf, err error) {
 	buf = bufPool.Get(int(body.CellSize))
 	defer func() {
 		if err != nil {
@@ -482,7 +483,7 @@ func (c *Client) fetchCell(
 		return nil, err
 	}
 	defer c.PutFetchedBlock(data)
-	if copy(*buf, data.Bytes()) != int(body.CellSize) {
+	if copy(buf.Bytes(), data.Bytes()) != int(body.CellSize) {
 		panic(fmt.Errorf("runt block cell"))
 	}
 	return buf, nil
@@ -495,7 +496,7 @@ func (c *Client) fetchMirroredStripe(
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
 	offset uint64,
-) (start uint64, buf *[]byte, err error) {
+) (start uint64, buf *lib.Buf, err error) {
 	spanOffset := uint32(offset - span.Header.ByteOffset)
 	cell := spanOffset / body.CellSize
 	B := body.Parity.Blocks()
@@ -514,7 +515,7 @@ func (c *Client) fetchMirroredStripe(
 		if err != nil {
 			continue
 		}
-		crc := msgs.Crc(crc32c.Sum(0, *buf))
+		crc := msgs.Crc(crc32c.Sum(0, buf.Bytes()))
 		if crc != body.StripesCrc[cell] {
 			log.RaiseAlert("expected crc %v, got %v, for block %v in block service %v", body.StripesCrc[cell], crc, block.BlockId, blockService.Id)
 			continue
@@ -537,11 +538,11 @@ func (c *Client) fetchRsStripe(
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
 	offset uint64,
-) (start uint64, buf *[]byte, err error) {
+) (start uint64, buf *lib.Buf, err error) {
 	D := body.Parity.DataBlocks()
 	B := body.Parity.Blocks()
 	spanOffset := uint32(offset - span.Header.ByteOffset)
-	blocks := make([]*[]byte, B)
+	blocks := make([]*lib.Buf, B)
 	defer func() {
 		for i := range blocks {
 			bufPool.Put(blocks[i])
@@ -584,7 +585,7 @@ func (c *Client) fetchRsStripe(
 			haveBlocksRecoverIxs := []uint8{}
 			for j := 0; j < B; j++ {
 				if blocks[j] != nil {
-					haveBlocksRecover = append(haveBlocksRecover, *blocks[j])
+					haveBlocksRecover = append(haveBlocksRecover, blocks[j].Bytes())
 					haveBlocksRecoverIxs = append(haveBlocksRecoverIxs, uint8(j))
 					if len(haveBlocksRecover) >= D {
 						break
@@ -592,10 +593,10 @@ func (c *Client) fetchRsStripe(
 				}
 			}
 			blocks[i] = bufPool.Get(int(body.CellSize))
-			rs.Get(body.Parity).RecoverInto(haveBlocksRecoverIxs, haveBlocksRecover, uint8(i), *blocks[i])
+			rs.Get(body.Parity).RecoverInto(haveBlocksRecoverIxs, haveBlocksRecover, uint8(i), blocks[i].Bytes())
 		}
-		stripeCrc = crc32c.Sum(stripeCrc, *blocks[i])
-		copy((*stripeBuf)[i*int(body.CellSize):(i+1)*int(body.CellSize)], *blocks[i])
+		stripeCrc = crc32c.Sum(stripeCrc, blocks[i].Bytes())
+		copy(stripeBuf.Bytes()[i*int(body.CellSize):(i+1)*int(body.CellSize)], blocks[i].Bytes())
 	}
 
 	// check if our crc is scuppered
@@ -628,7 +629,7 @@ func (c *Client) FetchStripeFromSpan(
 			panic(fmt.Errorf("header CRC for inline span is %v, but data is %v", span.Header.Crc, dataCrc))
 		}
 		stripe := &FetchedStripe{
-			Buf:   &span.Body.(*msgs.FetchedInlineSpan).Body,
+			Buf:   lib.NewBuf(&span.Body.(*msgs.FetchedInlineSpan).Body),
 			Start: span.Header.ByteOffset,
 		}
 		log.Debug("fetched inline span")
@@ -644,8 +645,9 @@ func (c *Client) FetchStripeFromSpan(
 	spanDataEnd := span.Header.ByteOffset + uint64(body.Stripes)*uint64(D*int(body.CellSize))
 	if offset >= spanDataEnd {
 		buf := bufPool.Get(int(uint64(span.Header.Size) - spanDataEnd))
-		for i := range *buf {
-			(*buf)[i] = 0
+		bufSlice := buf.Bytes()
+		for i := range bufSlice {
+			bufSlice[i] = 0
 		}
 		stripe := &FetchedStripe{
 			Buf:   buf,
@@ -657,7 +659,7 @@ func (c *Client) FetchStripeFromSpan(
 
 	// otherwise just fetch
 	var start uint64
-	var buf *[]byte
+	var buf *lib.Buf
 	var err error
 	if D == 1 {
 		start, buf, err = c.fetchMirroredStripe(log, bufPool, blockServices, span, body, offset)
@@ -672,10 +674,10 @@ func (c *Client) FetchStripeFromSpan(
 	}
 
 	// chop off trailing zeros in the span
-	stripeEnd := start + uint64(len(*buf))
+	stripeEnd := start + uint64(len(buf.Bytes()))
 	spanEnd := span.Header.ByteOffset + uint64(span.Header.Size)
 	if stripeEnd > spanEnd {
-		*buf = (*buf)[:uint64(len(*buf))-(stripeEnd-spanEnd)]
+		*buf.BytesPtr() = (*buf.BytesPtr())[:uint64(len(*buf.BytesPtr()))-(stripeEnd-spanEnd)]
 	}
 
 	// we're done
@@ -694,7 +696,7 @@ func (c *Client) FetchSpan(
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-) (*[]byte, error) {
+) (*lib.Buf, error) {
 	spanBuf := bufPool.Get(int(span.Header.Size))
 	var err error
 	defer func() {
@@ -710,8 +712,8 @@ func (c *Client) FetchSpan(
 		if err != nil {
 			return nil, err
 		}
-		copy((*spanBuf)[offset-span.Header.ByteOffset:], *stripe.Buf)
-		offset += uint64(len(*stripe.Buf))
+		copy(spanBuf.Bytes()[offset-span.Header.ByteOffset:], stripe.Buf.Bytes())
+		offset += uint64(len(stripe.Buf.Bytes()))
 		stripe.Put(bufPool)
 	}
 
@@ -809,7 +811,7 @@ func (f *fileReader) Close() error {
 }
 
 func (f *fileReader) Read(p []byte) (int, error) {
-	if f.currentStripe == nil || f.cursor >= (f.currentStripe.Start+uint64(len(*f.currentStripe.Buf))) {
+	if f.currentStripe == nil || f.cursor >= (f.currentStripe.Start+uint64(len(f.currentStripe.Buf.Bytes()))) {
 		var err error
 		f.currentStripe, err = f.client.FetchStripe(f.log, f.bufPool, f.fileId, f.blockServices, f.spans, f.cursor)
 		if err != nil {
@@ -820,7 +822,7 @@ func (f *fileReader) Read(p []byte) (int, error) {
 		}
 		return f.Read(p)
 	}
-	r := copy(p, (*f.currentStripe.Buf)[f.cursor-f.currentStripe.Start:])
+	r := copy(p, f.currentStripe.Buf.Bytes()[f.cursor-f.currentStripe.Start:])
 	f.cursor += uint64(r)
 	return r, nil
 }

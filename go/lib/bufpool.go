@@ -1,6 +1,9 @@
 package lib
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // An extremely dumb buffer pool. The assumption is that this is to be used in
 // cases where there is a fixed upper bound for the buffers, and most requests
@@ -17,12 +20,36 @@ func NewBufPool() *BufPool {
 	return &pool
 }
 
+func NewBuf(b *[]byte) *Buf {
+	res := &Buf{}
+	res.b.Store(b)
+	return res
+}
+
+type Buf struct {
+	b atomic.Pointer[[]byte]
+}
+
+func (b *Buf) Bytes() []byte {
+	return *b.BytesPtr()
+}
+
+func (b *Buf) BytesPtr() *[]byte {
+	res := b.b.Load()
+	if res == nil {
+		panic("accessing freed buffer")
+	}
+	return res
+}
+
 // This does _not_ zero the memory in the bufs -- i.e. there might
 // be garbage in it.
-func (pool *BufPool) Get(l int) *[]byte {
+func (pool *BufPool) Get(l int) *Buf {
+	res := &Buf{}
 	if l == 0 {
 		b := []byte{}
-		return &b
+		res.b.Store(&b)
+		return res
 	}
 	buf := (*sync.Pool)(pool).Get().(*[]byte)
 	if cap(*buf) >= l {
@@ -31,18 +58,20 @@ func (pool *BufPool) Get(l int) *[]byte {
 		*buf = (*buf)[:cap(*buf)]
 		*buf = append(*buf, make([]byte, l-len(*buf))...)
 	}
-	return buf
+	res.b.Store(buf)
+	return res
 }
 
-// Calling `Put` twice will result in the buffer being in the pool twice!
-// TODO possibly wrap the buffer into a struct and prevent that mechanically
-// by marking the put thing as dirty.
-func (pool *BufPool) Put(buf *[]byte) {
+func (pool *BufPool) Put(buf *Buf) {
 	if buf == nil {
 		return
 	}
-	if cap(*buf) == 0 {
+	ptr := buf.b.Swap(nil)
+	if ptr == nil {
+		panic("double BufPool put")
+	}
+	if cap(*ptr) == 0 {
 		return
 	}
-	(*sync.Pool)(pool).Put(buf)
+	(*sync.Pool)(pool).Put(ptr)
 }

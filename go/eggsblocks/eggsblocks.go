@@ -499,11 +499,11 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			log.RaiseAlert("could not convert file %v to crc format, got error: %v", blockPathNoCrc, err)
 			return err
 		}
-		reader = bytes.NewReader((*bufPtr)[:])
+		reader = bytes.NewReader(bufPtr.Bytes())
 		openedWithCrc = true
 		readBufPtr := env.bufPool.Get(1 << 20)
 		defer env.bufPool.Put(readBufPtr)
-		err = verifyCrcReader(log, (*readBufPtr)[:], reader, crc)
+		err = verifyCrcReader(log, readBufPtr.Bytes(), reader, crc)
 		if err != nil {
 			env.bufPool.Put(bufPtr)
 			writeBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
@@ -520,7 +520,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 					newPath: blockPathWithCrc,
 				},
 				bufPtr,
-				int64(len(*bufPtr)),
+				int64(len(bufPtr.Bytes())),
 				crc,
 			}
 
@@ -577,7 +577,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 		converter := newToOldReadConverter{
 			log:           log,
 			r:             reader,
-			b:             (*buf)[:],
+			b:             buf.Bytes(),
 			totalRead:     0,
 			bytesInBuffer: 0,
 		}
@@ -663,7 +663,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		}
 		bufPtr := env.bufPool.Get(1 << 20)
 		defer env.bufPool.Put(bufPtr)
-		err = verifyCrcReader(log, (*bufPtr)[:], f, crc)
+		err = verifyCrcReader(log, bufPtr.Bytes(), f, crc)
 	} else {
 		if uint32(fi.Size())%msgs.EGGS_PAGE_SIZE != 0 {
 			log.RaiseAlert("size %v for block %v, not multiple of EGGS_PAGE__SIZE", uint32(fi.Size()), blockPath)
@@ -682,7 +682,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 				done:    done,
 			},
 			bufPtr,
-			int64(len(*bufPtr)),
+			int64(len(bufPtr.Bytes())),
 			crc,
 		}
 		env.conversionChannels[blockServiceId] <- serializerReq{nil, convertReq}
@@ -747,7 +747,7 @@ func convertBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId,
 				done:    done,
 			},
 			bufPtr,
-			int64(len(*bufPtr)),
+			int64(len(bufPtr.Bytes())),
 			crc,
 		}
 		env.conversionChannels[blockServiceId] <- serializerReq{nil, convertReq}
@@ -775,14 +775,14 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 	return nil
 }
 
-func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size int64) (*[]byte, error) {
+func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size int64) (*lib.Buf, error) {
 	readBufPtr := env.bufPool.Get(1 << 20)
 	defer env.bufPool.Put(readBufPtr)
-	readBuffer := (*readBufPtr)[:]
+	readBuffer := readBufPtr.Bytes()
 	var err error
 
 	writeButPtr := env.bufPool.Get(int(size / int64(msgs.EGGS_PAGE_SIZE) * int64(msgs.EGGS_PAGE_WITH_CRC_SIZE)))
-	writeBuffer := (*writeButPtr)[:]
+	writeBuffer := writeButPtr.Bytes()
 	defer func() {
 		if err != nil {
 			env.bufPool.Put(writeButPtr)
@@ -823,7 +823,8 @@ func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size int6
 	}
 	if !readerHasMoreData && (size-int64(dataInReadBuffer) > 0) {
 		log.Debug("failed converting block, reached EOF in input stream, missing %d bytes", size-int64(dataInReadBuffer))
-		return nil, io.EOF
+		err = io.EOF
+		return nil, err
 	}
 	if dataInReadBuffer != 0 || size != 0 {
 		log.Debug("failed converting block, unexpected data size. left in read buffer %d, remaining size %d", dataInReadBuffer, size)
@@ -854,14 +855,14 @@ func writeBlock(
 	}
 	defer env.bufPool.Put(bufPtr)
 
-	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, path.Dir(filePath), (*bufPtr)[:])
+	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, path.Dir(filePath), bufPtr.Bytes())
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmpFile)
 	readBufPtr := env.bufPool.Get(1 << 20)
 	defer env.bufPool.Put(readBufPtr)
-	err = verifyCrcFile(log, (*readBufPtr)[:], tmpFile, int64(len(*bufPtr)), expectedCrc)
+	err = verifyCrcFile(log, readBufPtr.Bytes(), tmpFile, int64(len(bufPtr.Bytes())), expectedCrc)
 	if err != nil {
 		log.RaiseAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
 		if err == msgs.BAD_BLOCK_CRC {
@@ -894,7 +895,7 @@ func testWrite(
 	}
 	defer env.bufPool.Put(bufPtr)
 
-	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, basePath, (*bufPtr)[:])
+	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, basePath, bufPtr.Bytes())
 	if err != nil {
 		return err
 	}
@@ -1839,7 +1840,7 @@ type serializerEraseReq struct {
 
 type serializerWriteConvertedReq struct {
 	serializerEraseReq
-	convertedBuf *[]byte
+	convertedBuf *lib.Buf
 	expectedSize int64
 	expectedCrc  msgs.Crc
 }
@@ -1865,7 +1866,7 @@ func serializerReqProcessor(log *lib.Logger, env *env, terminateChan chan any, r
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 		readBufPtr := env.bufPool.Get(1 << 20)
 		defer env.bufPool.Put(readBufPtr)
-		readBuffer := (*readBufPtr)[:]
+		readBuffer := readBufPtr.Bytes()
 		for {
 			req, ok := <-reqChan
 			if !ok {
@@ -1896,7 +1897,7 @@ func serializerReqProcessor(log *lib.Logger, env *env, terminateChan chan any, r
 					err = nil
 					break
 				}
-				tmpFile, err := writeBufToTemp(&bsStats.bytesWritten, path.Dir(req.writeReq.newPath), (*req.writeReq.convertedBuf)[:])
+				tmpFile, err := writeBufToTemp(&bsStats.bytesWritten, path.Dir(req.writeReq.newPath), req.writeReq.convertedBuf.Bytes())
 				if err != nil {
 					log.RaiseAlert("could not write tmp converted file %s, got error: %v", req.writeReq.newPath, err)
 					break

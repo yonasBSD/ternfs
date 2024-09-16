@@ -95,8 +95,8 @@ func createFile(
 				thisSpanSize = uint32(size - offset)
 			}
 			spanBuf := bufPool.Get(int(thisSpanSize))
-			rand.Read(*spanBuf)
-			_, err := client.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, msgs.NULL_INODE_ID, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf)
+			rand.Read(spanBuf.Bytes())
+			_, err := client.CreateSpan(log, []msgs.BlacklistEntry{}, &spanPolicy, &blockPolicies, &stripePolicy, constructResp.Id, msgs.NULL_INODE_ID, constructResp.Cookie, offset, uint32(thisSpanSize), spanBuf.BytesPtr())
 			bufPool.Put(spanBuf)
 			if err != nil {
 				panic(err)
@@ -115,7 +115,7 @@ func createFile(
 	return constructResp.Id, linkResp.CreationTime
 }
 
-func readFile(log *lib.Logger, bufPool *lib.BufPool, client *client.Client, id msgs.InodeId, size uint64) *[]byte {
+func readFile(log *lib.Logger, bufPool *lib.BufPool, client *client.Client, id msgs.InodeId, size uint64) *lib.Buf {
 	buf := bufPool.Get(int(size))
 	r, err := client.ReadFile(log, bufPool, id)
 	if err != nil {
@@ -124,10 +124,10 @@ func readFile(log *lib.Logger, bufPool *lib.BufPool, client *client.Client, id m
 	defer r.Close()
 	cursor := 0
 	for {
-		read, err := r.Read((*buf)[cursor:])
+		read, err := r.Read(buf.Bytes()[cursor:])
 		if err == io.EOF {
-			if cursor != len(*buf) {
-				panic(fmt.Errorf("expected file read of size %v, got %v", len(*buf), cursor))
+			if cursor != len(buf.Bytes()) {
+				panic(fmt.Errorf("expected file read of size %v, got %v", len(buf.Bytes()), cursor))
 			}
 			break
 		}

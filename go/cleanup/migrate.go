@@ -217,8 +217,8 @@ func reconstructBlock(
 	rs := rs.Get(parity)
 	wantBytes := bufPool.Get(int(blockSize))
 	defer bufPool.Put(wantBytes)
-	rs.RecoverInto(haveBlocksIxs, haveBlocks, blockToMigrateIx, *wantBytes)
-	dstFileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(*wantBytes))
+	rs.RecoverInto(haveBlocksIxs, haveBlocks, blockToMigrateIx, wantBytes.Bytes())
+	dstFileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(wantBytes.Bytes()))
 	if err != nil {
 		return msgs.NULL_INODE_ID, 0, 0, 0, err
 	}

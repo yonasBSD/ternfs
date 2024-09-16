@@ -173,8 +173,8 @@ func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size 
 	defer c.readBufPool.Put(actualData)
 	expectedData := c.readBufPool.Get(int(size))
 	defer c.readBufPool.Put(expectedData)
-	wyhash.New(dataSeed).Read(*expectedData)
-	checkFileData(id, 0, int(size), *actualData, *expectedData)
+	wyhash.New(dataSeed).Read(expectedData.Bytes())
+	checkFileData(id, 0, int(size), actualData.Bytes(), expectedData.Bytes())
 }
 
 func (c *apiFsTestHarness) removeFile(log *lib.Logger, ownerId msgs.InodeId, name string) {
@@ -257,7 +257,7 @@ func (c *posixFsTestHarness) createFile(
 	actualDataBuf := c.bufPool.Get(int(size))
 	defer c.bufPool.Put(actualDataBuf)
 	rand := wyhash.New(dataSeed)
-	rand.Read(*actualDataBuf)
+	rand.Read(actualDataBuf.Bytes())
 	var f *os.File
 	f, err := os.Create(fileFullPath)
 	if err != nil {
@@ -276,7 +276,7 @@ func (c *posixFsTestHarness) createFile(
 		sort.Ints(offsets)
 		for i := 0; i < chunks; i++ {
 			log.Debug("writing from %v to %v (pid %v)", offsets[i], offsets[i+1], os.Getpid())
-			if _, err := f.Write((*actualDataBuf)[offsets[i]:offsets[i+1]]); err != nil {
+			if _, err := f.Write(actualDataBuf.Bytes()[offsets[i]:offsets[i+1]]); err != nil {
 				panic(err)
 			}
 		}
@@ -309,7 +309,7 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 	expectedData := c.bufPool.Get(fullSize)
 	defer c.bufPool.Put(expectedData)
 	rand := wyhash.New(dataSeed)
-	rand.Read(*expectedData)
+	rand.Read(expectedData.Bytes())
 	actualData := c.bufPool.Get(fullSize)
 	defer c.bufPool.Put(actualData)
 	f, err := os.Open(fullFilePath)
@@ -348,8 +348,8 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 					panic(err)
 				}
 			}
-			expectedPartialData := (*expectedData)[offset : offset+size]
-			actualPartialData := (*actualData)[offset : offset+size]
+			expectedPartialData := expectedData.Bytes()[offset : offset+size]
+			actualPartialData := actualData.Bytes()[offset : offset+size]
 			if c.readWithMmap {
 				copy(actualPartialData, mm[offset:])
 			} else {
@@ -362,17 +362,17 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 	}
 	// Then we check the whole thing
 	if c.readWithMmap {
-		copy(*actualData, mm)
+		copy(actualData.Bytes(), mm)
 	} else {
 		if _, err := f.Seek(0, 0); err != nil {
 			panic(err)
 		}
-		_, err = io.ReadFull(f, *actualData)
+		_, err = io.ReadFull(f, actualData.Bytes())
 		if err != nil {
 			panic(err)
 		}
 	}
-	checkFileData(fullFilePath, 0, fullSize, *actualData, *expectedData)
+	checkFileData(fullFilePath, 0, fullSize, actualData.Bytes(), expectedData.Bytes())
 }
 
 func (c *posixFsTestHarness) removeFile(log *lib.Logger, ownerId string, name string) {

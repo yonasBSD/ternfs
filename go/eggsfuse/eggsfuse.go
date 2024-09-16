@@ -291,7 +291,7 @@ type transientFile struct {
 	cookie   [8]byte
 	dir      msgs.InodeId
 	name     string
-	data     *[]byte // null if it has been flushed
+	data     *lib.Buf // null if it has been flushed
 	size     uint64
 	writeErr syscall.Errno
 }
@@ -377,12 +377,12 @@ func (f *transientFile) Write(ctx context.Context, data []byte, off int64) (writ
 		return 0, syscall.EPERM // flushed already
 	}
 
-	if off != int64(len(*f.data)) {
-		logger.Info("refusing to write in the past off=%v len=%v", off, len(*f.data))
+	if off != int64(len(f.data.Bytes())) {
+		logger.Info("refusing to write in the past off=%v len=%v", off, len(f.data.Bytes()))
 		return 0, syscall.EINVAL
 	}
 
-	*f.data = append(*f.data, data...)
+	*f.data.BytesPtr() = append(*f.data.BytesPtr(), data...)
 	f.size += uint64(len(data))
 
 	return uint32(len(data)), 0
@@ -409,7 +409,7 @@ func (f *transientFile) Flush(ctx context.Context) syscall.Errno {
 		f.data = nil
 	}()
 
-	if err := c.WriteFile(logger, bufPool, dirInfoCache, f.dir, f.id, f.cookie, bytes.NewReader(*f.data)); err != nil {
+	if err := c.WriteFile(logger, bufPool, dirInfoCache, f.dir, f.id, f.cookie, bytes.NewReader(f.data.Bytes())); err != nil {
 		f.writeErr = eggsErrToErrno(err)
 		return f.writeErr
 	}
@@ -528,10 +528,10 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 	logger.Debug("open file=%v flags=%08x", n.id, flags)
 
 	var err error
-	data := bufPool.Get(0)
+	data := &[]byte{}
 	defer func() {
 		if err != nil {
-			bufPool.Put(data)
+			bufPool.Put(lib.NewBuf(data))
 		}
 	}()
 
@@ -562,7 +562,7 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 }
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {
-	bufPool.Put(of.data)
+	bufPool.Put(lib.NewBuf(of.data))
 	return 0
 }
 

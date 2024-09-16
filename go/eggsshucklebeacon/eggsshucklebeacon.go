@@ -142,6 +142,18 @@ func readShuckleRequest(
 		req = &msgs.ShardBlockServicesReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
+	case msgs.CDC_WITH_REPLICAS:
+		req = &msgs.CdcWithReplicasReq{}
+	case msgs.CLEAR_SHARD_INFO:
+		req = &msgs.ClearShardInfoReq{}
+	case msgs.MOVE_SHARD_LEADER:
+		req = &msgs.MoveShardLeaderReq{}
+	case msgs.SHARDS_WITH_REPLICAS:
+		req = &msgs.ShardsWithReplicasReq{}
+	case msgs.MOVE_CDC_LEADER:
+		req = &msgs.MoveCdcLeaderReq{}
+	case msgs.CLEAR_CD_CINFO:
+		req = &msgs.ClearCDCInfoReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

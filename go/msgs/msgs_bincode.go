@@ -750,6 +750,10 @@ func (k ShuckleMessageKind) String() string {
 		return "ERASE_DECOMMISSIONED_BLOCK"
 	case 33:
 		return "ALL_BLOCK_SERVICES"
+	case 35:
+		return "MOVE_CDC_LEADER"
+	case 36:
+		return "CLEAR_CD_CINFO"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -778,6 +782,8 @@ const (
 	CDC_WITH_REPLICAS ShuckleMessageKind = 0x19
 	ERASE_DECOMMISSIONED_BLOCK ShuckleMessageKind = 0x20
 	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x21
+	MOVE_CDC_LEADER ShuckleMessageKind = 0x23
+	CLEAR_CD_CINFO ShuckleMessageKind = 0x24
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -802,9 +808,11 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	CDC_WITH_REPLICAS,
 	ERASE_DECOMMISSIONED_BLOCK,
 	ALL_BLOCK_SERVICES,
+	MOVE_CDC_LEADER,
+	CLEAR_CD_CINFO,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 34
+const MaxShuckleMessageKind ShuckleMessageKind = 36
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -850,6 +858,10 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &EraseDecommissionedBlockReq{}, &EraseDecommissionedBlockResp{}, nil
 	case k == "ALL_BLOCK_SERVICES":
 		return &AllBlockServicesReq{}, &AllBlockServicesResp{}, nil
+	case k == "MOVE_CDC_LEADER":
+		return &MoveCdcLeaderReq{}, &MoveCdcLeaderResp{}, nil
+	case k == "CLEAR_CD_CINFO":
+		return &ClearCDCInfoReq{}, &ClearCDCInfoResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5344,6 +5356,78 @@ func (v *AllBlockServicesResp) Unpack(r io.Reader) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func (v *MoveCdcLeaderReq) ShuckleRequestKind() ShuckleMessageKind {
+	return MOVE_CDC_LEADER
+}
+
+func (v *MoveCdcLeaderReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.Replica)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MoveCdcLeaderReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Replica)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *MoveCdcLeaderResp) ShuckleResponseKind() ShuckleMessageKind {
+	return MOVE_CDC_LEADER
+}
+
+func (v *MoveCdcLeaderResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *MoveCdcLeaderResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ClearCDCInfoReq) ShuckleRequestKind() ShuckleMessageKind {
+	return CLEAR_CD_CINFO
+}
+
+func (v *ClearCDCInfoReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.Replica)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ClearCDCInfoReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Replica)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ClearCDCInfoResp) ShuckleResponseKind() ShuckleMessageKind {
+	return CLEAR_CD_CINFO
+}
+
+func (v *ClearCDCInfoResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *ClearCDCInfoResp) Unpack(r io.Reader) error {
 	return nil
 }
 

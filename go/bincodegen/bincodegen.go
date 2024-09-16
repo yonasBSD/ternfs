@@ -1888,6 +1888,16 @@ func main() {
 			reflect.TypeOf(msgs.AllBlockServicesReq{}),
 			reflect.TypeOf(msgs.AllBlockServicesResp{}),
 		},
+		{
+			0x23,
+			reflect.TypeOf(msgs.MoveCdcLeaderReq{}),
+			reflect.TypeOf(msgs.MoveCdcLeaderResp{}),
+		},
+		{
+			0x24,
+			reflect.TypeOf(msgs.ClearCDCInfoReq{}),
+			reflect.TypeOf(msgs.ClearCDCInfoResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

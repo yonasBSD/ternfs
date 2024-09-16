@@ -2081,12 +2081,26 @@ type MoveShardLeaderReq struct {
 
 type MoveShardLeaderResp struct{}
 
+type MoveCdcLeaderReq struct {
+	Replica  ReplicaId
+	Location Location
+}
+
+type MoveCdcLeaderResp struct{}
+
 type ClearShardInfoReq struct {
 	Shrid    ShardReplicaId
 	Location Location
 }
 
 type ClearShardInfoResp struct{}
+
+type ClearCDCInfoReq struct {
+	Replica  ReplicaId
+	Location Location
+}
+
+type ClearCDCInfoResp struct{}
 
 type EraseDecommissionedBlockReq struct {
 	BlockServiceId BlockServiceId

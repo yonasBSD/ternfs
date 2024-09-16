@@ -1045,6 +1045,26 @@ func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderR
 	return &msgs.MoveShardLeaderResp{}, nil
 }
 
+func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) (*msgs.MoveCdcLeaderResp, error) {
+	n := sql.Named
+	res, err := s.db.Exec(
+		"UPDATE cdc SET is_leader = (replica_id = :replica_id) WHERE location_id = :location_id",
+		n("replica_id", req.Replica), n("location_id", req.Location),
+	)
+	if err != nil {
+		panic(err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	if rowsAffected != 5 {
+		panic(fmt.Errorf("unusual number of rows affected (%d) when changing CDC leader to %s", rowsAffected, req.Replica))
+	}
+
+	return &msgs.MoveCdcLeaderResp{}, nil
+}
+
 func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq) (*msgs.ClearShardInfoResp, error) {
 	n := sql.Named
 	res, err := s.db.Exec(`
@@ -1066,6 +1086,29 @@ func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq
 	}
 
 	return &msgs.ClearShardInfoResp{}, nil
+}
+
+func handleClearCDCInfo(log *lib.Logger, s *state, req *msgs.ClearCDCInfoReq) (*msgs.ClearCDCInfoResp, error) {
+	n := sql.Named
+	res, err := s.db.Exec(`
+		UPDATE cdc
+		SET ip1 = `+zeroIPString+`, port1 = 0, ip2 = `+zeroIPString+`, port2 = 0, last_seen = 0
+		WHERE replica_id = :replica_id AND is_leader = false AND location_id = :location_id
+		`,
+		n("replica_id", req.Replica), n("location_id", req.Location),
+	)
+	if err != nil {
+		panic(err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		panic(err)
+	}
+	if rowsAffected != 1 {
+		panic(fmt.Errorf("unusual number of rows affected (%d) when executing ClearCDCInfoReq for %s", rowsAffected, req.Replica))
+	}
+
+	return &msgs.ClearCDCInfoResp{}, nil
 }
 
 func handleEraseDecomissionedBlockReq(log *lib.Logger, s *state, req *msgs.EraseDecommissionedBlockReq) (*msgs.EraseDecommissionedBlockResp, error) {
@@ -1146,8 +1189,12 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleMoveShardLeader(log, s, whichReq)
 	case *msgs.ClearShardInfoReq:
 		resp, err = handleClearShardInfo(log, s, whichReq)
+	case *msgs.ClearCDCInfoReq:
+		resp, err = handleClearCDCInfo(log, s, whichReq)
 	case *msgs.EraseDecommissionedBlockReq:
 		resp, err = handleEraseDecomissionedBlockReq(log, s, whichReq)
+	case *msgs.MoveCdcLeaderReq:
+		resp, err = handleMoveCDCLeader(log, s, whichReq)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -1298,6 +1345,18 @@ func readShuckleRequest(
 		req = &msgs.ShardBlockServicesReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
+	case msgs.CDC_WITH_REPLICAS:
+		req = &msgs.CdcWithReplicasReq{}
+	case msgs.CLEAR_SHARD_INFO:
+		req = &msgs.ClearShardInfoReq{}
+	case msgs.MOVE_SHARD_LEADER:
+		req = &msgs.MoveShardLeaderReq{}
+	case msgs.SHARDS_WITH_REPLICAS:
+		req = &msgs.ShardsWithReplicasReq{}
+	case msgs.MOVE_CDC_LEADER:
+		req = &msgs.MoveCdcLeaderReq{}
+	case msgs.CLEAR_CD_CINFO:
+		req = &msgs.ClearCDCInfoReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

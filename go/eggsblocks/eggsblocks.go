@@ -7,7 +7,7 @@ import (
 	"crypto/cipher"
 	crand "crypto/rand"
 	"encoding/binary"
-	"errors"
+
 	"flag"
 	"fmt"
 	"io"
@@ -33,6 +33,7 @@ import (
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
 
+	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
 
@@ -120,6 +121,7 @@ type env struct {
 	stats              map[msgs.BlockServiceId]*blockServiceStats
 	counters           map[msgs.BlocksMessageKind]*lib.Timings
 	conversionChannels map[msgs.BlockServiceId]chan serializerReq
+	failureDomain      string
 }
 
 func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
@@ -625,7 +627,11 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 
 	if errors.Is(err, syscall.ENODATA) {
 		// see <internal-repo/issues/106>
-		log.RaiseAlert("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath)
+		// TODO(nchapma): Stop raising alerts here once we're confident that these are
+		// flowing through to HDB
+		errMsg := fmt.Sprintf("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath)
+		log.RaiseAlert(errMsg)
+		log.RaiseHardwareEvent(env.failureDomain, blockServiceId.String(), errMsg)
 		// return io error, downstream code will pick it up
 		return syscall.EIO
 	}
@@ -1488,29 +1494,33 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	hardwareEventAddress := flag.String("hardwareevent", "", "Server address (host:port) to send hardware events to OR empty for no event logging")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-timeout", 10*time.Minute, "")
 	metrics := flag.Bool("metrics", false, "")
 	flag.Parse()
+	flagErrors := false
 	if flag.NArg()%2 != 0 {
 		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
-		usage()
-		os.Exit(2)
+		flagErrors = true
 	}
 	if flag.NArg() < 2 {
 		fmt.Fprintf(os.Stderr, "Expected at least one block service.\n\n")
-		usage()
-		os.Exit(2)
+		flagErrors = true
 	}
 
 	if *shuckleAddress == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify -shuckle.\n")
-		os.Exit(2)
+		flagErrors = true
 	}
 
 	if *addr1 == "" {
 		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n\n")
+		flagErrors = true
+	}
+
+	if flagErrors {
 		usage()
 		os.Exit(2)
 	}
@@ -1561,12 +1571,13 @@ func main() {
 		level = lib.TRACE
 	}
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{
-		Level:            level,
-		Syslog:           *syslog,
-		Xmon:             *xmon,
-		AppInstance:      "eggsblocks",
-		AppType:          "restech_eggsfs.daytime",
-		PrintQuietAlerts: true,
+		Level:                  level,
+		Syslog:                 *syslog,
+		Xmon:                   *xmon,
+		HardwareEventServerURL: *hardwareEventAddress,
+		AppInstance:            "eggsblocks",
+		AppType:                "restech_eggsfs.daytime",
+		PrintQuietAlerts:       true,
 	})
 
 	if *profileFile != "" {
@@ -1740,6 +1751,7 @@ func main() {
 		bufPool:            bufPool,
 		stats:              make(map[msgs.BlockServiceId]*blockServiceStats),
 		conversionChannels: make(map[msgs.BlockServiceId]chan serializerReq),
+		failureDomain:      *failureDomainStr,
 	}
 
 	for bsId := range blockServices {

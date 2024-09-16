@@ -2,6 +2,7 @@ package lib
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +49,13 @@ const (
 )
 
 type LoggerOptions struct {
-	Level            LogLevel
-	Syslog           bool
-	AppInstance      string
-	Xmon             string      // "dev", "qa", empty string for no xmon
-	AppType          XmonAppType // only used for xmon
-	PrintQuietAlerts bool        // whether to print alerts in quiet period
+	Level                  LogLevel
+	Syslog                 bool
+	AppInstance            string
+	Xmon                   string      // "dev", "qa", empty string for no xmon
+	HardwareEventServerURL string      // URL of the server you want to send hardware events OR empty for no logging
+	AppType                XmonAppType // only used for xmon
+	PrintQuietAlerts       bool        // whether to print alerts in quiet period
 }
 
 type Logger struct {
@@ -61,6 +63,7 @@ type Logger struct {
 	hasColors bool
 	syslog    bool
 	xmon      *Xmon
+	heClient  *HardwareEventClient
 	mu        sync.Mutex
 	bufPool   sync.Pool
 	out       io.Writer
@@ -162,6 +165,10 @@ func NewLogger(
 		xmonConfig.AppType = options.AppType
 	} else {
 		xmonConfig.OnlyLogging = true
+	}
+	if options.HardwareEventServerURL != "" {
+		hec := NewHardwareEventClient(options.HardwareEventServerURL)
+		logger.heClient = &hec
 	}
 	var err error
 	logger.xmon, err = NewXmon(logger, &xmonConfig)
@@ -268,6 +275,51 @@ func (l *Logger) RaiseNC(alert *XmonNCAlert, format string, v ...any) {
 
 func (l *Logger) ClearNC(alert *XmonNCAlert) {
 	alert.Clear(l, l.xmon)
+}
+
+// A simple struct to create a json representation of what has gone wrong in a block service.
+// Standardized in json to facilitate processing this data in bulk.
+type blockServiceErrorMessage struct {
+	BlockServiceId string `json:"blockServiceId"`
+	ErrorMessage   string `json:"error"`
+}
+
+// Asynchronously sends a hardware event to the server or simply logs
+// if hardware event logging is not enabled.
+func (l *Logger) RaiseHardwareEvent(failureDomain string, blockServiceID string, msg string) {
+	if l.heClient == nil {
+		l.Log(syslogError, "Hardware event on %s for block service %s: %s", failureDomain, blockServiceID, msg)
+		return
+	}
+	f := func() {
+		errMsg := blockServiceErrorMessage{
+			BlockServiceId: blockServiceID,
+			ErrorMessage:   msg,
+		}
+		msgData, err := json.Marshal(errMsg)
+		if err != nil {
+			// TODO(nchapma): Stop raising an alert here as soon as we're reasonably confident
+			// that this is working.
+			l.RaiseAlert("NCHAPMA: Failed to convert hardware event error message to JSON: %V")
+			return
+		}
+		evt := HardwareEvent{
+			Hostname:  fmt.Sprintf("%REDACTED", failureDomain),
+			Timestamp: time.Now(),
+			Component: DiskComponent,
+			Location:  "EggsFS",
+			Message:   string(msgData),
+		}
+		err = l.heClient.SendHardwareEvent(evt)
+		if err != nil {
+			// TODO(nchapma): Instead of immediately alerting here, there should really be some kind of
+			// retry logic that just queues up requests and only starts to alert if there are
+			// more than N events in the queue that can't go out.
+			l.RaiseAlert("NCHAPMA: Failed to send hardware event to server: %v", err)
+		}
+	}
+	go f()
+
 }
 
 type loggerSink struct {

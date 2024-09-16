@@ -25,19 +25,18 @@ func NewScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, note 
 
 		clearOnUnlock: false,
 		clearReason:   "",
-		deadline:      msgs.MakeEggsTime(time.Now().Add(time.Hour)),
+		deadline:      0,
 		done:          make(chan struct{}),
 
 		id: msgs.NULL_INODE_ID,
 	}
 	go func() {
-		ticker := time.NewTicker(time.Hour)
+		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				scratch.heartBeatScratchFile()
-				break
+				scratch.releaseScratchFile()
 			case _, ok := <-scratch.done:
 				if !ok {
 					return
@@ -124,8 +123,6 @@ func (s *scratchFile) Lock() (*lockedScratchFile, error) {
 		panic("locking closed scratch file")
 	default:
 	}
-
-	s.deadline = msgs.MakeEggsTime(time.Now().Add(time.Hour))
 	if s.id == msgs.NULL_INODE_ID {
 		resp := msgs.ConstructFileResp{}
 		err := s.c.ShardRequest(
@@ -145,6 +142,7 @@ func (s *scratchFile) Lock() (*lockedScratchFile, error) {
 		s.id = resp.Id
 		s.cookie = resp.Cookie
 		s.size = 0
+		s.deadline = msgs.MakeEggsTime(time.Now().Add(3 * time.Hour))
 	}
 
 	return &lockedScratchFile{s, true}, nil
@@ -190,25 +188,14 @@ type scratchFile struct {
 	size   uint64
 }
 
-func (s *scratchFile) heartBeatScratchFile() {
+func (s *scratchFile) releaseScratchFile() {
 	lockedScratchFile := s._lock()
 	defer lockedScratchFile.Unlock()
 	if s.id == msgs.NULL_INODE_ID {
 		return
 	}
 	if msgs.Now() > s.deadline {
-		lockedScratchFile.ClearOnUnlock(fmt.Sprintf("scratch file %v with note (%s) not accessed for an hour, stopping heartbeat", s.id, s.note))
+		lockedScratchFile.ClearOnUnlock(fmt.Sprintf("scratch file %v with note (%s) lifetime passed resetting", s.id, s.note))
 		return
-	}
-	// bump the deadline, makes sure the file stays alive for
-	// the duration of this function
-	s.log.Debug("bumping deadline for scratch file %v", s.id)
-	req := msgs.AddInlineSpanReq{
-		FileId:       s.id,
-		Cookie:       s.cookie,
-		StorageClass: msgs.EMPTY_STORAGE,
-	}
-	if err := s.c.ShardRequest(s.log, s.shard, &req, &msgs.AddInlineSpanResp{}); err != nil {
-		s.log.RaiseAlert("could not bump scratch file (%v) deadline when migrating blocks: %v", s.id, err)
 	}
 }

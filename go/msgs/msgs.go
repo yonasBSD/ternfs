@@ -1973,14 +1973,6 @@ type RegisterShardReq struct {
 
 type RegisterShardResp struct{}
 
-type RegisterShardReplicaReq struct {
-	Shrid    ShardReplicaId
-	IsLeader bool
-	Addrs    AddrsInfo
-}
-
-type RegisterShardReplicaResp struct{}
-
 type ShardReplicasReq struct {
 	Id ShardId
 }
@@ -1999,14 +1991,6 @@ type RegisterCdcReq struct {
 }
 
 type RegisterCdcResp struct{}
-
-type RegisterCdcReplicaReq struct {
-	Replica  ReplicaId
-	IsLeader bool
-	Addrs    AddrsInfo
-}
-
-type RegisterCdcReplicaResp struct{}
 
 type CdcReq struct{}
 

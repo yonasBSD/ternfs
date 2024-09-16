@@ -788,65 +788,48 @@ func handleShard(ll *lib.Logger, s *state, req *msgs.ShardReq) (*msgs.ShardResp,
 	return &msgs.ShardResp{Info: *info}, nil
 }
 
-func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
-	err := handleRegisterShardCommon(ll, s, req)
-	if err != nil {
-		return nil, err
-	}
-	if err := refreshClient(ll, s); err != nil {
-		return nil, err
-	}
-	return &msgs.RegisterShardResp{}, err
-}
-
-func handleRegisterShardReplica(ll *lib.Logger, s *state, req *msgs.RegisterShardReplicaReq) (*msgs.RegisterShardReplicaResp, error) {
-	err := handleRegisterShardCommon(ll, s, &msgs.RegisterShardReq{req.Shrid, req.IsLeader, req.Addrs, 0})
-	if err != nil {
-		return nil, err
-	}
-	if err := refreshClient(ll, s); err != nil {
-		return nil, err
-	}
-	return &msgs.RegisterShardReplicaResp{}, err
-}
-
-func handleRegisterShardCommon(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) error {
+func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (resp *msgs.RegisterShardResp, err error) {
+	defer func() {
+		if err != nil {
+			ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
+		}
+	}()
 	if req.Shrid.Replica() > 4 {
-		return msgs.INVALID_REPLICA
-	}
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+		err = msgs.INVALID_REPLICA
+	} else {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
 
-	n := sql.Named
-	res, err := s.db.Exec(`
-		UPDATE shards
-		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
-		WHERE
-		id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
-		(
-			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
-			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
+		n := sql.Named
+		res, err := s.db.Exec(`
+			UPDATE shards
+			SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
+			WHERE
+			id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
+			(
+				(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
+				(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
+			)
+			`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("location_id", req.Location), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
 		)
-		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("location_id", req.Location), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
-	)
-	if err != nil {
-		ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
-		return err
+		if err == nil {
+			rowsAffected, err := res.RowsAffected()
+			if err == nil {
+				if rowsAffected > 1 {
+					panic(fmt.Errorf("more than one row in shards with shardReplicaId %s", req.Shrid))
+				}
+				if rowsAffected == 0 {
+					err = msgs.DIFFERENT_ADDRS_INFO
+				} else {
+					err = refreshClient(ll, s)
+				}
+			}
+		}
 	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
-		return err
+	if err == nil {
+		resp = &msgs.RegisterShardResp{}
 	}
-	if rowsAffected == 0 {
-		return msgs.DIFFERENT_ADDRS_INFO
-	}
-	if rowsAffected > 1 {
-		panic(fmt.Errorf("more than one row in shards with shardReplicaId %s", req.Shrid))
-	}
-
-	return nil
+	return
 }
 
 func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (*msgs.ShardReplicasResp, error) {
@@ -953,68 +936,52 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*ms
 	return &msgs.CdcReplicasResp{Replicas: ret[:]}, nil
 }
 
-func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (*msgs.RegisterCdcResp, error) {
-	err := registerCDCReplicaCommon(log, s, req)
-	if err != nil {
-		log.RaiseAlert("error registering cdc: %s", err)
-		return nil, err
-	}
-	if err := refreshClient(log, s); err != nil {
-		return nil, err
-	}
-	return &msgs.RegisterCdcResp{}, nil
-}
-
-func handleRegisterCDCReplica(log *lib.Logger, s *state, req *msgs.RegisterCdcReplicaReq) (*msgs.RegisterCdcReplicaResp, error) {
-	err := registerCDCReplicaCommon(log, s, &msgs.RegisterCdcReq{req.Replica, 0, req.IsLeader, req.Addrs})
-	if err != nil {
-		log.RaiseAlert("error registering cdc replica: %s", err)
-		return nil, err
-	}
-	if err := refreshClient(log, s); err != nil {
-		return nil, err
-	}
-	return &msgs.RegisterCdcReplicaResp{}, nil
-}
-
-func registerCDCReplicaCommon(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) error {
+func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (resp *msgs.RegisterCdcResp, err error) {
+	defer func() {
+		if err != nil {
+			log.RaiseAlert("error registering cdc: %s", err)
+		}
+	}()
 	if req.Replica > 4 {
-		return msgs.INVALID_REPLICA
-	}
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+		err = msgs.INVALID_REPLICA
+	} else {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
 
-	n := sql.Named
-	res, err := s.db.Exec(`
-		UPDATE cdc
-		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
-		WHERE replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
-		(
-			(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
-			(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
-		)`,
-		n("replica_id", req.Replica),
-		n("location_id", req.Location),
-		n("is_leader", req.IsLeader),
-		n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port),
-		n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port),
-		n("last_seen", msgs.Now()),
-	)
-	if err != nil {
-		return err
+		n := sql.Named
+		res, err := s.db.Exec(`
+			UPDATE cdc
+			SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
+			WHERE replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
+			(
+				(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
+				(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
+			)`,
+			n("replica_id", req.Replica),
+			n("location_id", req.Location),
+			n("is_leader", req.IsLeader),
+			n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port),
+			n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port),
+			n("last_seen", msgs.Now()),
+		)
+		if err == nil {
+			rowsAffected, err := res.RowsAffected()
+			if err == nil {
+				if rowsAffected > 1 {
+					panic(fmt.Errorf("more than one row in cdc with replicaId %v", req.Replica))
+				}
+				if rowsAffected == 0 {
+					err = msgs.DIFFERENT_ADDRS_INFO
+				} else {
+					err = refreshClient(log, s)
+				}
+			}
+		}
 	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return err
+	if err == nil {
+		resp = &msgs.RegisterCdcResp{}
 	}
-	if rowsAffected == 0 {
-		return msgs.DIFFERENT_ADDRS_INFO
-	}
-	if rowsAffected > 1 {
-		panic(fmt.Errorf("more than one row in cdc with replicaId %v", req.Replica))
-	}
-	return nil
+	return
 }
 
 func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp, error) {
@@ -1151,8 +1118,6 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleShardsWithReplicas(log, s, whichReq)
 	case *msgs.RegisterShardReq:
 		resp, err = handleRegisterShard(log, s, whichReq)
-	case *msgs.RegisterShardReplicaReq:
-		resp, err = handleRegisterShardReplica(log, s, whichReq)
 	case *msgs.ShardReplicasReq:
 		resp, err = handleShardReplicas(log, s, whichReq)
 	case *msgs.AllBlockServicesReq:
@@ -1167,8 +1132,6 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleCdcReplicas(log, s, whichReq)
 	case *msgs.RegisterCdcReq:
 		resp, err = handleRegisterCDC(log, s, whichReq)
-	case *msgs.RegisterCdcReplicaReq:
-		resp, err = handleRegisterCDCReplica(log, s, whichReq)
 	case *msgs.InfoReq:
 		resp, err = handleInfoReq(log, s, whichReq)
 	case *msgs.BlockServiceReq:
@@ -1307,8 +1270,6 @@ func readShuckleRequest(
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.REGISTER_SHARD_REPLICA:
-		req = &msgs.RegisterShardReplicaReq{}
 	case msgs.SHARD_REPLICAS:
 		req = &msgs.ShardReplicasReq{}
 	case msgs.ALL_BLOCK_SERVICES:
@@ -1321,8 +1282,6 @@ func readShuckleRequest(
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
 		req = &msgs.RegisterCdcReq{}
-	case msgs.REGISTER_CDC_REPLICA:
-		req = &msgs.RegisterCdcReplicaReq{}
 	case msgs.CDC:
 		req = &msgs.CdcReq{}
 	case msgs.CDC_REPLICAS:

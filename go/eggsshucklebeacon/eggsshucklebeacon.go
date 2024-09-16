@@ -114,8 +114,6 @@ func readShuckleRequest(
 		req = &msgs.ShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.REGISTER_SHARD_REPLICA:
-		req = &msgs.RegisterShardReplicaReq{}
 	case msgs.SHARD_REPLICAS:
 		req = &msgs.ShardReplicasReq{}
 	case msgs.ALL_BLOCK_SERVICES:
@@ -128,8 +126,6 @@ func readShuckleRequest(
 		req = &msgs.SetBlockServiceFlagsReq{}
 	case msgs.REGISTER_CDC:
 		req = &msgs.RegisterCdcReq{}
-	case msgs.REGISTER_CDC_REPLICA:
-		req = &msgs.RegisterCdcReplicaReq{}
 	case msgs.CDC:
 		req = &msgs.CdcReq{}
 	case msgs.CDC_REPLICAS:

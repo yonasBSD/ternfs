@@ -728,14 +728,10 @@ func (k ShuckleMessageKind) String() string {
 		return "BLOCK_SERVICE"
 	case 12:
 		return "SHARD"
-	case 14:
-		return "REGISTER_SHARD_REPLICA"
 	case 16:
 		return "SHARD_REPLICAS"
 	case 17:
 		return "SHARD_BLOCK_SERVICES"
-	case 18:
-		return "REGISTER_CDC_REPLICA"
 	case 19:
 		return "CDC_REPLICAS"
 	case 20:
@@ -771,10 +767,8 @@ const (
 	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
 	BLOCK_SERVICE ShuckleMessageKind = 0xA
 	SHARD ShuckleMessageKind = 0xC
-	REGISTER_SHARD_REPLICA ShuckleMessageKind = 0xE
 	SHARD_REPLICAS ShuckleMessageKind = 0x10
 	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x11
-	REGISTER_CDC_REPLICA ShuckleMessageKind = 0x12
 	CDC_REPLICAS ShuckleMessageKind = 0x13
 	SHARDS_WITH_REPLICAS ShuckleMessageKind = 0x14
 	SET_BLOCK_SERVICE_DECOMMISSIONED ShuckleMessageKind = 0x15
@@ -797,10 +791,8 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	SET_BLOCK_SERVICE_FLAGS,
 	BLOCK_SERVICE,
 	SHARD,
-	REGISTER_SHARD_REPLICA,
 	SHARD_REPLICAS,
 	SHARD_BLOCK_SERVICES,
-	REGISTER_CDC_REPLICA,
 	CDC_REPLICAS,
 	SHARDS_WITH_REPLICAS,
 	SET_BLOCK_SERVICE_DECOMMISSIONED,
@@ -836,14 +828,10 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &BlockServiceReq{}, &BlockServiceResp{}, nil
 	case k == "SHARD":
 		return &ShardReq{}, &ShardResp{}, nil
-	case k == "REGISTER_SHARD_REPLICA":
-		return &RegisterShardReplicaReq{}, &RegisterShardReplicaResp{}, nil
 	case k == "SHARD_REPLICAS":
 		return &ShardReplicasReq{}, &ShardReplicasResp{}, nil
 	case k == "SHARD_BLOCK_SERVICES":
 		return &ShardBlockServicesReq{}, &ShardBlockServicesResp{}, nil
-	case k == "REGISTER_CDC_REPLICA":
-		return &RegisterCdcReplicaReq{}, &RegisterCdcReplicaResp{}, nil
 	case k == "CDC_REPLICAS":
 		return &CdcReplicasReq{}, &CdcReplicasResp{}, nil
 	case k == "SHARDS_WITH_REPLICAS":
@@ -4896,48 +4884,6 @@ func (v *ShardResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterShardReplicaReq) ShuckleRequestKind() ShuckleMessageKind {
-	return REGISTER_SHARD_REPLICA
-}
-
-func (v *RegisterShardReplicaReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
-		return err
-	}
-	if err := v.Addrs.Pack(w); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RegisterShardReplicaReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
-		return err
-	}
-	if err := v.Addrs.Unpack(r); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RegisterShardReplicaResp) ShuckleResponseKind() ShuckleMessageKind {
-	return REGISTER_SHARD_REPLICA
-}
-
-func (v *RegisterShardReplicaResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *RegisterShardReplicaResp) Unpack(r io.Reader) error {
-	return nil
-}
-
 func (v *ShardReplicasReq) ShuckleRequestKind() ShuckleMessageKind {
 	return SHARD_REPLICAS
 }
@@ -5033,48 +4979,6 @@ func (v *ShardBlockServicesResp) Unpack(r io.Reader) error {
 			return err
 		}
 	}
-	return nil
-}
-
-func (v *RegisterCdcReplicaReq) ShuckleRequestKind() ShuckleMessageKind {
-	return REGISTER_CDC_REPLICA
-}
-
-func (v *RegisterCdcReplicaReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint8(v.Replica)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
-		return err
-	}
-	if err := v.Addrs.Pack(w); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RegisterCdcReplicaReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint8)(&v.Replica)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
-		return err
-	}
-	if err := v.Addrs.Unpack(r); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *RegisterCdcReplicaResp) ShuckleResponseKind() ShuckleMessageKind {
-	return REGISTER_CDC_REPLICA
-}
-
-func (v *RegisterCdcReplicaResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *RegisterCdcReplicaResp) Unpack(r io.Reader) error {
 	return nil
 }
 

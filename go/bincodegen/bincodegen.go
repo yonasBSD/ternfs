@@ -1834,11 +1834,6 @@ func main() {
 			reflect.TypeOf(msgs.ShardResp{}),
 		},
 		{
-			0x0E,
-			reflect.TypeOf(msgs.RegisterShardReplicaReq{}),
-			reflect.TypeOf(msgs.RegisterShardReplicaResp{}),
-		},
-		{
 			0x10,
 			reflect.TypeOf(msgs.ShardReplicasReq{}),
 			reflect.TypeOf(msgs.ShardReplicasResp{}),
@@ -1847,11 +1842,6 @@ func main() {
 			0x11,
 			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
 			reflect.TypeOf(msgs.ShardBlockServicesResp{}),
-		},
-		{
-			0x12,
-			reflect.TypeOf(msgs.RegisterCdcReplicaReq{}),
-			reflect.TypeOf(msgs.RegisterCdcReplicaResp{}),
 		},
 		{
 			0x13,

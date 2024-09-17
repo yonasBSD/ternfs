@@ -1895,8 +1895,8 @@ func main() {
 		},
 		{
 			0x24,
-			reflect.TypeOf(msgs.ClearCDCInfoReq{}),
-			reflect.TypeOf(msgs.ClearCDCInfoResp{}),
+			reflect.TypeOf(msgs.ClearCdcInfoReq{}),
+			reflect.TypeOf(msgs.ClearCdcInfoResp{}),
 		},
 	}...)
 

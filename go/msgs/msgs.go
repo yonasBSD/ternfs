@@ -2095,12 +2095,12 @@ type ClearShardInfoReq struct {
 
 type ClearShardInfoResp struct{}
 
-type ClearCDCInfoReq struct {
+type ClearCdcInfoReq struct {
 	Replica  ReplicaId
 	Location Location
 }
 
-type ClearCDCInfoResp struct{}
+type ClearCdcInfoResp struct{}
 
 type EraseDecommissionedBlockReq struct {
 	BlockServiceId BlockServiceId

@@ -152,8 +152,8 @@ func readShuckleRequest(
 		req = &msgs.ShardsWithReplicasReq{}
 	case msgs.MOVE_CDC_LEADER:
 		req = &msgs.MoveCdcLeaderReq{}
-	case msgs.CLEAR_CD_CINFO:
-		req = &msgs.ClearCDCInfoReq{}
+	case msgs.CLEAR_CDC_INFO:
+		req = &msgs.ClearCdcInfoReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}

@@ -510,6 +510,7 @@ private:
             if (likely(err == EggsError::NO_ERROR)) {
                 return; // we're done here, move along
             } else {
+                LOG_ERROR(_env, "error preparing log entry for request: %s from: %s err: %s", req, entry.clientAddr, err);
                 (checkPointed ? checkpointedRespContainer.body.resp : respContainer.body).setError() = err;
                 _logEntries.pop_back(); // back out the log entry
             }

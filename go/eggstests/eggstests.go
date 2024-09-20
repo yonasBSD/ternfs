@@ -710,16 +710,17 @@ func (bsv *blockServiceVictim) start(
 	procs *managedprocess.ManagedProcesses,
 ) managedprocess.ManagedProcessId {
 	return procs.StartBlockService(log, &managedprocess.BlockServiceOpts{
-		Exe:            blocksExe,
-		Path:           bsv.path,
-		StorageClasses: bsv.storageClasses,
-		FailureDomain:  bsv.failureDomain,
-		LogLevel:       log.Level(),
-		ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", shucklePort),
-		FutureCutoff:   &testBlockFutureCutoff,
-		Addr1:          fmt.Sprintf("127.0.0.1:%d", port1),
-		Addr2:          fmt.Sprintf("127.0.0.1:%d", port2),
-		Profile:        profile,
+		Exe:              blocksExe,
+		Path:             bsv.path,
+		StorageClasses:   bsv.storageClasses,
+		FailureDomain:    bsv.failureDomain,
+		LogLevel:         log.Level(),
+		ShuckleAddress:   fmt.Sprintf("127.0.0.1:%d", shucklePort),
+		FutureCutoff:     &testBlockFutureCutoff,
+		Addr1:            fmt.Sprintf("127.0.0.1:%d", port1),
+		Addr2:            fmt.Sprintf("127.0.0.1:%d", port2),
+		Profile:          profile,
+		ReserverdStorage: 10 << 30, // 10 GiB
 	})
 }
 
@@ -1069,11 +1070,10 @@ func main() {
 
 	// Start shuckle
 	shuckleOpts := &managedprocess.ShuckleOpts{
-		Exe:                  goExes.ShuckleExe,
-		LogLevel:             level,
-		BlockserviceMinBytes: 10 << (10 * 3),
-		Dir:                  path.Join(*dataDir, "shuckle"),
-		Addr1:                shuckleAddress,
+		Exe:      goExes.ShuckleExe,
+		LogLevel: level,
+		Dir:      path.Join(*dataDir, "shuckle"),
+		Addr1:    shuckleAddress,
 	}
 	if *blockServiceKiller {
 		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback

@@ -147,14 +147,15 @@ func main() {
 	}
 	for i := uint(0); i < *failureDomains; i++ {
 		opts := managedprocess.BlockServiceOpts{
-			Exe:            goExes.BlocksExe,
-			Path:           path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
-			StorageClasses: storageClasses,
-			FailureDomain:  fmt.Sprintf("%d", i),
-			LogLevel:       level,
-			ShuckleAddress: fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
-			Profile:        *profile,
-			Xmon:           *xmon,
+			Exe:              goExes.BlocksExe,
+			Path:             path.Join(*dataDir, fmt.Sprintf("bs_%d", i)),
+			StorageClasses:   storageClasses,
+			FailureDomain:    fmt.Sprintf("%d", i),
+			LogLevel:         level,
+			ShuckleAddress:   fmt.Sprintf("127.0.0.1:%d", *shuckleBincodePort),
+			Profile:          *profile,
+			Xmon:             *xmon,
+			ReserverdStorage: 10 << 30, // 10GB
 		}
 		if *startingPort != 0 {
 			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+257+uint16(i))

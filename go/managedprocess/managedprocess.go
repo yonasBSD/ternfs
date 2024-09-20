@@ -261,17 +261,18 @@ func (procs *ManagedProcesses) installSignalHandlers() {
 }
 
 type BlockServiceOpts struct {
-	Exe            string
-	Path           string
-	Addr1          string
-	Addr2          string
-	StorageClasses []msgs.StorageClass
-	FailureDomain  string
-	FutureCutoff   *time.Duration
-	LogLevel       lib.LogLevel
-	ShuckleAddress string
-	Profile        bool
-	Xmon           string
+	Exe              string
+	Path             string
+	Addr1            string
+	Addr2            string
+	StorageClasses   []msgs.StorageClass
+	FailureDomain    string
+	FutureCutoff     *time.Duration
+	LogLevel         lib.LogLevel
+	ShuckleAddress   string
+	Profile          bool
+	Xmon             string
+	ReserverdStorage uint64
 }
 
 func createDataDir(dir string) {
@@ -309,6 +310,9 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
+	}
+	if opts.ReserverdStorage > 0 {
+		args = append(args, "-reserved-storage", fmt.Sprintf("%d", opts.ReserverdStorage))
 	}
 	for i, storageClass := range opts.StorageClasses {
 		args = append(args, path.Join(opts.Path, fmt.Sprintf("%d", i)), storageClass.String())
@@ -385,16 +389,15 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 }
 
 type ShuckleOpts struct {
-	Exe                  string
-	Dir                  string
-	LogLevel             lib.LogLevel
-	HttpPort             uint16
-	BlockserviceMinBytes uint64
-	Stale                time.Duration
-	Xmon                 string
-	ScriptsJs            string
-	Addr1                string
-	Addr2                string
+	Exe       string
+	Dir       string
+	LogLevel  lib.LogLevel
+	HttpPort  uint16
+	Stale     time.Duration
+	Xmon      string
+	ScriptsJs string
+	Addr1     string
+	Addr2     string
 }
 
 func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
@@ -402,7 +405,6 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 	args := []string{
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
-		"-bs-min-bytes", fmt.Sprintf("%d", opts.BlockserviceMinBytes),
 		"-data-dir", opts.Dir,
 		"-addr-1", opts.Addr1,
 	}

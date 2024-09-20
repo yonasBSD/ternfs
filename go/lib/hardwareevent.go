@@ -3,7 +3,6 @@ package lib
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -53,11 +52,11 @@ func NewHardwareEventClient(serverURL string) HardwareEventClient {
 func (hec *HardwareEventClient) SendHardwareEvent(he HardwareEvent) error {
 	b, err := json.Marshal(he)
 	if err != nil {
-		return errors.Wrap(err, "failed to convert the HardwareEvent to json")
+		return fmt.Errorf("failed to convert the HardwareEvent to json: %w", err)
 	}
 	resp, err := hec.client.Post(fmt.Sprintf("%s/hardware_event", hec.serverURL), "text/json", bytes.NewReader(b))
 	if err != nil {
-		return errors.Wrapf(err, "failed to send hardware event to server (%s)", hec.serverURL)
+		return fmt.Errorf("failed to send hardware event to server (%s): %w", hec.serverURL, err)
 	} else if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
 		return fmt.Errorf("failed to send hardware event to server: bad status code: %d", resp.StatusCode)

@@ -179,12 +179,12 @@ func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 }
 
 // if flagsFilter&flags is non-zero, things won't be returned
-func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, minBytes uint64, flagsChangedSince msgs.EggsTime) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
 	n := sql.Named
 
 	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
-	q := "SELECT * FROM block_services WHERE (flags & :flags) = 0 AND available_bytes >= :min_bytes AND flags_last_changed > :changed_since"
-	args := []any{n("flags", flagsFilter), n("min_bytes", minBytes), n("changed_since", uint64(flagsChangedSince))}
+	q := "SELECT * FROM block_services WHERE (flags & :flags) = 0 AND flags_last_changed > :changed_since"
+	args := []any{n("flags", flagsFilter), n("changed_since", uint64(flagsChangedSince))}
 	if id != nil {
 		q += " AND id = :id"
 		args = append(args, n("id", *id))
@@ -214,7 +214,6 @@ func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.Bl
 }
 
 type shuckleConfig struct {
-	blockServiceMinFreeBytes          uint64
 	addrs                             msgs.AddrsInfo
 	minAutoDecomInterval              time.Duration
 	maxDecommedWithFiles              int
@@ -238,7 +237,7 @@ func newState(
 		currentShardBlockServicesLastUpdate: 0,
 	}
 
-	blockServices, err := st.selectBlockServices(nil, 0, 0, 0)
+	blockServices, err := st.selectBlockServices(nil, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +340,7 @@ func (pq *failureDomainPQ) Pop() any {
 func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	updatesSkipped := 0
 	for {
-		blockServicesMap, err := s.selectBlockServices(nil, 0, 0, s.currentShardBlockServicesLastUpdate)
+		blockServicesMap, err := s.selectBlockServices(nil, 0, s.currentShardBlockServicesLastUpdate)
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
 		}
@@ -359,7 +358,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 			}
 		}
 
-		blockServicesMap, err = s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, s.config.blockServiceMinFreeBytes, 0)
+		blockServicesMap, err = s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0)
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
 			continue
@@ -374,6 +373,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 			stats := currentBlockServicesStats{
 				minBlockServicesPerShard:   len(blockServicesMap),
 				minTimesBlockServicePicked: 256,
+				maxTimesBlockServicePicked: 1,
 			}
 			pq := &failureDomainPQ{}
 			for _, bs := range blockServicesMap {
@@ -491,7 +491,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
 	resp := msgs.AllBlockServicesResp{}
-	blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
+	blockServices, err := s.selectBlockServices(nil, 0, 0)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -515,7 +515,7 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 	if req.ChangedSince > now {
 		req.ChangedSince = now
 	}
-	blockServices, err := s.selectBlockServices(nil, 0, 0, req.ChangedSince)
+	blockServices, err := s.selectBlockServices(nil, 0, req.ChangedSince)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -536,7 +536,7 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 }
 
 func handleBlockService(log *lib.Logger, s *state, req *msgs.BlockServiceReq) (*msgs.BlockServiceResp, error) {
-	blockServices, err := s.selectBlockServices(&req.Id, 0, 0, 0)
+	blockServices, err := s.selectBlockServices(&req.Id, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -575,6 +575,11 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 		// DECOMMISSIONED|STALE are always managed externally, not by eggsblocks.
 		if msgs.BlockServiceFlags(bs.FlagsMask).HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED | msgs.EGGSFS_BLOCK_SERVICE_STALE) {
 			return nil, msgs.CANNOT_REGISTER_DECOMMISSIONED_OR_STALE
+		}
+
+		if bs.AvailableBytes == 0 {
+			bs.FlagsMask |= uint8(msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE)
+			bs.Flags |= msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE
 		}
 		res, err := tx.Exec(`
 				INSERT INTO block_services
@@ -658,7 +663,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 	rand.Seed(time.Now().UnixNano())
 
 	for {
-		blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
+		blockServices, err := s.selectBlockServices(nil, 0, 0)
 		if err != nil {
 			ll.RaiseNC(blockServicesAlert, "error reading block services, will try again in %v: %s", sleepInterval, err)
 			time.Sleep(sleepInterval)
@@ -710,7 +715,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Set
 		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
 
-	blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
+	blockServices, err := s.selectBlockServices(nil, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -770,7 +775,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	if (req.FlagsMask&uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
 		s.decommedBlockServicesMu.Lock()
 		defer s.decommedBlockServicesMu.Unlock()
-		bs, err := s.selectBlockServices(&req.Id, 0, 0, 0)
+		bs, err := s.selectBlockServices(&req.Id, 0, 0)
 		if err != nil {
 			ll.RaiseAlert("couldnt select block service after decommissioning")
 		} else {
@@ -1642,7 +1647,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.selectBlockServices(nil, 0, 0, 0)
+			blockServices, err := state.selectBlockServices(nil, 0, 0)
 			if err != nil {
 				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
@@ -2521,7 +2526,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	migrateDecommedAlert := log.NewNCAlert(0)
 	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
 	for {
-		blockServices, err := s.selectBlockServices(nil, 0, 0, 0)
+		blockServices, err := s.selectBlockServices(nil, 0, 0)
 		if err != nil {
 			log.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)
@@ -2748,8 +2753,6 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	metrics := flag.Bool("metrics", false, "")
 	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
-	// See internal-repo/issues/69 for more info on the default value below.
-	bsMinBytes := flag.Uint64("bs-min-bytes", 300<<(10*3), "Minimum free space before marking blockservice NO_WRITES")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	minDecomInterval := flag.Duration("min-decom-interval", 2*time.Hour, "Minimum interval between calls to decommission blockservices by automation")
@@ -2865,7 +2868,6 @@ func main() {
 
 	config := &shuckleConfig{
 		addrs:                             msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
-		blockServiceMinFreeBytes:          *bsMinBytes,
 		minAutoDecomInterval:              *minDecomInterval,
 		maxDecommedWithFiles:              *maxDecommedWithFiles,
 		maxFailureDomainsPerShard:         *maxFailureDomainsPerShard,

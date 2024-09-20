@@ -164,13 +164,25 @@ func countBlocks(basePath string) (uint64, error) {
 func updateBlockServiceInfoCapacity(
 	log *lib.Logger,
 	blockService *blockService,
+	reservedStorage uint64,
 ) error {
 	var statfs unix.Statfs_t
 	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
 		return err
 	}
+
 	capacityBytes := statfs.Blocks * uint64(statfs.Bsize)
+	if capacityBytes < reservedStorage {
+		capacityBytes = 0
+	} else {
+		capacityBytes -= reservedStorage
+	}
 	availableBytes := statfs.Bavail * uint64(statfs.Bsize)
+	if availableBytes < reservedStorage {
+		availableBytes = 0
+	} else {
+		availableBytes -= reservedStorage
+	}
 	blockService.cachedInfo.CapacityBytes = capacityBytes
 	blockService.cachedInfo.AvailableBytes = availableBytes
 	return nil
@@ -208,6 +220,7 @@ func initBlockServicesInfo(
 	addrs msgs.AddrsInfo,
 	failureDomain [16]byte,
 	blockServices map[msgs.BlockServiceId]*blockService,
+	reservedStorage uint64,
 ) error {
 	log.Info("initializing block services info")
 	var wg sync.WaitGroup
@@ -225,7 +238,7 @@ func initBlockServicesInfo(
 		go func() {
 			// only update if it isn't filled it in already from shuckle
 			if closureBs.cachedInfo.Blocks == 0 {
-				if err := updateBlockServiceInfoCapacity(log, closureBs); err != nil {
+				if err := updateBlockServiceInfoCapacity(log, closureBs, reservedStorage); err != nil {
 					panic(err)
 				}
 				if err := updateBlockServiceInfoBlocks(log, closureBs); err != nil {
@@ -297,10 +310,11 @@ func updateBlockServiceInfoBlocksForever(
 func updateBlockServiceInfoCapacityForever(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
+	reservedStorage uint64,
 ) {
 	for {
 		for _, bs := range blockServices {
-			if err := updateBlockServiceInfoCapacity(log, bs); err != nil {
+			if err := updateBlockServiceInfoCapacity(log, bs, reservedStorage); err != nil {
 				bs.couldNotUpdateInfoCapacity = true
 				log.RaiseNC(&bs.couldNotUpdateInfoCapacityAlert, "could not get capacity for block service %v: %v", bs.cachedInfo.Id, err)
 			} else {
@@ -1499,6 +1513,7 @@ func main() {
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-timeout", 10*time.Minute, "")
+	reservedStorage := flag.Uint64("reserved-storage", 100<<30, "How many bytes to reserve and under-report capacity")
 	metrics := flag.Bool("metrics", false, "")
 	flag.Parse()
 	flagErrors := false
@@ -1613,6 +1628,7 @@ func main() {
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
 	log.Info("  connectionTimeout = %v", *connectionTimeout)
+	log.Info("  reservedStorage = %v", *reservedStorage)
 
 	mountsInfo, err := getMountsInfo(log, "/proc/self/mountinfo")
 	if err != nil {
@@ -1741,7 +1757,7 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(log, msgs.AddrsInfo{msgs.IpPort{ownIp1, actualPort1}, msgs.IpPort{ownIp2, actualPort2}}, failureDomain, blockServices)
+	initBlockServicesInfo(log, msgs.AddrsInfo{msgs.IpPort{ownIp1, actualPort1}, msgs.IpPort{ownIp2, actualPort2}}, failureDomain, blockServices, *reservedStorage)
 	log.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)
@@ -1781,7 +1797,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		updateBlockServiceInfoCapacityForever(log, blockServices)
+		updateBlockServiceInfoCapacityForever(log, blockServices, *reservedStorage)
 	}()
 
 	if *metrics {

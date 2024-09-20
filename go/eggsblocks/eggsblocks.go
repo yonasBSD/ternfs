@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	crand "crypto/rand"
 	"encoding/binary"
+	"errors"
 
 	"flag"
 	"fmt"
@@ -33,7 +34,6 @@ import (
 	"xtx/eggsfs/msgs"
 	"xtx/eggsfs/wyhash"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
 

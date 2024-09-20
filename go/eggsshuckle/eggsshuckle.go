@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"container/heap"
 	"crypto/aes"
 	"database/sql"
 	_ "embed"
@@ -296,6 +297,45 @@ type currentBlockServicesStats struct {
 	maxBlockServicesPerShard       int
 	minBlockServicesPerShard       int
 	duplicateBlockServicesAssigned int
+	maxTimesBlockServicePicked     int
+	minTimesBlockServicePicked     int
+}
+
+type failureDomainInfo struct {
+	id            msgs.FailureDomain
+	bsIdx         int
+	blockServices []msgs.BlockServiceId
+	shuffleHash   uint64
+}
+
+type failureDomainPQ []*failureDomainInfo
+
+func (pq failureDomainPQ) Len() int { return len(pq) }
+
+func (pq failureDomainPQ) Less(i, j int) bool {
+	if (pq[i].bsIdx / len(pq[i].blockServices)) == (pq[j].bsIdx / len(pq[j].blockServices)) {
+		if pq[i].bsIdx == pq[j].bsIdx {
+			return pq[i].shuffleHash < pq[j].shuffleHash
+		}
+		return pq[i].bsIdx < pq[j].bsIdx
+	}
+	return (pq[i].bsIdx / len(pq[i].blockServices)) < (pq[j].bsIdx / len(pq[j].blockServices))
+}
+
+func (pq *failureDomainPQ) Swap(i, j int) {
+	(*pq)[i], (*pq)[j] = (*pq)[j], (*pq)[i]
+}
+
+func (pq *failureDomainPQ) Push(x any) {
+	*pq = append(*pq, x.(*failureDomainInfo))
+}
+
+func (pq *failureDomainPQ) Pop() any {
+	old := *pq
+	n := len(old)
+	x := old[n-1]
+	*pq = old[0 : n-1]
+	return x
 }
 
 func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
@@ -332,8 +372,10 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 			blockServicesByFailureDomain := make(map[msgs.FailureDomain][]msgs.BlockServiceId)
 			failureDomains := []msgs.FailureDomain{}
 			stats := currentBlockServicesStats{
-				minBlockServicesPerShard: len(blockServicesMap),
+				minBlockServicesPerShard:   len(blockServicesMap),
+				minTimesBlockServicePicked: 256,
 			}
+			pq := &failureDomainPQ{}
 			for _, bs := range blockServicesMap {
 				if bs.StorageClass != storageClass {
 					continue
@@ -358,54 +400,52 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 				continue
 			}
 
-			// shuffle failure domains and block services within failure domains and populate initial structures
-			candidateFailureDomainIdx := 0
-			failureDomainCandidateBsIdx := make(map[msgs.FailureDomain]int)
-			rand.Shuffle(len(failureDomains), func(i, j int) {
-				failureDomains[i], failureDomains[j] = failureDomains[j], failureDomains[i]
-			})
 			for _, failureDomain := range failureDomains {
-				failureDomainCandidateBsIdx[failureDomain] = 0
 				blockServices := blockServicesByFailureDomain[failureDomain]
 				rand.Shuffle(len(blockServices), func(i, j int) {
 					blockServices[i], blockServices[j] = blockServices[j], blockServices[i]
 				})
+				pq.Push(&failureDomainInfo{failureDomain, 0, blockServices, rand.Uint64()})
 			}
+			heap.Init(pq)
 			perStorageClassShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceId{}
 			shardFailureDomainSet := map[shardFailureDomain]struct{}{}
-			blockServiceSet := map[msgs.BlockServiceId]struct{}{}
+			blockServiceSet := map[msgs.BlockServiceId]int{}
 
 			// first populate all shards with minimum number of failure domains
 			for i := 0; i < 256; i++ {
 				currentBlockServices := []msgs.BlockServiceId{}
+				usedBlockServices := &failureDomainPQ{}
 				for j := 0; j < minFailureDomains; j++ {
-					failureDomain := failureDomains[candidateFailureDomainIdx%len(failureDomains)]
-					blockServices := blockServicesByFailureDomain[failureDomain]
-					candidateBsIdx := failureDomainCandidateBsIdx[failureDomain]
-					blockServiceId := blockServices[candidateBsIdx%len(blockServices)]
+					failureDomain := heap.Pop(pq).(*failureDomainInfo)
+					blockServiceId := failureDomain.blockServices[failureDomain.bsIdx%len(failureDomain.blockServices)]
+					failureDomain.bsIdx++
 					currentBlockServices = append(currentBlockServices, blockServiceId)
-					failureDomainCandidateBsIdx[failureDomain]++
-					candidateFailureDomainIdx++
-					shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain}] = struct{}{}
+					shardFailureDomainSet[shardFailureDomain{msgs.ShardId(i), failureDomain.id}] = struct{}{}
+					usedBlockServices.Push(failureDomain)
 					if _, ok := blockServiceSet[blockServiceId]; !ok {
-						blockServiceSet[blockServiceId] = struct{}{}
+						blockServiceSet[blockServiceId] = 1
 					} else {
+						blockServiceSet[blockServiceId] += 1
+						stats.maxTimesBlockServicePicked = max(blockServiceSet[blockServiceId], stats.maxTimesBlockServicePicked)
 						stats.duplicateBlockServicesAssigned++
 					}
 				}
 				perStorageClassShardBlockServices[msgs.ShardId(i)] = currentBlockServices
+				for usedBlockServices.Len() > 0 {
+					pq.Push(usedBlockServices.Pop())
+				}
+				heap.Init(pq)
 			}
-			// then spread the rest of block services across shards while giving at most one block service from a failure domain to shard and trying to keep number of block sevices per shard as equal as possible
-			// up to maxFailureDomainsPerShard
-			for _, failureDomain := range failureDomains {
-				blockServices := blockServicesByFailureDomain[failureDomain]
-				candidateBsIdx := failureDomainCandidateBsIdx[failureDomain]
+			for _, failureDomain := range *pq {
+				blockServices := failureDomain.blockServices
+				candidateBsIdx := failureDomain.bsIdx
 				if candidateBsIdx >= len(blockServices) {
 					continue
 				}
 				candidateShards := []shardBlockServiceCount{}
 				for i := 0; i < 256; i++ {
-					if _, ok := shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain}]; !ok && len(perStorageClassShardBlockServices[msgs.ShardId(i)]) < s.config.maxFailureDomainsPerShard {
+					if _, ok := shardFailureDomainSet[shardFailureDomain{shard: msgs.ShardId(i), domain: failureDomain.id}]; !ok && len(perStorageClassShardBlockServices[msgs.ShardId(i)]) < s.config.maxFailureDomainsPerShard {
 						candidateShards = append(candidateShards, shardBlockServiceCount{shard: msgs.ShardId(i), count: len(perStorageClassShardBlockServices[msgs.ShardId(i)])})
 					}
 				}
@@ -417,13 +457,13 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 					}
 					blockServiceId := blockServices[candidateBsIdx]
 					if _, ok := blockServiceSet[blockServiceId]; !ok {
-						blockServiceSet[blockServiceId] = struct{}{}
+						blockServiceSet[blockServiceId] = 1
 					} else {
 						panic(fmt.Sprintf("duplicate block service %s, this should not happen in this part of assigment", blockServiceId))
 					}
 					perStorageClassShardBlockServices[shard.shard] = append(perStorageClassShardBlockServices[shard.shard], blockServices[candidateBsIdx])
 					candidateBsIdx++
-					shardFailureDomainSet[shardFailureDomain{shard: shard.shard, domain: failureDomain}] = struct{}{}
+					shardFailureDomainSet[shardFailureDomain{shard: shard.shard, domain: failureDomain.id}] = struct{}{}
 				}
 			}
 			for shard, blockServices := range perStorageClassShardBlockServices {
@@ -436,8 +476,12 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 				currentShardBlockServices[shard] = append(currentShardBlockServices[shard], blockServices...)
 			}
 
-			log.Info("finished calculating current block services for storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d}",
-				storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard)
+			for _, count := range blockServiceSet {
+				stats.minTimesBlockServicePicked = min(count, stats.minTimesBlockServicePicked)
+			}
+
+			log.Info("finished calculating current block services for storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d}",
+				storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
 		}
 		s.currentShardBlockServicesMu.Lock()
 		s.currentShardBlockServices = currentShardBlockServices

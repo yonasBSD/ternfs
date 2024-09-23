@@ -1222,10 +1222,11 @@ func main() {
 				return 0
 			}
 			p := float64(0)
-			for i, bin := range l.LatencyBins {
-				p += float64(bin) / float64(totalCount)
+			for k := len(l.LatencyBins) - 1; k > 0; k-- {
+				val := l.LatencyBins[k]
+				p += float64(val) / float64(totalCount)
 				if p >= target {
-					return time.Duration(mh.UpperBoundValues[i])
+					return time.Duration(mh.UpperBoundValues[k])
 				}
 			}
 			panic("impossible")

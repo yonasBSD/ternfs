@@ -523,7 +523,7 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 
 	resp.BlockServices = make([]msgs.BlockService, len(blockServices))
 	// 10 minutes ago to allow shard propagation path to pick up the change and not override it
-	resp.LastChange = now - msgs.MakeEggsTime(tNow.Add(-10*time.Minute))
+	resp.LastChange = msgs.MakeEggsTime(tNow.Add(-10 * time.Minute))
 	i := 0
 	for _, bs := range blockServices {
 		resp.BlockServices[i].Id = bs.Id
@@ -531,7 +531,6 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 		resp.BlockServices[i].Flags = bs.Flags
 		i++
 	}
-
 	return &resp, nil
 }
 

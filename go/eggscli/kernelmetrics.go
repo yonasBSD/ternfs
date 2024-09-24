@@ -143,7 +143,7 @@ func parseKernelLatencies(serviceType string, nInstances int, metricsHeader kern
 	ret := []kernelLatencies{}
 	// Initialise
 	for j := 0; j < metricsHeader.RequestKindMax; j++ {
-		st := kernelLatencies{Kind: uint8(metricsHeader.RequestMap[j])}
+		st := kernelLatencies{Kind: metricsHeader.RequestMap[j]}
 		st.LatencyBins = make([]uint64, metricsHeader.BinsCount)
 		ret = append(ret, st)
 	}

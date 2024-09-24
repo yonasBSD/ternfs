@@ -512,9 +512,10 @@ func handleBlockServicesWithFlagChange(ll *lib.Logger, s *state, req *msgs.Block
 	// sometimes clients pass very high ChangedSince (kmod during ci start) which breaks sql as it does not support uint64 converting with high bit set
 	tNow := time.Now()
 	now := msgs.MakeEggsTime(tNow)
-	if req.ChangedSince > now {
-		req.ChangedSince = now
-	}
+	// ToDO remove clamp once kmod with fix rolls out
+	dayAgo := msgs.MakeEggsTime(tNow.Add(-24 * time.Hour))
+	req.ChangedSince = min(now, max(req.ChangedSince, dayAgo))
+
 	blockServices, err := s.selectBlockServices(nil, 0, req.ChangedSince)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)

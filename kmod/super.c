@@ -403,14 +403,14 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name, char* op
     err = eggsfs_init_shard_socket(&eggsfs_info->sock);
     if (err) { goto out_info; }
 
-    err = eggsfs_refresh_fs_info(eggsfs_info);
-    if (err != 0) { goto out_socket; }
-
     // for the first update we will ask for everything that changed in last day.
     // this is more than enough time for any older changed to be visible to shards and propagated through block info
     u64 atime_ns = ktime_get_real_ns();
     atime_ns -= min(atime_ns, 86400000000000ull);
     eggsfs_info->block_services_last_changed_time = atime_ns;
+
+    err = eggsfs_refresh_fs_info(eggsfs_info);
+    if (err != 0) { goto out_socket; }
 
     INIT_DELAYED_WORK(&eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_work);
     queue_delayed_work(system_long_wq, &eggsfs_info->shuckle_refresh_work, eggsfs_shuckle_refresh_time_jiffies);

@@ -869,6 +869,7 @@ func main() {
 	duHisto := duCmd.String("histogram", "", "Filepath in which to write size histogram (in CSV) to")
 	duPhysical := duCmd.Bool("physical", false, "Also measure physical space (slower)")
 	duSnapshot := duCmd.Bool("snapshot", false, "Also count snapshot files")
+	duWorkersPerSshard := duCmd.Int("workers-per-shard", 5, "")
 	duRun := func() {
 		var numDirectories uint64
 		var numFiles uint64
@@ -902,7 +903,7 @@ func main() {
 			log,
 			c,
 			&client.ParwalkOptions{
-				WorkersPerShard: 5,
+				WorkersPerShard: *duWorkersPerSshard,
 				Snapshot:        *duSnapshot,
 			},
 			*duDir,

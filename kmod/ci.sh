@@ -59,7 +59,7 @@ while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key eggsfs.ko fmazzo
 done
 
 # Deploy eggsfs
-../deploy/deploy.py --vm --upload --build-type alpine
+../deploy/vm_deploy.py
 
 # Insert module
 ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod eggsfs.ko"

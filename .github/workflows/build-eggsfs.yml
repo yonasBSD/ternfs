@@ -18,38 +18,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-
-    - name: Set Build Number
-      shell: bash
-      run: |
-        BUILD_NUMBER=$((${{ github.run_number }} + 1000))
-        echo "BUILD_NUMBER=${BUILD_NUMBER}" >> "$GITHUB_ENV"
-        echo "PACKAGE_NAME=deployment-bundle-${BUILD_NUMBER}.tar.gz" >> "$GITHUB_ENV"
-
-    - name: Build
-      shell: bash
-      run: ./build.sh ubuntu
     - name: Package EggsFS
       shell: bash
-      run: |
-        # Create an archive dir to hold all build and deployment artifacts
-        mkdir -p archive/bin
-        # Stamp some build information into the package.
-        echo "$(git describe --always --dirty)-$(date +"%Y%m%dT%H%M%S")" > archive/build.id
-        # Move the binaries into the archive (we don't copy because it's unecessary and slow)
-        mv build/ubuntu/* archive/bin
-        # Move the deploy folder into the archive
-        mv deploy/ archive/
-        # Ball it all up
-        tar -czvf "${{ env.PACKAGE_NAME }}" archive
-    - name: Publish EggsFS
-      shell: bash
-      run: |
-        export PACKAGE="${{ env.PACKAGE_NAME }}" ; \
-        /bin/curl -v --fail -k -XPUT \
-        -H "X-Checksum-Sha1: `sha1sum ${PACKAGE} | awk '{print $1}'`" \
-        -H "X-Checksum: `md5sum ${PACKAGE} | awk '{print $1}'`" \
-        -H "X-Checksum-Sha256: `sha256sum ${PACKAGE} | awk '{print $1}'`" \
-        -u REDACTED  \
-        "https://REDACTED${{ inputs.environment }}/`basename ${PACKAGE}`" \
-        -T ${PACKAGE}
+      run: ./deploy/eggsctrl.py package --artifactory-host REDACTED --build-number $((${{ github.run_number }} + 1000))

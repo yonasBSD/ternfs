@@ -50,7 +50,8 @@ func NewHardwareEventClient(serverURL string) HardwareEventClient {
 }
 
 func (hec *HardwareEventClient) SendHardwareEvent(he HardwareEvent) error {
-	b, err := json.Marshal(he)
+	// The API expects a list of hardware events, so we have to wrap the single event.
+	b, err := json.Marshal([]HardwareEvent{he})
 	if err != nil {
 		return fmt.Errorf("failed to convert the HardwareEvent to json: %w", err)
 	}

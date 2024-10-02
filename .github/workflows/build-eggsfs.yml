@@ -17,7 +17,12 @@ jobs:
     runs-on: [self-hosted, restech]
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout Eggs Repo
+      uses: actions/checkout@v3
+      with:
+        repository: XTX/eggsfs
+        path: 'eggs_repo'
     - name: Package EggsFS
       shell: bash
+      working-directory: eggs_repo
       run: ./deploy/eggsctrl.py package --artifactory-host REDACTED --build-number $((${{ github.run_number }} + 1000))

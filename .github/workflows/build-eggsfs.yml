@@ -25,4 +25,4 @@ jobs:
     - name: Package EggsFS
       shell: bash
       working-directory: eggs_repo
-      run: ./deploy/eggsctrl.py package --artifactory-host REDACTED --build-number $((${{ github.run_number }} + 1000))
+      run: ./deploy/eggsctrl.py package --build-number $((${{ github.run_number }} + 1000))

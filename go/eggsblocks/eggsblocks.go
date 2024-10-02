@@ -133,6 +133,13 @@ func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 	return lib.CBCMAC(key, buf.Bytes())
 }
 
+func raiseAlertAndHardwareEvent(logger *lib.Logger, failureDomain string, blockServiceId string, msg string) {
+	// TODO(nchapma): Stop raising alerts here once we're confident that these are
+	// flowing through to HDB
+	logger.RaiseAlert(msg)
+	logger.RaiseHardwareEvent(failureDomain, blockServiceId, msg)
+}
+
 func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
 	// we don't really care about leaking part or all of the key -- the whole key business is
 	// to defend against bugs, not malicious agents.
@@ -470,7 +477,8 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	}
 	if errors.Is(err, syscall.ENODATA) {
 		// see <internal-repo/issues/106>
-		log.RaiseAlert("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPathNoCrc)
+		raiseAlertAndHardwareEvent(log, env.failureDomain, blockServiceId.String(),
+			fmt.Sprintf("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPathNoCrc))
 		// return io error, downstream code will pick it up
 		return syscall.EIO
 	}
@@ -641,11 +649,8 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 
 	if errors.Is(err, syscall.ENODATA) {
 		// see <internal-repo/issues/106>
-		// TODO(nchapma): Stop raising alerts here once we're confident that these are
-		// flowing through to HDB
-		errMsg := fmt.Sprintf("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath)
-		log.RaiseAlert(errMsg)
-		log.RaiseHardwareEvent(env.failureDomain, blockServiceId.String(), errMsg)
+		raiseAlertAndHardwareEvent(log, env.failureDomain, blockServiceId.String(),
+			fmt.Sprintf("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath))
 		// return io error, downstream code will pick it up
 		return syscall.EIO
 	}
@@ -711,7 +716,8 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 
 	if errors.Is(err, syscall.ENODATA) {
 		// see <internal-repo/issues/106>
-		log.RaiseAlert("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath)
+		raiseAlertAndHardwareEvent(log, env.failureDomain, blockServiceId.String(),
+			fmt.Sprintf("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath))
 		// return io error, downstream code will pick it up
 		return syscall.EIO
 	}

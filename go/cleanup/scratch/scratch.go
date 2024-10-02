@@ -153,7 +153,7 @@ func (s *scratchFile) _lock() *lockedScratchFile {
 	select {
 	case <-s.done:
 		s.mu.Unlock()
-		panic("locking closed scratch file")
+		return nil
 	default:
 	}
 	return &lockedScratchFile{s, true}
@@ -190,6 +190,10 @@ type scratchFile struct {
 
 func (s *scratchFile) releaseScratchFile() {
 	lockedScratchFile := s._lock()
+	// If the scratch file is already closed, do nothing.
+	if lockedScratchFile == nil {
+		return
+	}
 	defer lockedScratchFile.Unlock()
 	if s.id == msgs.NULL_INODE_ID {
 		return

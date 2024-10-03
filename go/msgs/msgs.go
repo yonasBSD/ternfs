@@ -97,6 +97,7 @@ const (
 	EGGSFS_BLOCK_SERVICE_NO_READ        BlockServiceFlags = 0x2
 	EGGSFS_BLOCK_SERVICE_NO_WRITE       BlockServiceFlags = 0x4
 	EGGSFS_BLOCK_SERVICE_DECOMMISSIONED BlockServiceFlags = 0x8
+	EGGSFS_BLOCK_SERVICE_MASK_ALL                         = 0xf
 )
 
 const (

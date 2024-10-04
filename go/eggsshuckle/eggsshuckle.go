@@ -85,9 +85,8 @@ type state struct {
 	decommedBlockServices   map[msgs.BlockServiceId]msgs.BlockServiceInfo
 	decommedBlockServicesMu sync.RWMutex
 	// periodically calculated evenly spread writable block services across all shards
-	currentShardBlockServicesLastUpdate msgs.EggsTime
-	currentShardBlockServices           map[msgs.ShardId][]msgs.BlockServiceId
-	currentShardBlockServicesMu         sync.RWMutex
+	currentShardBlockServices   map[msgs.ShardId][]msgs.BlockServiceId
+	currentShardBlockServicesMu sync.RWMutex
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
@@ -230,14 +229,13 @@ func newState(
 	conf *shuckleConfig,
 ) (*state, error) {
 	st := &state{
-		db:                                  db,
-		mutex:                               sync.Mutex{},
-		config:                              conf,
-		decommedBlockServices:               make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
-		decommedBlockServicesMu:             sync.RWMutex{},
-		currentShardBlockServices:           make(map[msgs.ShardId][]msgs.BlockServiceId),
-		currentShardBlockServicesMu:         sync.RWMutex{},
-		currentShardBlockServicesLastUpdate: 0,
+		db:                          db,
+		mutex:                       sync.Mutex{},
+		config:                      conf,
+		decommedBlockServices:       make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
+		decommedBlockServicesMu:     sync.RWMutex{},
+		currentShardBlockServices:   make(map[msgs.ShardId][]msgs.BlockServiceId),
+		currentShardBlockServicesMu: sync.RWMutex{},
 	}
 
 	blockServices, err := st.selectBlockServices(nil, 0, 0, false)
@@ -342,30 +340,39 @@ func (pq *failureDomainPQ) Pop() any {
 
 func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	updatesSkipped := 0
+	lastBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 	for {
-		blockServicesMap, err := s.selectBlockServices(nil, 0, s.currentShardBlockServicesLastUpdate, false)
+		newBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
+		blockServicesMap, err := s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
 		}
+		needsRecalculate := false
+		for bsId, _ := range blockServicesMap {
+			newBlockServicesUsed[bsId] = struct{}{}
+			if needsRecalculate {
+				continue
+			}
+			if _, ok := lastBlockServicesUsed[bsId]; !ok {
+				needsRecalculate = true
+			}
+		}
+		if !needsRecalculate {
+			for bsId, _ := range lastBlockServicesUsed {
+				if _, ok := blockServicesMap[bsId]; !ok {
+					needsRecalculate = true
+					break
+				}
+			}
+		}
 		// if nothing changed since we last calculated shard block services, nothing to do
-		if len(blockServicesMap) == 0 && 10*time.Second*time.Duration(updatesSkipped) < s.config.currentBlockServiceUpdateInterval {
+		if !needsRecalculate && 10*time.Second*time.Duration(updatesSkipped) < s.config.currentBlockServiceUpdateInterval {
 			updatesSkipped++
 			time.Sleep(10 * time.Second)
 			continue
 		}
+		lastBlockServicesUsed = newBlockServicesUsed
 		updatesSkipped = 0
-		// we only have all updated block services now later it will be filtered, update last updated
-		for _, bs := range blockServicesMap {
-			if bs.FlagsLastChanged > s.currentShardBlockServicesLastUpdate {
-				s.currentShardBlockServicesLastUpdate = bs.FlagsLastChanged
-			}
-		}
-
-		blockServicesMap, err = s.selectBlockServices(nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, true)
-		if err != nil {
-			log.RaiseAlert("failed to select block services: %v", err)
-			continue
-		}
 
 		currentShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceId{}
 
@@ -600,8 +607,7 @@ func handleNewRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.Register
 						IIF(
 							(
 								((flags & ?) <> 0) OR
-								(((flags & ~?) | (excluded.flags & ?)) = flags) OR
-								((available_bytes = 0 or excluded.available_bytes = 0) AND (available_bytes <> excluded.available_bytes))
+								(((flags & ~?) | (excluded.flags & ?)) = flags)
 							),
 							flags_last_changed,
 							?

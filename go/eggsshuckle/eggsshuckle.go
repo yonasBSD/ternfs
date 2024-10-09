@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"container/heap"
+	"context"
 	"crypto/aes"
 	"database/sql"
 	_ "embed"
@@ -40,6 +41,7 @@ import (
 	"xtx/eggsfs/wyhash"
 
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/sync/semaphore"
 )
 
 const zeroIPString = "x'00000000'"
@@ -73,11 +75,16 @@ type cdcState struct {
 
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
-	mutex    sync.Mutex
-	db       *sql.DB
-	counters map[msgs.ShuckleMessageKind]*lib.Timings
-	config   *shuckleConfig
-	client   *client.Client
+	mutex     sync.Mutex
+	semaphore *semaphore.Weighted
+	db        *sql.DB
+	counters  map[msgs.ShuckleMessageKind]*lib.Timings
+	config    *shuckleConfig
+	client    *client.Client
+
+	fsInfoMutex      sync.RWMutex
+	fsInfo           msgs.InfoResp
+	fsInfoLastUpdate time.Time
 	// separate mutex to manage `lastAutoDecom`
 	decomMutex    sync.Mutex
 	lastAutoDecom time.Time
@@ -90,6 +97,8 @@ type state struct {
 }
 
 func (s *state) selectCDC() (*cdcState, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	var cdc cdcState
 	rows, err := s.db.Query("SELECT ip1, port1, ip2, port2, last_seen FROM cdc WHERE is_leader = true AND location_id = 0")
 	if err != nil {
@@ -115,6 +124,8 @@ func (s *state) selectCDC() (*cdcState, error) {
 }
 
 func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	var ret [256]msgs.ShardInfo
 
 	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = true")
@@ -149,6 +160,8 @@ func (s *state) selectShards() (*[256]msgs.ShardInfo, error) {
 }
 
 func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	n := sql.Named
 
 	rows, err := s.db.Query("SELECT * FROM shards WHERE is_leader = true AND id = :id", n("id", shid))
@@ -179,6 +192,8 @@ func (s *state) selectShard(shid msgs.ShardId) (*msgs.ShardInfo, error) {
 
 // if flagsFilter&flags is non-zero, things won't be returned
 func (s *state) selectBlockServices(id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, filterWithSpaceAvailable bool) (map[msgs.BlockServiceId]msgs.BlockServiceInfo, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	n := sql.Named
 
 	ret := make(map[msgs.BlockServiceId]msgs.BlockServiceInfo)
@@ -231,6 +246,10 @@ func newState(
 	st := &state{
 		db:                          db,
 		mutex:                       sync.Mutex{},
+		semaphore:                   semaphore.NewWeighted(1000),
+		fsInfoMutex:                 sync.RWMutex{},
+		fsInfoLastUpdate:            time.Time{},
+		fsInfo:                      msgs.InfoResp{},
 		config:                      conf,
 		decommedBlockServices:       make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
 		decommedBlockServicesMu:     sync.RWMutex{},
@@ -271,6 +290,9 @@ func newState(
 		st.client.SetCDCTimeouts(&cdcTimeout)
 	}
 	if err := refreshClient(log, st); err != nil {
+		return nil, err
+	}
+	if _, err := handleInfoReq(log, st, &msgs.InfoReq{}); err != nil {
 		return nil, err
 	}
 	return st, err
@@ -824,6 +846,8 @@ func handleShards(ll *lib.Logger, s *state, req *msgs.ShardsReq) (*msgs.ShardsRe
 }
 
 func handleShardsWithReplicas(ll *lib.Logger, s *state, req *msgs.ShardsWithReplicasReq) (*msgs.ShardsWithReplicasResp, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	ret := []msgs.ShardWithReplicasInfo{}
 
 	rows, err := s.db.Query("SELECT * FROM shards")
@@ -907,6 +931,8 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 }
 
 func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (*msgs.ShardReplicasResp, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	var ret [5]msgs.AddrsInfo
 	n := sql.Named
 	rows, err := s.db.Query("SELECT * FROM shards WHERE last_seen IS NOT NULL AND id = :id AND location_id = 0", n("id", req.Id))
@@ -942,9 +968,6 @@ func handleShardReplicas(ll *lib.Logger, s *state, req *msgs.ShardReplicasReq) (
 }
 
 func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	resp := msgs.CdcResp{}
 	cdc, err := s.selectCDC()
 	if err != nil {
@@ -958,6 +981,8 @@ func handleCdc(log *lib.Logger, s *state, req *msgs.CdcReq) (*msgs.CdcResp, erro
 }
 
 func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasReq) (*msgs.CdcWithReplicasResp, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	var ret []msgs.CdcWithReplicasInfo
 	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2, last_seen, is_leader FROM cdc WHERE location_id = 0")
 	if err != nil {
@@ -981,6 +1006,8 @@ func handleCdcWithReplicas(log *lib.Logger, s *state, req *msgs.CdcWithReplicasR
 }
 
 func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasReq) (*msgs.CdcReplicasResp, error) {
+	s.semaphore.Acquire(context.Background(), 1)
+	defer s.semaphore.Release(1)
 	var ret [5]msgs.AddrsInfo
 	rows, err := s.db.Query("SELECT replica_id, ip1, port1, ip2, port2 FROM cdc WHERE location_id = 0")
 	if err != nil {
@@ -1059,34 +1086,61 @@ func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (res
 }
 
 func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp, error) {
-	resp := msgs.InfoResp{}
+	var resp *msgs.InfoResp
+	func() {
+		s.fsInfoMutex.RLock()
+		defer s.fsInfoMutex.RUnlock()
+		if time.Since(s.fsInfoLastUpdate) < time.Minute {
+			resp = &s.fsInfo
+		}
+	}()
+	if resp != nil {
+		return resp, nil
+	}
 
-	rows, err := s.db.Query(
-		`
-		SELECT
-			count(*),
-			count(distinct failure_domain),
-			sum(CASE WHEN (flags&:decommissioned) = 0 THEN capacity_bytes ELSE 0 END),
-			sum(CASE WHEN (flags&:decommissioned) = 0 THEN available_bytes ELSE 0 END),
-			sum(CASE WHEN (flags&:decommissioned) = 0 THEN blocks ELSE 0 END)
-		FROM block_services
-		`,
-		sql.Named("decommissioned", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
-	)
+	err := func() error {
+		s.fsInfoMutex.Lock()
+		defer s.fsInfoMutex.Unlock()
+		if time.Since(s.fsInfoLastUpdate) < time.Minute {
+			resp = &s.fsInfo
+			return nil
+		}
+		s.fsInfo = msgs.InfoResp{}
+		rows, err := s.db.Query(
+			`
+			SELECT
+				count(*),
+				count(distinct failure_domain),
+				ifnull(sum(CASE WHEN (flags&:decommissioned) = 0 THEN capacity_bytes ELSE 0 END), 0),
+				ifnull(sum(CASE WHEN (flags&:decommissioned) = 0 THEN available_bytes ELSE 0 END), 0),
+				ifnull(sum(CASE WHEN (flags&:decommissioned) = 0 THEN blocks ELSE 0 END),0)
+			FROM block_services
+			`,
+			sql.Named("decommissioned", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
+		)
+		if err != nil {
+			log.RaiseAlert("error getting info: %s", err)
+			return err
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			err = fmt.Errorf("no row found in info query")
+			return err
+		}
+		if err = rows.Scan(&s.fsInfo.NumBlockServices, &s.fsInfo.NumFailureDomains, &s.fsInfo.Capacity, &s.fsInfo.Available, &s.fsInfo.Blocks); err != nil {
+			log.RaiseAlert("error scanning info: %s", err)
+			return err
+		}
+		s.fsInfoLastUpdate = time.Now()
+		resp = &s.fsInfo
+		return nil
+
+	}()
 	if err != nil {
-		log.RaiseAlert("error getting info: %s", err)
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, fmt.Errorf("no row found in info query")
-	}
-	if err := rows.Scan(&resp.NumBlockServices, &resp.NumFailureDomains, &resp.Capacity, &resp.Available, &resp.Blocks); err != nil {
-		log.RaiseAlert("error scanning info: %s", err)
 		return nil, err
 	}
 
-	return &resp, nil
+	return resp, nil
 }
 
 func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
@@ -1100,6 +1154,8 @@ func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockSer
 }
 
 func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderReq) (*msgs.MoveShardLeaderResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	n := sql.Named
 	res, err := s.db.Exec(
 		"UPDATE shards SET is_leader = (replica_id = :replica_id) WHERE id = :id AND location_id = :location_id",
@@ -1120,6 +1176,8 @@ func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderR
 }
 
 func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) (*msgs.MoveCdcLeaderResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	n := sql.Named
 	res, err := s.db.Exec(
 		"UPDATE cdc SET is_leader = (replica_id = :replica_id) WHERE location_id = :location_id",
@@ -1140,6 +1198,8 @@ func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) 
 }
 
 func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq) (*msgs.ClearShardInfoResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	n := sql.Named
 	res, err := s.db.Exec(`
 		UPDATE shards
@@ -1163,6 +1223,8 @@ func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq
 }
 
 func handleClearCDCInfo(log *lib.Logger, s *state, req *msgs.ClearCdcInfoReq) (*msgs.ClearCdcInfoResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 	n := sql.Named
 	res, err := s.db.Exec(`
 		UPDATE cdc
@@ -2421,31 +2483,33 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}
 
 		n := sql.Named
-
-		st.mutex.Lock()
-		_, err := st.db.Exec(
-			`UPDATE
-				block_services
-			SET
-				flags = ((flags & ~:flag) | :flag),
-				flags_last_changed = :flags_last_changed
-			WHERE
-				last_seen < :thresh
-				AND flags <> ((flags & ~:flag) | :flag)
-				AND (flags & :decom_flag == 0)`,
-			n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE),
-			n("flags_last_changed", uint64(now)),
-			n("thresh", thresh),
-			n("decom_flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
-		)
-
-		st.mutex.Unlock()
-		if err != nil {
-			ll.RaiseAlert("error setting block services stale: %s", err)
-		}
+		func() {
+			st.mutex.Lock()
+			defer st.mutex.Unlock()
+			_, err := st.db.Exec(
+				`UPDATE
+					block_services
+				SET
+					flags = ((flags & ~:flag) | :flag),
+					flags_last_changed = :flags_last_changed
+				WHERE
+					last_seen < :thresh
+					AND flags <> ((flags & ~:flag) | :flag)
+					AND (flags & :decom_flag == 0)`,
+				n("flag", msgs.EGGSFS_BLOCK_SERVICE_STALE),
+				n("flags_last_changed", uint64(now)),
+				n("thresh", thresh),
+				n("decom_flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
+			)
+			if err != nil {
+				ll.RaiseAlert("error setting block services stale: %s", err)
+			}
+		}()
 
 		// Wrap the following select statements in func() to make defer work properly.
 		func() {
+			st.semaphore.Acquire(context.Background(), 1)
+			defer st.semaphore.Release(1)
 			rows, err := st.db.Query(
 				"SELECT id, failure_domain, last_seen FROM block_services WHERE last_seen < :thresh AND (flags & :flag) == 0",
 				n("thresh", thresh),
@@ -2487,6 +2551,9 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}()
 
 		func() {
+			st.semaphore.Acquire(context.Background(), 1)
+			defer st.semaphore.Release(1)
+
 			rows, err := st.db.Query("SELECT id, last_seen FROM shards WHERE is_leader = true AND last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
 				ll.RaiseAlert("error selecting shards: %s", err)
@@ -2522,6 +2589,8 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 		}()
 
 		func() {
+			st.semaphore.Acquire(context.Background(), 1)
+			defer st.semaphore.Release(1)
 			rows, err := st.db.Query("SELECT last_seen FROM cdc WHERE is_leader = true AND last_seen < :thresh", n("thresh", thresh))
 			if err != nil {
 				ll.RaiseAlert("error selecting blockServices: %s", err)

@@ -21,6 +21,9 @@ struct eggsfs_fs_info {
     atomic64_t cdc_addr1;
     atomic64_t cdc_addr2;
 
+    atomic64_t capacity;
+    atomic64_t available;
+
     u64 block_services_last_changed_time;
 
     struct delayed_work shuckle_refresh_work;

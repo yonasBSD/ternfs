@@ -238,6 +238,8 @@ ReconnectBegin:
 				}
 			}
 		}
+		c.log.Info("could not connect to shuckle: %v", err)
+		return nil, err
 	}
 	return conn, nil
 }

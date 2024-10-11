@@ -710,7 +710,8 @@ public:
         _electionState->lastReleased = _metadata.getLastReleased();
         _leaderLastActive = now;
 
-        if (unlikely(_noReplication)) {
+        //if (unlikely(_noReplication)) {
+        {
             LOG_INFO(_env,"ForceLeader set, skipping to confirming leader phase");
             _electionState->requestIds.fill(ReqResp::CONFIRMED_REQ_ID);
             _tryBecomeLeader();

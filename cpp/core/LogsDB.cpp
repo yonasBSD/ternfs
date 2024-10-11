@@ -950,6 +950,7 @@ private:
         }
         _reqResp.cleanupRequests(_electionState->requestIds);
         _state = LeadershipState::DIGESTING_ENTRIES;
+        LOG_INFO(_env,"Became nominee with token: %s", _metadata.getNomineeToken());
 
         // We might have gotten a higher release point. We can safely update
         _metadata.setLastReleased(_electionState->lastReleased);
@@ -1042,6 +1043,7 @@ private:
                 requestIds[replicaId.u8] = request.msg.id;
             }
         }
+        LOG_INFO(_env,"Digesting complete progressing to replication of %s entries with token: %s", entries.size(), _metadata.getNomineeToken());
         if (entries.empty()) {
             _tryProgressToLeaderConfirm();
         } else {
@@ -1072,6 +1074,7 @@ private:
         // if we do become leader we guarantee state up here was readable
         _metadata.setLastReleased(newLastReleased);
         _state = LeadershipState::CONFIRMING_LEADERSHIP;
+        LOG_INFO(_env,"Replication of extra records complete. Progressing to CONFIRMING_LEADERSHIP with token: %s, newLastReleased: %s", _metadata.getNomineeToken(), newLastReleased);
 
         auto& requestIds = _electionState->requestIds;
         for (ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8) {

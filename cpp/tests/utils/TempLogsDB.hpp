@@ -18,10 +18,8 @@ struct TempLogsDB {
         LogLevel level,
         ReplicaId replicaId = 0,
         LogIdx lastRead = 0,
-        bool dontDoReplication = false,
-        bool forceLeader = false,
-        bool avoidBeingLeader = false,
-        LogIdx forcedLastReleased = 0): logger(level, STDERR_FILENO, false, false)
+        bool noReplication = false,
+        bool avoidBeingLeader = false): logger(level, STDERR_FILENO, false, false)
     {
         dbDir = std::string("temp-logs-db.XXXXXX");
         if (mkdtemp(dbDir.data()) == nullptr) {
@@ -31,22 +29,20 @@ struct TempLogsDB {
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
 
         initSharedDB();
-        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
+        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, noReplication, avoidBeingLeader);
     }
 
     // useful to test recovery
     void restart(
         ReplicaId replicaId = 0,
         LogIdx lastRead = 0,
-        bool dontDoReplication = false,
-        bool forceLeader = false,
-        bool avoidBeingLeader = false,
-        LogIdx forcedLastReleased = 0)
+        bool noReplication = false,
+        bool avoidBeingLeader = false)
     {
         db->close();
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
-        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, dontDoReplication, forceLeader, avoidBeingLeader, forcedLastReleased);
+        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, noReplication, avoidBeingLeader);
     }
 
     ~TempLogsDB() {

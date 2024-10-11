@@ -29,10 +29,11 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Enable Xmon alerts.\n");
     fprintf(stderr, " -metrics\n");
     fprintf(stderr, "    	Enable metrics.\n");
-    fprintf(stderr, " -use-logsdb LEADER|LEADER_NO_FOLLOWERS|FOLLOWER\n");
-    fprintf(stderr, "    	Specify in which mode to use LogsDB, as LEADER|LEADER_NO_FOLLOWERS|FOLLOWER. Default is FOLLOWER.\n");
-    fprintf(stderr, " -force-last-released LogIdx\n");
-    fprintf(stderr, "    	Force forward last released. Used for manual leader election. Can not be combined with starting in any LEADER mode\n");
+    fprintf(stderr, " -logsdb-leader\n");
+    fprintf(stderr, "    	Allow replica to become leader. Default is false\n");
+    fprintf(stderr, " -logsdb-no-replication\n");
+    fprintf(stderr, "    	Don't wait for acks from other replicas when becoming leader or replicating.\n");
+    fprintf(stderr, "    	Can only be set if -logsdb-leader is also set. Default is false\n");
     fprintf(stderr, " -app-name-suffix suffix\n");
     fprintf(stderr, "    	Suffix to use in app name, app name format is 'eggscdc{suffix}_shardId_replicaId'\n");
 }
@@ -92,15 +93,6 @@ static uint8_t parseReplicaId(const std::string& arg) {
         die("Bad replicaId %s", arg.c_str());
     }
     return replicaId;
-}
-
-static LogIdx parseLogIdx(const std::string& arg) {
-    size_t idx;
-    uint64_t x = std::stoull(arg, &idx);
-    if (idx != arg.size()) {
-        die("Runoff character in LogIdx %s", arg.c_str());
-    }
-    return x;
 }
 
 int main(int argc, char** argv) {
@@ -181,20 +173,10 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-metrics") {
             options.metrics = true;
-        } else if (arg == "-use-logsdb") {
-            std::string logsDBMode = getNextArg();
-            if (logsDBMode == "LEADER") {
-                options.forceLeader = true;
-            } else if (logsDBMode == "LEADER_NO_FOLLOWERS") {
-                options.forceLeader = true;
-                options.dontDoReplication = true;
-            } else if (logsDBMode == "FOLLOWER") {
-            } else {
-                fprintf(stderr, "Invalid logsDB mode %s", logsDBMode.c_str());
-                dieWithUsage();
-            }
-        } else if (arg == "-force-last-released") {
-            options.forcedLastReleased = parseLogIdx(getNextArg());
+        } else if (arg == "-logsdb-leader") {
+            options.avoidBeingLeader = false;
+        } else if (arg == "-logsdb-no-replication") {
+            options.noReplication = true;
         } else if (arg == "-app-name-suffix") {
             options.appNameSuffix = getNextArg();
         } else {
@@ -210,9 +192,9 @@ int main(int argc, char** argv) {
         args.emplace_back("0");
     }
 
-    if (options.forceLeader && options.forcedLastReleased != 0) {
-        fprintf(stderr, "You can not forward release point on a LEADER replica.");
-        dieWithUsage();
+    if (options.noReplication && options.avoidBeingLeader) {
+        fprintf(stderr, "-logsdb-leader needs to be set if -logsdb-no-replication is set\n");
+         dieWithUsage();
     }
 
 #ifndef EGGS_DEBUG

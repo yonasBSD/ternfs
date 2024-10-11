@@ -1191,7 +1191,7 @@ func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) 
 		panic(err)
 	}
 	if rowsAffected != 5 {
-		panic(fmt.Errorf("unusual number of rows affected (%d) when changing CDC leader to %s", rowsAffected, req.Replica))
+		panic(fmt.Errorf("unusual number of rows affected (%d) when changing CDC leader to %v", rowsAffected, req.Replica))
 	}
 
 	return &msgs.MoveCdcLeaderResp{}, nil
@@ -1241,7 +1241,7 @@ func handleClearCDCInfo(log *lib.Logger, s *state, req *msgs.ClearCdcInfoReq) (*
 		panic(err)
 	}
 	if rowsAffected != 1 {
-		panic(fmt.Errorf("unusual number of rows affected (%d) when executing ClearCDCInfoReq for %s", rowsAffected, req.Replica))
+		panic(fmt.Errorf("unusual number of rows affected (%d) when executing ClearCDCInfoReq for %v", rowsAffected, req.Replica))
 	}
 
 	return &msgs.ClearCdcInfoResp{}, nil

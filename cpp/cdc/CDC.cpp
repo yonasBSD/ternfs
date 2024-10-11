@@ -147,6 +147,12 @@ public:
         const std::map<EggsTime, uint64_t>& _pq;
         std::map<EggsTime, uint64_t>::const_iterator _it;
     };
+
+    void clear() {
+        _reqs.clear();
+        _pq.clear();
+    }
+
     size_t size() const {
         return _reqs.size();
     }
@@ -242,7 +248,7 @@ private:
     // The _shard_ request we're currently waiting for, if any.
     InFlightShardRequests _inFlightShardReqs;
 
-    const bool _dontDoReplication;
+    const bool _noReplication;
     LogsDB& _logsDB;
     std::vector<LogsDBRequest> _logsDBRequests;
     std::vector<LogsDBResponse> _logsDBResponses;
@@ -263,15 +269,10 @@ public:
         _shardTimeout(options.shardTimeout),
         _receiver({.perSockMaxRecvMsg = MAX_MSG_RECEIVE, .maxMsgSize = MAX_UDP_MTU}),
         _cdcSender({.maxMsgSize = MAX_UDP_MTU}),
-        _dontDoReplication(options.dontDoReplication),
+        _noReplication(options.noReplication),
         _logsDB(shared.logsDB)
     {
         expandKey(CDCKey, _expandedCDCKey);
-
-        if (options.forceLeader) {
-            // In case of force leader it immediately detects and promotes us to leader
-            _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
-        }
         _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
         _logsDBLogIndex = _logsDB.getLastReleased();
         LOG_INFO(_env, "Waiting for shard info to be filled in");
@@ -284,17 +285,6 @@ public:
                 return;
             }
             _seenShards = true;
-            if (_shared.isLeader.load(std::memory_order_relaxed)) {
-                // If we've got dangling transactions, immediately start processing it
-                auto bootstrap = CDCLogEntry::prepareBootstrapEntry();
-                auto& entry = entries.emplace_back();
-                entry.value.resize(bootstrap.packedSize());
-                BincodeBuf bbuf((char*) entry.value.data(), entry.value.size());
-                bootstrap.pack(bbuf);
-                ALWAYS_ASSERT(bbuf.len() == entry.value.size());
-                bootstrap.logIdx(++_logsDBLogIndex.u64);
-                _inFlightLogEntries[bootstrap.logIdx()] = std::move(bootstrap);
-            }
         }
 
         // clear internal buffers
@@ -365,6 +355,19 @@ public:
             }
         }
 
+        if (!_shared.isLeader.load(std::memory_order_relaxed) && _logsDB.isLeader()) {
+            // If we've got dangling transactions, immediately start processing it
+            auto bootstrap = CDCLogEntry::prepareBootstrapEntry();
+            auto& entry = entries.emplace_back();
+            entry.value.resize(bootstrap.packedSize());
+            BincodeBuf bbuf((char*) entry.value.data(), entry.value.size());
+            bootstrap.pack(bbuf);
+            ALWAYS_ASSERT(bbuf.len() == entry.value.size());
+            bootstrap.logIdx(++_logsDBLogIndex.u64);
+            _inFlightLogEntries[bootstrap.logIdx()] = std::move(bootstrap);
+        }
+        _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
+
         if (_logsDB.isLeader()) {
             auto err = _logsDB.appendEntries(entries);
             ALWAYS_ASSERT(err == EggsError::NO_ERROR);
@@ -390,6 +393,13 @@ public:
                 }
             }
             entries.clear();
+        } else {
+            _inFlightEntries.clear();
+            _inFlightLogEntries.clear();
+            _logEntryIdxToReqInfos.clear();
+            _inFlightCDCReqs.clear();
+            _inFlightShardReqs.clear();
+            _inFlightTxns.clear();
         }
         // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
         // We want to have priority when sending out
@@ -402,7 +412,7 @@ public:
         for (auto request : _logsDBOutRequests) {
             _packLogsDBRequest(*request);
         }
-        if (_dontDoReplication) {
+        if (_noReplication) {
             _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
         }
         _logsDB.readEntries(entries);
@@ -663,6 +673,11 @@ private:
                 continue;
             }
 
+            if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) == false)) {
+                LOG_DEBUG(_env, "dropping request since we're not the leader %s", cdcMsg);
+                continue;
+            }
+
             auto& cdcReq = _cdcReqs.emplace_back(std::move(cdcMsg.body));
 
             LOG_DEBUG(_env, "CDC request %s successfully parsed, will process soon", cdcReq.kind());
@@ -688,6 +703,10 @@ private:
                 continue;
             }
 
+            if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) == false)) {
+                LOG_DEBUG(_env, "dropping response since we're not the leader %s", respMsg);
+                continue;
+            }
             LOG_DEBUG(_env, "received response %s", respMsg);
 
             auto shardResp = _prepareCDCShardResp(respMsg.id);
@@ -863,7 +882,8 @@ struct CDCRegisterer : PeriodicLoop {
     CDCShared& _shared;
     const ReplicaId _replicaId;
     const uint8_t _location;
-    const bool _dontDoReplication;
+    const bool _noReplication;
+    const bool _avoidBeingLeader;
     const std::string _shuckleHost;
     const uint16_t _shucklePort;
     XmonNCAlert _alert;
@@ -873,7 +893,8 @@ public:
         _shared(shared),
         _replicaId(options.replicaId),
         _location(options.location),
-        _dontDoReplication(options.dontDoReplication),
+        _noReplication(options.noReplication),
+        _avoidBeingLeader(options.avoidBeingLeader),
         _shuckleHost(options.shuckleHost),
         _shucklePort(options.shucklePort),
         _alert(10_sec)
@@ -884,7 +905,8 @@ public:
     virtual bool periodicStep() override {
         LOG_DEBUG(_env, "Registering ourselves (CDC %s, location %s,  %s) with shuckle", _replicaId, (int)_location, _shared.socks[CDC_SOCK].addr());
         {
-            const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _location, _shared.isLeader.load(std::memory_order_relaxed), _shared.socks[CDC_SOCK].addr());
+            // TODO: report _shared.isleader instead of command line flag once leader election is enabled
+            const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _location, !_avoidBeingLeader, _shared.socks[CDC_SOCK].addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
@@ -913,7 +935,7 @@ public:
                         ++emptyReplicas;
                     }
                 }
-                if (!_dontDoReplication && emptyReplicas > 0 ) {
+                if (!_noReplication && emptyReplicas > 0 ) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
                     return false;
                 }
@@ -1154,9 +1176,8 @@ void runCDC(CDCOptions& options) {
     LOG_INFO(env, "  cdcAddrs = %s", options.cdcAddrs);
     LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     LOG_INFO(env, "Using LogsDB with options:");
-    LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
-    LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
-    LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
+    LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
+    LOG_INFO(env, "    noReplication = '%s'", (int)options.noReplication);
 
     std::vector<std::unique_ptr<LoopThread>> threads;
 
@@ -1188,7 +1209,7 @@ void runCDC(CDCOptions& options) {
     sharedDb.openTransactionDB(dbOptions);
 
     CDCDB db(logger, xmon, sharedDb);
-    LogsDB logsDB(logger, xmon, sharedDb, options.replicaId, db.lastAppliedLogEntry(), options.dontDoReplication, options.forceLeader, !options.forceLeader, db.lastAppliedLogEntry());
+    LogsDB logsDB(logger, xmon, sharedDb, options.replicaId, db.lastAppliedLogEntry(), options.noReplication, options.avoidBeingLeader);
     CDCShared shared(
         sharedDb, db, logsDB,
         std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.cdcAddrs), UDPSocketPair(env, options.cdcToShardAddress)})

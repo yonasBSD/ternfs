@@ -900,7 +900,7 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 								break
 							}
 							if err != msgs.BLOCK_NOT_FOUND {
-								m.log.Info("could not migrate file in shard %v: %v", file, shid, err)
+								m.log.Info("could not migrate file %v in shard %v: %v", file, shid, err)
 								break
 							}
 							m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)

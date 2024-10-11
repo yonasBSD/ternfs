@@ -595,7 +595,7 @@ private:
     SnapshotRequest _snapshotRequest;
 
     LogsDB& _logsDB;
-    const bool _dontDoReplication;
+    const bool _noReplication;
     std::vector<LogsDBRequest> _logsDBRequests;
     std::vector<LogsDBResponse> _logsDBResponses;
     std::vector<LogsDBRequest *> _logsDBOutRequests;
@@ -620,7 +620,7 @@ public:
         _maxWritesAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
         _snapshotRequest({0,0,0,{},0}),
         _logsDB(shared.logsDB),
-        _dontDoReplication(_shared.options.dontDoReplication),
+        _noReplication(_shared.options.noReplication),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(eggsNow().ns),
         _outgoingPacketDropProbability(0)
@@ -637,9 +637,6 @@ public:
         };
         convertProb("outgoing", _shared.options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(_maxWritesAtOnce);
-
-        // In case of force leader it immediately detects and promotes us to leader
-        _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
         _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
     }
 
@@ -684,7 +681,7 @@ public:
             for (size_t i = 0; i < _logEntries.size(); ++i) {
                 if (logsDBEntries[i].idx == 0) {
                     // if we don't wait for replication the window gets cleared immediately
-                    ALWAYS_ASSERT(!_dontDoReplication);
+                    ALWAYS_ASSERT(!_noReplication);
                     droppedDueToInFlightWindow = true;
                     LOG_INFO(_env, "Appended %s out of %s shard write requests. Log in flight windows is full. Dropping other entries", i, _logEntries.size());
                     break;
@@ -694,7 +691,7 @@ public:
             }
             logsDBEntries.clear();
 
-            if (_dontDoReplication) {
+            if (_noReplication) {
                 // usually the state machine is moved by responses if we don't expect any we move it manually
                 _logsDBRequests.clear();
                 _logsDBResponses.clear();
@@ -716,7 +713,7 @@ public:
 
         _logsDB.readEntries(logsDBEntries);
         _outgoingLogEntries.reserve(logsDBEntries.size());
-        if (_dontDoReplication && _logsDB.isLeader()) {
+        if (_noReplication && _logsDB.isLeader()) {
             ALWAYS_ASSERT(_inFlightEntries.size() == logsDBEntries.size());
         }
 
@@ -730,7 +727,7 @@ public:
             ALWAYS_ASSERT(_currentLogIndex == shardEntry.idx);
             auto it = _inFlightEntries.find(shardEntry.idx.u64);
 
-            if (_dontDoReplication  && _logsDB.isLeader()) {
+            if (_noReplication  && _logsDB.isLeader()) {
                 ALWAYS_ASSERT(it != _inFlightEntries.end());
                 ALWAYS_ASSERT(shardEntry == it->second.logEntry);
             }
@@ -896,7 +893,7 @@ private:
     ShardShared& _shared;
     const ShardReplicaId _shrid;
     const uint8_t _location;
-    const bool _dontDoReplication;
+    const bool _noReplication;
     const std::string _shuckleHost;
     const uint16_t _shucklePort;
     XmonNCAlert _alert;
@@ -906,7 +903,7 @@ public:
         _shared(shared),
         _shrid(_shared.options.shrid),
         _location(_shared.options.location),
-        _dontDoReplication(_shared.options.dontDoReplication),
+        _noReplication(_shared.options.noReplication),
         _shuckleHost(_shared.options.shuckleHost),
         _shucklePort(_shared.options.shucklePort)
     {}
@@ -920,7 +917,8 @@ public:
     virtual bool periodicStep() {
         {
             LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with shuckle", _shrid, (int)_location, _shared.sock().addr());
-            const auto [err, errStr] = registerShard(_shuckleHost, _shucklePort, 10_sec, _shrid, _location, _shared.isLeader.load(std::memory_order_relaxed), _shared.sock().addr());
+            // ToDO: once leader election is fully enabled report or leader status instead of value of flag passed on startup
+            const auto [err, errStr] = registerShard(_shuckleHost, _shucklePort, 10_sec, _shrid, _location, !_shared.options.avoidBeingLeader, _shared.sock().addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
@@ -948,7 +946,7 @@ public:
                         ++emptyReplicas;
                     }
                 }
-                if (emptyReplicas > 0 && !_dontDoReplication) {
+                if (emptyReplicas > 0 && !_noReplication) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
                     return false;
                 }
@@ -1251,9 +1249,8 @@ void runShard(ShardOptions& options) {
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);
         LOG_INFO(env, "Using LogsDB with options:");
-        LOG_INFO(env, "    dontDoReplication = '%s'", (int)options.dontDoReplication);
-        LOG_INFO(env, "    forceLeader = '%s'", (int)options.forceLeader);
-        LOG_INFO(env, "    forcedLastReleased = '%s'", options.forcedLastReleased);
+        LOG_INFO(env, "    noReplication = '%s'", (int)options.noReplication);
+        LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
     }
 
     // Immediately start xmon: we want the database initializing update to
@@ -1296,12 +1293,8 @@ void runShard(ShardOptions& options) {
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
 
     ShardDB shardDB(logger, xmon, options.shrid.shardId(), options.transientDeadlineInterval, sharedDB, blockServicesCache);
-    LogsDB logsDB(logger, xmon, sharedDB, options.shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.dontDoReplication, options.forceLeader, !options.forceLeader, options.forcedLastReleased);
+    LogsDB logsDB(logger, xmon, sharedDB, options.shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.noReplication, options.avoidBeingLeader);
     env.clearAlert(dbInitAlert);
-
-    if (options.dontDoReplication) {
-        options.forcedLastReleased.u64 = shardDB.lastAppliedLogEntry();
-    }
 
     ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.shardAddrs));
 

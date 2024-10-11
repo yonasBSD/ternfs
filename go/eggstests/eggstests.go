@@ -1151,12 +1151,10 @@ func main() {
 		}
 		if r == 0 {
 			if *leaderOnly {
-				cdcOpts.UseLogsDB = "LEADER_NO_FOLLOWERS"
+				cdcOpts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
 			} else {
-				cdcOpts.UseLogsDB = "LEADER"
+				cdcOpts.LogsDBFlags = []string{"-logsdb-leader"}
 			}
-		} else {
-			cdcOpts.UseLogsDB = "FOLLOWER"
 		}
 		if *buildType == "valgrind" {
 			// apparently 100ms is too little when running with valgrind
@@ -1182,16 +1180,16 @@ func main() {
 				Addr1:                     "127.0.0.1:0",
 				Addr2:                     "127.0.0.1:0",
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
-				UseLogsDB:                 "",
+				LogsDBFlags:               nil,
 			}
 			if *leaderOnly && r > 0 {
 				continue
 			}
 			if r == 0 {
 				if *leaderOnly {
-					shopts.UseLogsDB = "LEADER_NO_FOLLOWERS"
+					shopts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
 				} else {
-					shopts.UseLogsDB = "LEADER"
+					shopts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
 			procs.StartShard(log, *repoDir, &shopts)

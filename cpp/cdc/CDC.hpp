@@ -28,9 +28,8 @@ struct CDCOptions {
 
 
     // LogsDB settings
-    bool dontDoReplication = false;
-    bool forceLeader = false;
-    LogIdx forcedLastReleased = 0;
+    bool avoidBeingLeader = true;
+    bool noReplication = false;
 };
 
 void runCDC(CDCOptions& options);

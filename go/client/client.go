@@ -893,7 +893,7 @@ func (procs *blocksProcessors) send(
 	args *sendArgs,
 	completionChan chan *blockCompletion,
 ) error {
-	if args.addrs.Addr1.Port == 0 && args.addrs.Addr1.Port == 0 {
+	if args.addrs.Addr1.Port == 0 && args.addrs.Addr2.Port == 0 {
 		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.addrs.Addr1.Addrs, args.addrs.Addr1.Port, args.addrs.Addr2.Addrs, args.addrs.Addr2.Port))
 	}
 	resp := &clientBlockResponse{

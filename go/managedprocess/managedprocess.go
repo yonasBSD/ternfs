@@ -477,7 +477,7 @@ type ShardOpts struct {
 	Addr2                     string
 	TransientDeadlineInterval *time.Duration
 	Xmon                      string
-	UseLogsDB                 string
+	LogsDBFlags               []string
 }
 
 func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
@@ -500,8 +500,8 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
 	}
-	if opts.UseLogsDB != "" {
-		args = append(args, "-use-logsdb", opts.UseLogsDB)
+	if opts.LogsDBFlags != nil {
+		args = append(args, opts.LogsDBFlags...)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:
@@ -571,7 +571,7 @@ type CDCOpts struct {
 	Addr2          string
 	ShardTimeout   time.Duration
 	Xmon           string
-	UseLogsDB      string
+	LogsDBFlags    []string
 }
 
 func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
@@ -593,8 +593,8 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
 	}
-	if opts.UseLogsDB != "" {
-		args = append(args, "-use-logsdb", opts.UseLogsDB)
+	if opts.LogsDBFlags != nil {
+		args = append(args, opts.LogsDBFlags...)
 	}
 	switch opts.LogLevel {
 	case lib.TRACE:

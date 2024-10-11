@@ -126,7 +126,7 @@ struct ReplicaId {
     constexpr ReplicaId(): u8(0) {}
 
     constexpr ReplicaId(uint8_t id): u8(id) {
-        ALWAYS_ASSERT(valid());
+        ALWAYS_ASSERT(valid(), "Invalid replica id %s", int(u8));
     }
 
     bool operator==(ReplicaId rhs) const {

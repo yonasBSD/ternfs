@@ -195,12 +195,10 @@ func main() {
 			}
 			if r == 0 {
 				if *leaderOnly {
-					opts.UseLogsDB = "LEADER_NO_FOLLOWERS"
+					opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
 				} else {
-					opts.UseLogsDB = "LEADER"
+					opts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
-			} else {
-				opts.UseLogsDB = "FOLLOWER"
 			}
 			if *startingPort != 0 {
 				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+uint16(r))
@@ -224,16 +222,16 @@ func main() {
 				ShuckleAddress: shuckleAddress,
 				Perf:           *profile,
 				Xmon:           *xmon,
-				UseLogsDB:      "",
+				LogsDBFlags:    nil,
 			}
 			if *leaderOnly && r > 0 {
 				continue
 			}
 			if r == 0 {
 				if *leaderOnly {
-					opts.UseLogsDB = "LEADER_NO_FOLLOWERS"
+					opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
 				} else {
-					opts.UseLogsDB = "LEADER"
+					opts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
 			if *startingPort != 0 {

@@ -29,9 +29,8 @@ struct ShardOptions {
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
 
     // LogsDB settings
-    bool dontDoReplication = false;
-    bool forceLeader = false;
-    LogIdx forcedLastReleased = 0;
+    bool avoidBeingLeader = true;
+    bool noReplication = false;
 };
 
 void runShard(ShardOptions& options);

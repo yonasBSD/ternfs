@@ -108,10 +108,8 @@ public:
         SharedRocksDB& sharedDB,
         ReplicaId replicaId,
         LogIdx lastRead,
-        bool dontDoReplication,
-        bool forceLeader,
-        bool avoidBeingLeader,
-        LogIdx forcedLastReleased);
+        bool noReplication,
+        bool avoidBeingLeader);
 
     ~LogsDB();
 

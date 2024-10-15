@@ -353,7 +353,7 @@ constexpr Parity NO_PARITY(0);
 constexpr uint8_t EMPTY_STORAGE = 0;
 constexpr uint8_t INLINE_STORAGE = 1;
 constexpr uint8_t HDD_STORAGE = 2;
-constexpr uint8_t FLASH_STORAGE = 2;
+constexpr uint8_t FLASH_STORAGE = 3;
 
 uint8_t storageClassByName(const char* name);
 

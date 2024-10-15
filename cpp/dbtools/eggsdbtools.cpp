@@ -23,6 +23,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "       Outputs entries from distributed log. The RocksDB database will be opened as read only.\n");
     fprintf(stderr, "  cdc-log-entries DB_PATH START_LOG_IDX ENTRY_COUNT\n");
     fprintf(stderr, "       Outputs entries from distributed log. The RocksDB database will be opened as read only.\n");
+    fprintf(stderr, "  sample-files DB_PATH\n");
+    fprintf(stderr, "       Outputs per directory usage statistics in binary format. The RocksDB database will be opened as read only.\n");
 }
 
 int main(int argc, char** argv) {
@@ -65,6 +67,9 @@ int main(int argc, char** argv) {
         } else if (arg == "fsck") {
             std::string dbPath = getNextArg();
             ShardDBTools::fsck(dbPath);
+        } else if (arg == "sample-files") {
+            std::string dbPath = getNextArg();
+            ShardDBTools::sampleFiles(dbPath);
         } else {
             dieWithUsage();
         }

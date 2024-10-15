@@ -1,10 +1,14 @@
 #include "ShardDBTools.hpp"
 
+#include <chrono>
+#include <random>
+#include <cstdint>
 #include <optional>
 #include <memory>
 #include <rocksdb/db.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
+#include <unordered_map>
 #include <vector>
 
 #include "Bincode.hpp"
@@ -14,10 +18,12 @@
 #include "LogsDB.hpp"
 #include "LogsDBTools.hpp"
 #include "Msgs.hpp"
+#include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDB.hpp"
 #include "SharedRocksDB.hpp"
 #include "ShardDBData.hpp"
+#include "Time.hpp"
 
 namespace rocksdb {
 std::ostream& operator<<(std::ostream& out, const rocksdb::Slice& slice) {
@@ -476,4 +482,150 @@ void ShardDBTools::fsck(const std::string& dbPath) {
     ALWAYS_ASSERT(!anyErrors, "Some errors detected, check log");
 
 #undef ERROR
+}
+
+struct SizePerStorageClass {
+    uint64_t logical{0};
+    uint64_t flash{0};
+    uint64_t hdd{0};
+    uint64_t inMetadata{0};
+};
+
+struct FileInfo {
+    EggsTime mTime;
+    EggsTime aTime;
+    SizePerStorageClass size;
+    uint64_t size_weight;
+};
+
+static constexpr uint64_t  SAMPLE_RATE_SIZE_LIMIT = 10ull << 30;
+
+void ShardDBTools::sampleFiles(const std::string& dbPath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions);
+    auto db = sharedDb.db();
+    rocksdb::ReadOptions options;
+    auto edgesCf = sharedDb.getCF("edges");
+    auto filesCf = sharedDb.getCF("files");
+    auto spansCf = sharedDb.getCF("spans");
+    std::unordered_map<InodeId, FileInfo> files;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<double> realDis(0.0, 1.0);
+    {
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, filesCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto fileK = ExternalValue<InodeIdKey>::FromSlice(it->key());
+            InodeId fileId = fileK().id();
+            if (fileId.type() != InodeType::FILE) {
+                continue;
+            }
+            auto fileV = ExternalValue<FileBody>::FromSlice(it->value());
+            auto logicalSize = fileV().fileSize();
+            if ( logicalSize == 0) { continue; } // nothing in this
+            auto probability = (double)logicalSize / SAMPLE_RATE_SIZE_LIMIT;
+            if( probability > realDis(gen)) {
+                files.insert(std::make_pair(fileId, FileInfo{fileV().mtime(), fileV().atime(), SizePerStorageClass{logicalSize,0,0}, std::max(logicalSize, SAMPLE_RATE_SIZE_LIMIT)}));
+            }
+        }
+        ROCKS_DB_CHECKED(it->status());
+    }
+    {
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
+        InodeId thisFile = NULL_INODE_ID;
+        uint64_t thisFileFlashSize = 0;
+        uint64_t thisFileHddSize = 0;
+        uint64_t thisFileInlineSize = 0;
+        uint64_t totalSize = 0;
+        uint64_t analysedSpans = 0;
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
+            ++analysedSpans;
+            if (spanK().fileId().type() != InodeType::FILE) {
+                continue;
+            }
+            if (spanK().fileId() != thisFile) {
+                auto file_it = files.find(thisFile);
+                if (file_it != files.end()) {
+                    file_it->second.size.flash = thisFileFlashSize;
+                    file_it->second.size.hdd = thisFileHddSize;
+                    file_it->second.size.inMetadata = thisFileInlineSize;
+                }
+                thisFile = spanK().fileId();
+                thisFileFlashSize = 0;
+                thisFileHddSize = 0;
+                thisFileInlineSize = 0;
+            }
+
+            auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
+            if (spanV().storageClass() == INLINE_STORAGE) {
+                thisFileInlineSize += spanV().size();
+                continue;
+            }
+            auto blocksBody = spanV().blocksBody();
+            auto logicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
+            switch (spanV().storageClass()){
+                case HDD_STORAGE:
+                    thisFileHddSize += logicalSize;
+                    break;
+                case FLASH_STORAGE:
+                    thisFileFlashSize += logicalSize;
+                    break;
+            }
+        }
+        auto file_it = files.find(thisFile);
+        if (file_it != files.end()) {
+            file_it->second.size.flash = thisFileFlashSize;
+            file_it->second.size.hdd = thisFileHddSize;
+            file_it->second.size.inMetadata = thisFileInlineSize;
+        }
+        ROCKS_DB_CHECKED(it->status());
+    }
+    {
+        const rocksdb::ReadOptions options;
+        std::unordered_set<InodeId> ownedInodes;
+        auto dummyCurrentDirectory = InodeId::FromU64Unchecked(1ull << 63);
+        auto thisDir = dummyCurrentDirectory;
+        bool thisDirHasCurrentEdges = false;
+        EggsTime thisDirMaxTime = 0;
+        std::string thisDirMaxTimeEdge;
+        // the last edge for a given name, in a given directory
+        std::unordered_map<std::string, std::pair<StaticValue<EdgeKey>, StaticValue<SnapshotEdgeBody>>> thisDirLastEdges;
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
+            InodeId ownedTargetId = NULL_INODE_ID;
+            std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
+            std::optional<ExternalValue<SnapshotEdgeBody>> snapshotEdge;
+            bool current = false;
+            if (edgeK().current()) {
+                currentEdge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
+                ownedTargetId = (*currentEdge)().targetId();
+                current = true;
+            } else {
+                snapshotEdge = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
+                if (!(*snapshotEdge)().targetIdWithOwned().extra()) {
+                    // we don't care about non-owned edges
+                    continue;
+                }
+                ownedTargetId = (*snapshotEdge)().targetIdWithOwned().id();
+            }
+            auto file_id = files.find(ownedTargetId);
+            if (file_id == files.end()) {
+                // not sampled skip
+                continue;
+            }
+            LOG_INFO(env,"{\"Owner\": \"%s\", \"Inode\": \"%s\", \"Name\": %s, \"Current\": %s, \"Logical\": %s, \"HDD\": %s, \"FLASH\": %s, \"INLINE\": %s, \"mTime\": %s, \"aTime\": %s, \"size_weight\": %s}",
+            edgeK().dirId(), ownedTargetId, edgeK().name(), current, file_id->second.size.logical, file_id->second.size.hdd, file_id->second.size.flash, file_id->second.size.inMetadata, file_id->second.mTime, file_id->second.aTime, file_id->second.size_weight);
+        }
+        ROCKS_DB_CHECKED(it->status());
+    }
 }

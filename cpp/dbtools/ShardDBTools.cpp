@@ -571,13 +571,13 @@ void ShardDBTools::sampleFiles(const std::string& dbPath) {
                 continue;
             }
             auto blocksBody = spanV().blocksBody();
-            auto logicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
+            auto physicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
             switch (spanV().storageClass()){
                 case HDD_STORAGE:
-                    thisFileHddSize += logicalSize;
+                    thisFileHddSize += physicalSize;
                     break;
                 case FLASH_STORAGE:
-                    thisFileFlashSize += logicalSize;
+                    thisFileFlashSize += physicalSize;
                     break;
             }
         }

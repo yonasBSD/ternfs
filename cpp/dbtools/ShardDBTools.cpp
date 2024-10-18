@@ -545,10 +545,8 @@ void ShardDBTools::sampleFiles(const std::string& dbPath) {
         uint64_t thisFileHddSize = 0;
         uint64_t thisFileInlineSize = 0;
         uint64_t totalSize = 0;
-        uint64_t analysedSpans = 0;
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
-            ++analysedSpans;
             if (spanK().fileId().type() != InodeType::FILE) {
                 continue;
             }

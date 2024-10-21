@@ -1604,7 +1604,7 @@ func handleWithRecover(
 			}
 		}()
 		if r.Method != *methodAllowed {
-			content, size, status = sendPage(errorPage(http.StatusMethodNotAllowed, "Only GET allowed"))
+			content, size, status = sendPage(errorPage(http.StatusMethodNotAllowed, fmt.Sprintf("Only %v allowed", *methodAllowed)))
 		} else {
 			query, err := url.ParseQuery(r.URL.RawQuery)
 			if err != nil {

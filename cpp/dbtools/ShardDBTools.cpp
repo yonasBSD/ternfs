@@ -10,6 +10,8 @@
 #include <rocksdb/write_batch.h>
 #include <unordered_map>
 #include <vector>
+#include <iostream>
+#include <fstream>
 
 #include "Bincode.hpp"
 #include "BlockServicesCacheDB.hpp"
@@ -500,8 +502,10 @@ struct FileInfo {
 
 static constexpr uint64_t  SAMPLE_RATE_SIZE_LIMIT = 10ull << 30;
 
-void ShardDBTools::sampleFiles(const std::string& dbPath) {
+void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& outputFilePath) {
     Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::ofstream outputStream(outputFilePath);
+    ALWAYS_ASSERT(outputStream.is_open(), "Failed to open output file for sampling results");
     std::shared_ptr<XmonAgent> xmon;
     Env env(logger, xmon, "ShardDBTools");
     SharedRocksDB sharedDb(logger, xmon, dbPath, "");
@@ -598,6 +602,9 @@ void ShardDBTools::sampleFiles(const std::string& dbPath) {
         // the last edge for a given name, in a given directory
         std::unordered_map<std::string, std::pair<StaticValue<EdgeKey>, StaticValue<SnapshotEdgeBody>>> thisDirLastEdges;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
+        bool someOutputWritten = false;
+        // The output is a JSON array, so we need to output just the start of a list.
+        outputStream << "[";
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
             InodeId ownedTargetId = NULL_INODE_ID;
@@ -621,9 +628,25 @@ void ShardDBTools::sampleFiles(const std::string& dbPath) {
                 // not sampled skip
                 continue;
             }
-            LOG_INFO(env,"{\"Owner\": \"%s\", \"Inode\": \"%s\", \"Name\": %s, \"Current\": %s, \"Logical\": %s, \"HDD\": %s, \"FLASH\": %s, \"INLINE\": %s, \"mTime\": %s, \"aTime\": %s, \"size_weight\": %s}",
-            edgeK().dirId(), ownedTargetId, edgeK().name(), current, file_id->second.size.logical, file_id->second.size.hdd, file_id->second.size.flash, file_id->second.size.inMetadata, file_id->second.mTime, file_id->second.aTime, file_id->second.size_weight);
+            if (someOutputWritten) {
+                outputStream << ",";
+            }
+            outputStream << R"js({"owner": ")js" << edgeK().dirId() << "\","
+                         << R"js("inode": ")js" << ownedTargetId << "\","
+                         << R"js("name": ")js" << edgeK().name() << "\","
+                         << R"js("current": )js" << current << ","
+                         << R"js("logical": )js" << file_id->second.size.logical << ","
+                         << R"js("hdd": )js" << file_id->second.size.hdd << ","
+                         << R"js("flash": )js" << file_id->second.size.flash << ","
+                         << R"js("inline": )js" << file_id->second.size.inMetadata << ","
+                         << R"js("mtime": )js" << file_id->second.mTime << ","
+                         << R"js("atime": )js" << file_id->second.aTime << ","
+                         << R"js("size_weight": )js" << file_id->second.size_weight << "}";
+            someOutputWritten = true;
         }
         ROCKS_DB_CHECKED(it->status());
     }
+    outputStream << "]";
+    outputStream.close();
+    ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");
 }

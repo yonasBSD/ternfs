@@ -1,5 +1,3 @@
-
-
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -69,7 +67,8 @@ int main(int argc, char** argv) {
             ShardDBTools::fsck(dbPath);
         } else if (arg == "sample-files") {
             std::string dbPath = getNextArg();
-            ShardDBTools::sampleFiles(dbPath);
+            std::string outputFilePath = getNextArg();
+            ShardDBTools::sampleFiles(dbPath, outputFilePath);
         } else {
             dieWithUsage();
         }

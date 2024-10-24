@@ -455,13 +455,11 @@ func (c *newToOldReadConverter) Read(p []byte) (int, error) {
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, crc msgs.Crc) error {
 	if offset%msgs.EGGS_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
-		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
-		return nil
+		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
 	}
 	if count%msgs.EGGS_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read count which is not a multiple of page size")
-		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
-		return nil
+		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
 	}
 	pageCount := count / msgs.EGGS_PAGE_SIZE
 	offsetPageCount := offset / msgs.EGGS_PAGE_SIZE
@@ -508,13 +506,12 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	}
 	if offsetPageCount+pageCount > filePageCount {
 		log.RaiseAlert("malformed request for block %v. requested read at [%d - %d] but stored block size is %d", blockId, offset, offset+count, filePageCount*msgs.EGGS_PAGE_SIZE)
-		writeBlocksResponseError(log, conn, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
-		return nil
+		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
 	}
 	var reader io.ReadSeeker = f
 	if openedWithCrc {
 		// we try to delete file in old format. this is best effort
-		err = os.Remove(blockPathNoCrc)
+		os.Remove(blockPathNoCrc)
 	} else if withCrc {
 		bufPtr, err := convertBlockInternal(log, env, f, fi.Size())
 		if err != nil {
@@ -528,8 +525,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 		err = verifyCrcReader(log, readBufPtr.Bytes(), reader, crc)
 		if err != nil {
 			env.bufPool.Put(bufPtr)
-			writeBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
-			return nil
+			return msgs.BAD_BLOCK_CRC
 		}
 		reader.Seek(0, io.SeekStart)
 		f.Close()
@@ -885,10 +881,6 @@ func writeBlock(
 	err = verifyCrcFile(log, readBufPtr.Bytes(), tmpFile, int64(len(bufPtr.Bytes())), expectedCrc)
 	if err != nil {
 		log.RaiseAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
-		if err == msgs.BAD_BLOCK_CRC {
-			writeBlocksResponseError(log, conn, msgs.BAD_BLOCK_CRC)
-			return nil
-		}
 		return err
 	}
 	err = moveFileAndSyncDir(tmpFile, filePath)
@@ -996,7 +988,10 @@ func handleRequestError(
 	if _, isDead := deadBlockServices[blockServiceId]; isDead && (req == msgs.CHECK_BLOCK || req == msgs.FETCH_BLOCK || req == msgs.FETCH_BLOCK_WITH_CRC) {
 		log.Info("got fetch/check block request for dead block service %v", blockServiceId)
 		if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
-			writeBlocksResponseError(log, conn, eggsErr)
+			if err := writeBlocksResponseError(log, conn, eggsErr); err != nil {
+				log.Info("could not write response error to %v, will terminate connection: %v", conn.RemoteAddr(), err)
+				return false
+			}
 		}
 		return true
 	}
@@ -1005,18 +1000,21 @@ func handleRequestError(
 	log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 
 	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
-		writeBlocksResponseError(log, conn, eggsErr)
-		// kill the connection in bad cases
-		// BLOCK_NOT_FOUND + WriteBlock is bad because we get
-		// data right after causing malformed request errors.
-		// We might want want to do this for all WriteBlock
-		// cases.
-		if eggsErr == msgs.MALFORMED_REQUEST || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BAD_BLOCK_CRC) || (req == msgs.WRITE_BLOCK && eggsErr == msgs.BLOCK_NOT_FOUND) {
-			log.Info("not preserving connection from %v after err %v", conn.RemoteAddr(), err)
+		if err := writeBlocksResponseError(log, conn, eggsErr); err != nil {
+			log.Info("could not write response error to %v, will terminate connection: %v", conn.RemoteAddr(), err)
 			return false
-		} else {
+		}
+		// Keep the connection around using a whitelist of conditions where we know
+		// that the stream is safe. Right now I just added one case which I know
+		// is safe, we can add others conservatively in the future if we wish to.
+		safeError := false
+		safeError = safeError || ((req == msgs.CHECK_BLOCK || req == msgs.FETCH_BLOCK || req == msgs.FETCH_BLOCK_WITH_CRC) && eggsErr == msgs.BLOCK_NOT_FOUND)
+		if safeError {
 			log.Info("preserving connection from %v after err %v", conn.RemoteAddr(), err)
 			return true
+		} else {
+			log.Info("not preserving connection from %v after err %v", conn.RemoteAddr(), err)
+			return false
 		}
 	} else {
 		// attempt to say goodbye, ignore errors

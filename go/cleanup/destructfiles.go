@@ -26,10 +26,10 @@ type DestructFilesState struct {
 	Cursors           [256]msgs.InodeId
 }
 
-type CouldNotReachBlockServices []msgs.BlockServiceId
+type CouldNotEraseBlocksInBlockServices []msgs.BlockServiceId
 
-func (c CouldNotReachBlockServices) Error() string {
-	return fmt.Sprintf("could not reach block services: %+v", []msgs.BlockServiceId(c))
+func (c CouldNotEraseBlocksInBlockServices) Error() string {
+	return fmt.Sprintf("could not erase blocks in block services: %+v", []msgs.BlockServiceId(c))
 }
 
 func DestructFile(
@@ -97,11 +97,12 @@ func DestructFile(
 					proof, err = c.EraseBlock(log, block)
 					if err != nil {
 						if acceptFailure {
-							log.Debug("could not connect to stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
-							couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
-							continue
+							log.Debug("could not erase block in stale/decommissioned block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
+						} else {
+							log.RaiseAlert("could not erase block in block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
 						}
-						return err
+						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
+						continue
 					}
 				}
 				certifyReq.Proofs[i].BlockId = block.BlockId
@@ -118,7 +119,7 @@ func DestructFile(
 				atomic.AddUint64(&stats.SkippedSpans, 1)
 				// We need to return early -- we won't make progress in the file because
 				// we haven't removed the span.
-				return CouldNotReachBlockServices(couldNotReachBlockServices)
+				return CouldNotEraseBlocksInBlockServices(couldNotReachBlockServices)
 			}
 		}
 	}
@@ -153,7 +154,7 @@ func destructFilesWorker(
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
 		if err := DestructFile(log, c, &stats.Stats, req.id, req.deadline, req.cookie); err != nil {
 			// this is OK, we'll get there eventually
-			_, isCouldNotReach := err.(CouldNotReachBlockServices)
+			_, isCouldNotReach := err.(CouldNotEraseBlocksInBlockServices)
 			if isCouldNotReach {
 				log.Debug("could not reach block services when destructing %v, ignoring: %+v", req.id, err)
 			} else {

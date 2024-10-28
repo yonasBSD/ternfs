@@ -1484,11 +1484,11 @@ func (c *Client) EraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlock
 	return resp.(*msgs.EraseBlockResp).Proof, nil
 }
 
-func (c Client) ShuckleAddress() string {
+func (c *Client) ShuckleAddress() string {
 	return c.shuckleAddress
 }
 
-func (c Client) EraseDecommissionedBlock(block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
+func (c *Client) EraseDecommissionedBlock(block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
 	resp, err := c.shuckleConn.Request(&msgs.EraseDecommissionedBlockReq{block.BlockServiceId, block.BlockId, block.Certificate})
 	if err != nil {
 		return [8]byte{}, err

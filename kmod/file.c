@@ -42,7 +42,8 @@ struct eggsfs_transient_span {
     atomic_t refcount;
 
     // These are finalized when we start flushing out a span.
-    char failure_domains[EGGSFS_MAX_BLOCKS][16]; // used to decide which to avoid in subsequent runs
+    char failure_domains[EGGSFS_MAX_BLOCKS][16]; // failure domains for current run so we can blacklist failures
+    char blacklisted_failure_domains[EGGSFS_MAX_BLACKLIST_LENGTH][16]; // blacklisted failure domains
     struct list_head blocks[EGGSFS_MAX_BLOCKS]; // the pages for each block
     u64 block_ids[EGGSFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
     spinlock_t lock; // we use this for various modifications
@@ -55,6 +56,7 @@ struct eggsfs_transient_span {
     u8 stripes;
     u8 storage_class;
     u8 parity;
+    u8 blacklist_length;
 };
 // just a sanity check, this is just two per page rn
 static_assert(sizeof(struct eggsfs_transient_span) < (2<<10));
@@ -131,6 +133,7 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     span->offset = offset;
     span->written = 0;
     memset(span->failure_domains, 0, sizeof(span->failure_domains));
+    memset(span->blacklisted_failure_domains, 0, sizeof(span->blacklisted_failure_domains));
     memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
     memset(span->blocks_errs, 0, sizeof(span->blocks_errs));
     span->span_crc = 0;
@@ -140,6 +143,7 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     // is always safe to run, since it traverses the blocks to free
     // the pages, if any.
     span->parity = 0;
+    span->blacklist_length = 0;
     return span;
 }
 
@@ -330,17 +334,15 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
     eggsfs_debug("add span initiate");
 
     // fill in blacklist
-    char blacklist[EGGSFS_MAX_BLACKLIST_LENGTH][16];
-    u16 blacklist_length = 0;
     for (i = 0; i < B; i++) {
         if (span->blocks_errs[i]) {
-            if (blacklist_length >= EGGSFS_MAX_BLACKLIST_LENGTH) {
+            if (span->blacklist_length >= EGGSFS_MAX_BLACKLIST_LENGTH) {
                 eggsfs_info("could not fit blacklist! this almost certainly means we're screwed anyway");
                 return -EIO;
             }
-            static_assert(sizeof(blacklist[blacklist_length]) == sizeof(span->failure_domains[i]));
-            memcpy(blacklist[blacklist_length], span->failure_domains[i], sizeof(span->failure_domains[i]));
-            blacklist_length++;
+            static_assert(sizeof(span->blacklisted_failure_domains[span->blacklist_length]) == sizeof(span->failure_domains[i]));
+            memcpy(span->blacklisted_failure_domains[span->blacklist_length], span->failure_domains[i], sizeof(span->failure_domains[i]));
+            span->blacklist_length++;
         }
     }
 
@@ -355,7 +357,7 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
         (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
         span, enode->inode.i_ino, enode->file.cookie, span->offset, span->written,
         span->span_crc, span->storage_class, span->parity, span->stripes, cell_size, span->cell_crcs,
-        blacklist_length, blacklist,
+        span->blacklist_length, span->blacklisted_failure_domains,
         blocks
     ));
     if (unlikely(err)) {

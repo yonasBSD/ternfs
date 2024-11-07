@@ -864,7 +864,7 @@ func writeBlock(
 	basePath = path.Join(basePath, "with_crc")
 	filePath := path.Join(basePath, blockId.Path())
 	log.Debug("writing block %v at path %v", blockId, basePath)
-
+	// We don't check CRC here, we fully check tmpFile after ithas been written and synced
 	bufPtr, err := convertBlockInternal(log, env, conn, int64(size))
 	if err != nil {
 		return err
@@ -1966,19 +1966,21 @@ func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, err
 	defer func() {
 		if err != nil {
 			os.Remove(tmpName)
-		} else {
-			f.Sync()
 		}
 		f.Close()
 	}()
-	atomic.AddUint64(statBytes, uint64(len(buf)))
+
 	for len(buf) > 0 {
 		n, err := f.Write(buf)
 		if err != nil {
-			return tmpName, err
+			return "", err
 		}
 		buf = buf[n:]
 	}
+	if err = f.Sync(); err != nil {
+		return "", err
+	}
+	atomic.AddUint64(statBytes, uint64(len(buf)))
 	return tmpName, err
 }
 

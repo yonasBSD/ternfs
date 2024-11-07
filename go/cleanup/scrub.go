@@ -276,8 +276,6 @@ func ScrubFiles(
 	log.Info("starting to scrub files for shard %v", shid)
 	terminateChan := make(chan any, 1)
 	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
-	scratchFile := scratch.NewScratchFile(log, c, shid, fmt.Sprintf("scrubbing shard %v", shid))
-	defer scratchFile.Close()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -293,6 +291,8 @@ func ScrubFiles(
 	for i := 0; i < opts.NumWorkersPerShard; i++ {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			scratchFile := scratch.NewScratchFile(log, c, shid, fmt.Sprintf("scrubbing shard %v worked %d", shid, i))
+			defer scratchFile.Close()
 			scrubWorker(log, c, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu, migratingFiles, &migratingFilesMu)
 			workersWg.Done()
 		}()

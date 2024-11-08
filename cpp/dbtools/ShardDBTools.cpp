@@ -599,18 +599,18 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
         bool thisDirHasCurrentEdges = false;
         EggsTime thisDirMaxTime = 0;
         std::string thisDirMaxTimeEdge;
-        // the last edge for a given name, in a given directory
-        std::unordered_map<std::string, std::pair<StaticValue<EdgeKey>, StaticValue<SnapshotEdgeBody>>> thisDirLastEdges;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
         bool someOutputWritten = false;
         // The output is a JSON array, so we need to output just the start of a list.
         outputStream << "[";
-        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        for (it->SeekToFirst(); it->Valid(); it->Next())
+        {
             auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
             InodeId ownedTargetId = NULL_INODE_ID;
             std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
             std::optional<ExternalValue<SnapshotEdgeBody>> snapshotEdge;
             bool current = false;
+            EggsTime deletionTime = 0;
             if (edgeK().current()) {
                 currentEdge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
                 ownedTargetId = (*currentEdge)().targetId();
@@ -622,6 +622,16 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                     continue;
                 }
                 ownedTargetId = (*snapshotEdge)().targetIdWithOwned().id();
+                // If this is a snapshot edge, then the one immediately following it should
+                // be a deletion marker that indicates that the file was removed or moved elsewhere.
+                // The creation time of the deletion marker is the deletion time of the previous edge.
+                it->Next(); // Advancing here is fine because we already skip deletion markers during sampling.
+                ALWAYS_ASSERT(it->Valid());
+                auto deletionEdgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
+                ALWAYS_ASSERT(deletionEdgeK().snapshot());
+                ALWAYS_ASSERT(deletionEdgeK().dirId() == edgeK().dirId());
+                ALWAYS_ASSERT(deletionEdgeK().name() == edgeK().name());
+                deletionTime = deletionEdgeK().creationTime();
             }
             auto file_id = files.find(ownedTargetId);
             if (file_id == files.end()) {
@@ -629,18 +639,20 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                 continue;
             }
             if (someOutputWritten) {
-                outputStream << ",";
+                outputStream << ",\n";
             }
             outputStream << R"js({"owner": ")js" << edgeK().dirId() << "\","
                          << R"js("inode": ")js" << ownedTargetId << "\","
-                         << R"js("name": ")js" << edgeK().name() << "\","
+                         << R"js("name": ")js" << edgeK().name().data() << "\","
                          << R"js("current": )js" << current << ","
                          << R"js("logical": )js" << file_id->second.size.logical << ","
                          << R"js("hdd": )js" << file_id->second.size.hdd << ","
                          << R"js("flash": )js" << file_id->second.size.flash << ","
                          << R"js("inline": )js" << file_id->second.size.inMetadata << ","
-                         << R"js("mtime": )js" << file_id->second.mTime << ","
-                         << R"js("atime": )js" << file_id->second.aTime << ","
+                         << R"js("creation_time": ")js" << edgeK().creationTime() << "\","
+                         << R"js("deletion_time": ")js" << deletionTime << "\","
+                         << R"js("mtime": ")js" << file_id->second.mTime << "\","
+                         << R"js("atime": ")js" << file_id->second.aTime << "\","
                          << R"js("size_weight": )js" << file_id->second.size_weight << "}";
             someOutputWritten = true;
         }

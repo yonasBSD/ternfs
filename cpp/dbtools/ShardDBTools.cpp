@@ -631,10 +631,29 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                 it->Next(); // Advancing here is fine because we already skip deletion markers during sampling.
                 ALWAYS_ASSERT(it->Valid());
                 auto deletionEdgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
-                ALWAYS_ASSERT(deletionEdgeK().snapshot());
-                ALWAYS_ASSERT(deletionEdgeK().dirId() == edgeK().dirId());
-                ALWAYS_ASSERT(deletionEdgeK().name() == edgeK().name());
-                deletionTime = deletionEdgeK().creationTime();
+                if (deletionEdgeK().snapshot()) {
+                    ALWAYS_ASSERT(deletionEdgeK().dirId() == edgeK().dirId());
+                    ALWAYS_ASSERT(deletionEdgeK().name() == edgeK().name());
+                    deletionTime = deletionEdgeK().creationTime();
+                    snapshotEdge = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
+                    if ((*snapshotEdge)().targetIdWithOwned().id().u64 != 0) {
+                        // this is not a deletion edge so we rewind the iterator and continue.
+                        it->Prev();
+                    }
+                } else {
+                    // this edge has nothing to do with snapshot one we are looking at.
+                    // we need to rewind and find current edge with overwrote it
+                    it->Prev();
+                    StaticValue<EdgeKey> currentEdgeK;
+                    currentEdgeK().setDirIdWithCurrent(edgeK().dirId(), true);
+                    currentEdgeK().setName(edgeK().name());
+                    currentEdgeK().setNameHash(edgeK().nameHash());
+                    std::string value;
+                    ROCKS_DB_CHECKED(db->Get(options, edgesCf, currentEdgeK.toSlice(), &value));
+
+                    currentEdge = ExternalValue<CurrentEdgeBody>::FromSlice(value);
+                    deletionTime = (*currentEdge)().creationTime();
+                }
             }
             auto file_id = files.find(ownedTargetId);
             if (file_id == files.end()) {

@@ -631,9 +631,8 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                 it->Next(); // Advancing here is fine because we already skip deletion markers during sampling.
                 ALWAYS_ASSERT(it->Valid());
                 auto deletionEdgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
-                if (deletionEdgeK().snapshot()) {
+                if (deletionEdgeK().snapshot() && deletionEdgeK().name() == edgeK().name()) {
                     ALWAYS_ASSERT(deletionEdgeK().dirId() == edgeK().dirId());
-                    ALWAYS_ASSERT(deletionEdgeK().name() == edgeK().name());
                     deletionTime = deletionEdgeK().creationTime();
                     snapshotEdge = ExternalValue<SnapshotEdgeBody>::FromSlice(it->value());
                     if ((*snapshotEdge)().targetIdWithOwned().id().u64 != 0) {
@@ -642,7 +641,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                     }
                 } else {
                     // this edge has nothing to do with snapshot one we are looking at.
-                    // we need to rewind and find current edge with overwrote it
+                    // we need to rewind and find current edge which overwrote it
                     it->Prev();
                     StaticValue<EdgeKey> currentEdgeK;
                     currentEdgeK().setDirIdWithCurrent(edgeK().dirId(), true);

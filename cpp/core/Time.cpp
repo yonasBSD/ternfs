@@ -89,12 +89,12 @@ std::ostream& operator<<(std::ostream& out, EggsTime eggst) {
     if (gmtime_r(&secs, &tm) == nullptr) {
         throw SYSCALL_EXCEPTION("gmtime_r");
     }
-    // "2006-01-02T15:04:05.999999999Z07:00"
-    char buf[36];
-    ALWAYS_ASSERT(strftime(buf, 29, "%Y-%m-%dT%H:%M:%S.", &tm) == 20);
+    // "2006-01-02T15:04:05.999999999Z"
+    char buf[31];
+    ALWAYS_ASSERT(strftime(buf, 21, "%Y-%m-%dT%H:%M:%S.", &tm) == 20);
     ALWAYS_ASSERT(snprintf(buf + 20, 10, "%09lu", nsecs) == 9);
-    ALWAYS_ASSERT(snprintf(buf + 29, 7, "Z00:00") == 6);
-    buf[35] = '\0';
+    ALWAYS_ASSERT(snprintf(buf + 29, 2, "Z") == 1);
+    buf[30] = '\0';
     out << buf;
     return out;
 }

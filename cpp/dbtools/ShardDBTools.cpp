@@ -665,7 +665,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             outputStream << R"js({"owner": ")js" << edgeK().dirId() << "\","
                          << R"js("inode": ")js" << ownedTargetId << "\","
                          << R"js("name": ")js" << std::string(edgeK().name().data(), edgeK().name().size()) << "\","
-                         << R"js("current": )js" << current << ","
+                         << R"js("current": )js" << (current ? "true" : "false") << ","
                          << R"js("logical": )js" << file_id->second.size.logical << ","
                          << R"js("hdd": )js" << file_id->second.size.hdd << ","
                          << R"js("flash": )js" << file_id->second.size.flash << ","

@@ -83,17 +83,18 @@ EggsTime eggsNow() {
 }
 
 std::ostream& operator<<(std::ostream& out, EggsTime eggst) {
-    time_t secs =  eggst.ns / 1'000'000'000ull;
+    time_t secs = eggst.ns / 1'000'000'000ull;
     uint64_t nsecs = eggst.ns % 1'000'000'000ull;
     struct tm tm;
     if (gmtime_r(&secs, &tm) == nullptr) {
         throw SYSCALL_EXCEPTION("gmtime_r");
     }
-    // "2006-01-02T15:04:05.999999999"
-    char buf[31];
+    // "2006-01-02T15:04:05.999999999Z07:00"
+    char buf[36];
     ALWAYS_ASSERT(strftime(buf, 29, "%Y-%m-%dT%H:%M:%S.", &tm) == 20);
-    ALWAYS_ASSERT(snprintf(buf+20, 10, "%09lu", nsecs) == 9);
-    buf[30] = '\0';
+    ALWAYS_ASSERT(snprintf(buf + 20, 10, "%09lu", nsecs) == 9);
+    ALWAYS_ASSERT(snprintf(buf + 29, 7, "Z00:00") == 6);
+    buf[35] = '\0';
     out << buf;
     return out;
 }
@@ -101,3 +102,4 @@ std::ostream& operator<<(std::ostream& out, EggsTime eggst) {
 void sleepFor(Duration dt) {
     std::this_thread::sleep_for(std::chrono::nanoseconds(dt.ns));
 }
+

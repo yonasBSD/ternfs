@@ -243,8 +243,7 @@ func (l *Logger) InfoStack(calldepth int, format string, v ...any) {
 	l.LogStack(1+calldepth, INFO, format, v...)
 }
 
-// There should be very few times where you want an alert but
-// not an error.
+// There should be very few times where you want an error log but not an alert.
 func (l *Logger) ErrorNoAlert(format string, v ...any) {
 	l.LogStack(1, ERROR, format, v...)
 }

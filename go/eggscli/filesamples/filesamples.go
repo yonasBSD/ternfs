@@ -13,20 +13,20 @@ import (
 )
 
 type FileSample struct {
-	Owner msgs.InodeId `json:"owner"`
-	Inode msgs.InodeId `json:"inode"`
-	Name string `json:"name"`
-	Path string `json:"path"`
-	Current bool `json:"current"`
-	LogicalSize uint64 `json:"logical"`
-	HDDSize uint64 `json:"hdd"`
-	FlashSize uint64 `json:"flash"`
-	InlineSize uint64 `json:"inline"`
+	Owner        msgs.InodeId  `json:"owner"`
+	Inode        msgs.InodeId  `json:"inode"`
+	Name         string        `json:"name"`
+	Path         string        `json:"path"`
+	Current      bool          `json:"current"`
+	LogicalSize  uint64        `json:"logical"`
+	HDDSize      uint64        `json:"hdd"`
+	FlashSize    uint64        `json:"flash"`
+	InlineSize   uint64        `json:"inline"`
 	CreationTime msgs.EggsTime `json:"creation_time"`
 	DeletionTime msgs.EggsTime `json:"deletion_time"`
-	MTime msgs.EggsTime `json:"mtime"`
-	ATime msgs.EggsTime `json:"atime"`
-	SizeWeight uint64 `json:"size_weight"`
+	MTime        msgs.EggsTime `json:"mtime"`
+	ATime        msgs.EggsTime `json:"atime"`
+	SizeWeight   uint64        `json:"size_weight"`
 }
 
 type PathResolver interface {
@@ -49,22 +49,22 @@ type PathResolver interface {
 func NewPathResolver(cl *client.Client, logger *lib.Logger) PathResolver {
 	return &resolver{
 		eggsClient: cl,
-		logger: logger,
+		logger:     logger,
 		inodeToDir: make(map[msgs.InodeId]string),
-		lock: sync.RWMutex{},
+		lock:       sync.RWMutex{},
 	}
 }
 
 type resolver struct {
 	eggsClient *client.Client
-	logger *lib.Logger
+	logger     *lib.Logger
 	// Mapping of inode ID to directory name. Used to avoid duplicate lookups for the same inode.
 	inodeToDir map[msgs.InodeId]string
 	// Used to handle concurrent access to resolver internal data.
 	lock sync.RWMutex
 }
 
-func (r* resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, error) {
+func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, error) {
 	filepath := filename
 	currentDir := ownerInode
 	for {
@@ -100,7 +100,7 @@ func (r* resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 	}
 }
 
-func (r * resolver) ResolveFilePaths(sampleFilesDir string, outputFileName string) error {
+func (r *resolver) ResolveFilePaths(sampleFilesDir string, outputFileName string) error {
 	// We open the output file first to make sure that it's accessible _before_ we do anything expensive.
 	outputFile, err := os.Create(outputFileName)
 	if err != nil {
@@ -137,10 +137,10 @@ func (r * resolver) ResolveFilePaths(sampleFilesDir string, outputFileName strin
 	r.logger.Info("Waiting for sample files to load")
 	wg.Wait()
 	loadingErrors := false
-	errorReportingLoop:
+errorReportingLoop:
 	for {
 		select {
-		case err := <- errChan:
+		case err := <-errChan:
 			loadingErrors = true
 			r.logger.ErrorNoAlert("%v", err)
 		default:
@@ -166,38 +166,38 @@ func (r * resolver) ResolveFilePaths(sampleFilesDir string, outputFileName strin
 	// Resolve all of the sample files.
 	r.logger.Info("Resolving file paths")
 	type task struct {
-		idx int
+		idx    int
 		sample *FileSample
 	}
 	// Start the workers going.
 	numWorkers := 100
 	workQueue := make(chan *task, numWorkers)
 	for range numWorkers {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			for {
 				t, ok := <-workQueue
 				if !ok {
 					return
 				}
-				path, err := r.Resolve(t.sample.Owner, t.sample.Name)				
+				path, err := r.Resolve(t.sample.Owner, t.sample.Name)
 				if err != nil {
 					r.logger.ErrorNoAlert("Failed to resolve file path: %v", err)
 				}
-				if t.idx % 1000 == 0 {
+				if t.idx%1000 == 0 {
 					r.logger.Info("%d samples processed", t.idx)
 				}
 				t.sample.Path = path
-				wg.Done()
 			}
 		}()
 	}
 
 	for i, sample := range outputSamples {
-		wg.Add(1)
 		workQueue <- &task{idx: i, sample: sample}
 	}
-	wg.Wait()
 	close(workQueue)
+	wg.Wait()
 	r.logger.Info("Path resolution complete")
 
 	// Write the output.
@@ -242,9 +242,9 @@ func (r *resolver) getNameFromShard(parentDir msgs.InodeId, target msgs.InodeId)
 			readDirReq.Flags = msgs.FULL_READ_DIR_CURRENT
 		}
 	}
-	
+
 	return "", fmt.Errorf("failed to find directory name")
-	
+
 }
 
 func (r *resolver) getDirName(inode msgs.InodeId) (string, bool) {

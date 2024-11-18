@@ -1763,7 +1763,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "idle_time", stats.idleTime.load(std::memory_order_relaxed).ns);
         metricsBuilder.timestamp(now);
@@ -1771,7 +1771,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "processing_time", stats.processingTime.load(std::memory_order_relaxed).ns);
         metricsBuilder.timestamp(now);
@@ -1779,7 +1779,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "leader_last_active", stats.leaderLastActive.load(std::memory_order_relaxed).ns);
         metricsBuilder.timestamp(now);
@@ -1787,7 +1787,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "append_window", stats.appendWindow.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1795,7 +1795,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "entries_released", stats.entriesReleased.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1803,7 +1803,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "follower_lag", stats.followerLag.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1811,7 +1811,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "reader_lag", stats.readerLag.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1819,7 +1819,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "catchup_window", stats.catchupWindow.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1827,7 +1827,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "entries_read", stats.entriesRead.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1835,7 +1835,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "requests_received", stats.requestsReceived.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1843,7 +1843,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "responses_received", stats.requestsReceived.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1851,7 +1851,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "requests_sent", stats.requestsSent.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1859,7 +1859,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "responses_sent", stats.responsesSent.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1867,7 +1867,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldFloat( "requests_timedout", stats.requestsTimedOut.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1875,7 +1875,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
-        metricsBuilder.tag("location", location);
+        metricsBuilder.tag("location", int(location));
         metricsBuilder.tag("leader", stats.isLeader.load(std::memory_order_relaxed));
         metricsBuilder.fieldU64( "current_epoch", stats.currentEpoch.load(std::memory_order_relaxed));
         metricsBuilder.timestamp(now);
@@ -1927,7 +1927,7 @@ public:
                 if (count == 0) { continue; }
                 _metricsBuilder.measurement("eggsfs_shard_requests");
                 _metricsBuilder.tag("shard", _shrid);
-                _metricsBuilder.tag("location", _location);
+                _metricsBuilder.tag("location", int(_location));
                 _metricsBuilder.tag("kind", kind);
                 _metricsBuilder.tag("write", !readOnlyShardReq(kind));
                 if (i == 0) {
@@ -1942,21 +1942,21 @@ public:
         {
             _metricsBuilder.measurement("eggsfs_shard_write_queue");
             _metricsBuilder.tag("shard", _shrid);
-            _metricsBuilder.tag("location", _location);
+            _metricsBuilder.tag("location", int(_location));
             _metricsBuilder.fieldFloat("size", _shared.logEntriesQueueSize);
             _metricsBuilder.timestamp(now);
         }
         {
             _metricsBuilder.measurement("eggsfs_shard_read_queue");
             _metricsBuilder.tag("shard", _shrid);
-            _metricsBuilder.tag("location", _location);
+            _metricsBuilder.tag("location", int(_location));
             _metricsBuilder.fieldFloat("size", _shared.readerRequestQueueSize);
             _metricsBuilder.timestamp(now);
         }
         for (int i = 0; i < _shared.receivedRequests.size(); i++) {
             _metricsBuilder.measurement("eggsfs_shard_received_requests");
             _metricsBuilder.tag("shard", _shrid);
-            _metricsBuilder.tag("location", _location);
+            _metricsBuilder.tag("location", int(_location));
             _metricsBuilder.tag("socket", i);
             _metricsBuilder.fieldFloat("count", _shared.receivedRequests[i]);
             _metricsBuilder.timestamp(now);
@@ -1964,14 +1964,14 @@ public:
         {
             _metricsBuilder.measurement("eggsfs_shard_pulled_write_requests");
             _metricsBuilder.tag("shard", _shrid);
-            _metricsBuilder.tag("location", _location);
+            _metricsBuilder.tag("location", int(_location));
             _metricsBuilder.fieldFloat("count", _shared.pulledWriteRequests);
             _metricsBuilder.timestamp(now);
         }
         {
             _metricsBuilder.measurement("eggsfs_shard_pulled_read_requests");
             _metricsBuilder.tag("shard", _shrid);
-            _metricsBuilder.tag("location", _location);
+            _metricsBuilder.tag("location", int(_location));
             _metricsBuilder.fieldFloat("count", _shared.pulledReadRequests);
             _metricsBuilder.timestamp(now);
         }
@@ -1981,7 +1981,7 @@ public:
             for (const auto& [name, value]: _rocksDBStats) {
                 _metricsBuilder.measurement("eggsfs_shard_rocksdb");
                 _metricsBuilder.tag("shard", _shrid);
-                _metricsBuilder.tag("location", _location);
+                _metricsBuilder.tag("location", int(_location));
                 _metricsBuilder.fieldU64(name, value);
                 _metricsBuilder.timestamp(now);
             }

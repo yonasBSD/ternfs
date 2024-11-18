@@ -1969,7 +1969,7 @@ func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, err
 		}
 		f.Close()
 	}()
-
+	bufSize := len(buf)
 	for len(buf) > 0 {
 		n, err := f.Write(buf)
 		if err != nil {
@@ -1980,7 +1980,7 @@ func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, err
 	if err = f.Sync(); err != nil {
 		return "", err
 	}
-	atomic.AddUint64(statBytes, uint64(len(buf)))
+	atomic.AddUint64(statBytes, uint64(bufSize))
 	return tmpName, err
 }
 

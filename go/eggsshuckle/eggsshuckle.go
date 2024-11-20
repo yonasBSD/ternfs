@@ -625,11 +625,13 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 							flags_last_changed,
 							?
 						)
-				WHERE
-					ip1 = excluded.ip1 AND
-					port1 = excluded.port1 AND
-					ip2 = excluded.ip2 AND
-					port2 = excluded.port2 AND
+				WHERE`+
+					// we allow update if one of the new addresses matches old addresses
+					`
+					(
+						(ip1 = excluded.ip1 AND port1 = excluded.port1) OR (ip1 = excluded.ip2 AND port1 = excluded.port2) OR
+						(port2 <> 0 AND (ip2 = excluded.ip1 AND port2 = excluded.port1) OR ( ip2 = excluded.ip2 AND port2 = excluded.port2))
+					) AND
 					storage_class = excluded.storage_class AND
 					failure_domain = excluded.failure_domain AND
 					path = excluded.path AND
@@ -875,7 +877,8 @@ func handleAllShards(ll *lib.Logger, s *state, _ *msgs.AllShardsReq) (*msgs.AllS
 	return &msgs.AllShardsResp{Shards: ret}, nil
 }
 
-func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (resp *msgs.RegisterShardResp, err error) {
+func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
+	var err error = nil
 	defer func() {
 		if err != nil {
 			ll.RaiseAlert("error registering shard %d: %s", req.Shrid, err)
@@ -883,40 +886,54 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 	}()
 	if req.Shrid.Replica() > 4 {
 		err = msgs.INVALID_REPLICA
-	} else {
-		s.mutex.Lock()
-		defer s.mutex.Unlock()
+		return nil, err
+	}
+	if req.Addrs.Addr1.Port == 0 {
+		err = msgs.MALFORMED_REQUEST
+		return nil, err
+	}
+	if req.Addrs.Addr1 == req.Addrs.Addr2 && req.Addrs.Addr1.Port == req.Addrs.Addr2.Port {
+		err = msgs.MALFORMED_REQUEST
+		return nil, err
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
-		n := sql.Named
-		res, err := s.db.Exec(`
-			UPDATE shards
-			SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
-			WHERE
-			id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
-			(
-				(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
-				(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
-			)
-			`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("location_id", req.Location), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
+	n := sql.Named
+	res, err := s.db.Exec(`
+		UPDATE shards
+		SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
+		WHERE
+		id = :id AND replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND`+
+		// we allow update if ip1 was never set (first registration)
+		// or one of the new addresses matches old addresses
+		`
+		(
+			(ip1 = `+zeroIPString+` AND port1 = 0) OR
+			(ip1 = :ip1 AND port1 = :port1) OR (ip1 = :ip2 AND port1 = :port2) OR
+			(port2 <> 0 AND (ip2 = :ip1 AND port2 = :port1) OR ( ip2 = :ip2 AND port2 = :port2))
 		)
-		if err == nil {
-			rowsAffected, err := res.RowsAffected()
-			if err == nil {
-				if rowsAffected > 1 {
-					panic(fmt.Errorf("more than one row in shards with shardReplicaId %s", req.Shrid))
-				}
-				if rowsAffected == 0 {
-					err = msgs.DIFFERENT_ADDRS_INFO
-				} else {
-					err = refreshClient(ll, s)
-				}
-			}
-		}
+		`, n("id", req.Shrid.Shard()), n("replica_id", req.Shrid.Replica()), n("is_leader", req.IsLeader), n("location_id", req.Location), n("ip1", req.Addrs.Addr1.Addrs[:]), n("port1", req.Addrs.Addr1.Port), n("ip2", req.Addrs.Addr2.Addrs[:]), n("port2", req.Addrs.Addr2.Port), n("last_seen", msgs.Now()),
+	)
+	if err != nil {
+		return nil, err
 	}
-	if err == nil {
-		resp = &msgs.RegisterShardResp{}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
 	}
-	return
+	if rowsAffected > 1 {
+		panic(fmt.Errorf("more than one row in shards with shardReplicaId %s", req.Shrid))
+	}
+	if rowsAffected == 0 {
+		err = msgs.DIFFERENT_ADDRS_INFO
+		return nil, err
+	}
+	err = refreshClient(ll, s)
+	if err != nil {
+		return nil, err
+	}
+	return &msgs.RegisterShardResp{}, nil
 }
 
 func handleCdcAtLocation(log *lib.Logger, s *state, req *msgs.CdcAtLocationReq) (*msgs.CdcAtLocationResp, error) {
@@ -1007,6 +1024,11 @@ func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (res
 	}()
 	if req.Replica > 4 {
 		err = msgs.INVALID_REPLICA
+	} else if req.Addrs.Addr1.Port == 0 {
+		err = msgs.MALFORMED_REQUEST
+	} else if req.Addrs.Addr1 == req.Addrs.Addr2 && req.Addrs.Addr1.Port == req.Addrs.Addr2.Port {
+		err = msgs.MALFORMED_REQUEST
+
 	} else {
 		s.mutex.Lock()
 		defer s.mutex.Unlock()
@@ -1015,10 +1037,14 @@ func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (res
 		res, err := s.db.Exec(`
 			UPDATE cdc
 			SET ip1 = :ip1, port1 = :port1, ip2 = :ip2, port2 = :port2, last_seen = :last_seen
-			WHERE replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND
+			WHERE replica_id = :replica_id AND is_leader = :is_leader AND location_id = :location_id AND`+
+			// we allow update if ip1 was never set (first registration)
+			// or one of the new addresses matches old addresses
+			`
 			(
-				(ip1 = `+zeroIPString+` AND port1 = 0 AND ip2 = `+zeroIPString+` AND port2 = 0) OR
-				(ip1 = :ip1 AND port1 = :port1 AND ip2 = :ip2 AND port2 = :port2)
+				(ip1 = `+zeroIPString+` AND port1 = 0) OR
+				(ip1 = :ip1 AND port1 = :port1) OR (ip1 = :ip2 AND port1 = :port2) OR
+				(port2 <> 0 AND (ip2 = :ip1 AND port2 = :port1) OR ( ip2 = :ip2 AND port2 = :port2))
 			)`,
 			n("replica_id", req.Replica),
 			n("location_id", req.Location),
@@ -2891,8 +2917,8 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 
 func main() {
 	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
-	addr1 := flag.String("addr-1", "", "First address to bind bincode server on.")
-	addr2 := flag.String("addr-2", "", "Second address to bind bincode server on (optional).")
+	var addresses lib.StringArrayFlags
+	flag.Var(&addresses, "addr", "Addresses (up to two) to bind bincode server on.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
@@ -2911,8 +2937,8 @@ func main() {
 	flag.Parse()
 	noRunawayArgs()
 
-	if *addr1 == "" {
-		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n")
+	if len(addresses) == 0 || len(addresses) > 2 {
+		fmt.Fprintf(os.Stderr, "at least one -addr and no more than two needs to be provided\n")
 		os.Exit(2)
 	}
 	if *maxFailureDomainsPerShard < 28 {
@@ -2920,15 +2946,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	ownIp1, ownPort1, err := lib.ParseIPV4Addr(*addr1)
+	ownIp1, ownPort1, err := lib.ParseIPV4Addr(addresses[0])
 	if err != nil {
 		panic(err)
 	}
 
 	var ownIp2 [4]byte
 	var ownPort2 uint16
-	if *addr2 != "" {
-		ownIp2, ownPort2, err = lib.ParseIPV4Addr(*addr2)
+	if len(addresses) == 2 {
+		ownIp2, ownPort2, err = lib.ParseIPV4Addr(addresses[1])
 		if err != nil {
 			panic(err)
 		}
@@ -2958,8 +2984,7 @@ func main() {
 	}
 
 	log.Info("Running shuckle with options:")
-	log.Info("  addr1 = %s", *addr1)
-	log.Info("  addr2 = %s", *addr2)
+	log.Info("  addr = %v", addresses)
 	log.Info("  httpPort = %v", *httpPort)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  logLevel = %v", level)
@@ -2992,7 +3017,7 @@ func main() {
 	defer bincodeListener1.Close()
 
 	var bincodeListener2 net.Listener
-	if *addr2 != "" {
+	if len(addresses) == 2 {
 		var err error
 		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), ownPort2))
 		if err != nil {

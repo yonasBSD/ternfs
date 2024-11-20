@@ -24,10 +24,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
     fprintf(stderr, " -shuckle host:port\n");
     fprintf(stderr, "    	How to reach shuckle, default '%s'\n", defaultShuckleAddress.c_str());
-    fprintf(stderr, " -addr-1 ipv4 ip:port\n");
-    fprintf(stderr, "    	The first address to bind ourselves too, we'll also advertise it to shuckle.\n");
-    fprintf(stderr, " -addr-2 ipv4 ip:port\n");
-    fprintf(stderr, "    	The second address to bind ourselves too, we'll also advertise it to shuckle. Optional.\n");
+    fprintf(stderr, " -addr ipv4 ip:port\n");
+    fprintf(stderr, "    	Addresses we bind ourselves too and advertise to shuckle. At least one needs to be provided and at most 2\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -outgoing-packet-drop [0, 1)\n");
@@ -148,6 +146,7 @@ int main(int argc, char** argv) {
     ShardOptions options;
     std::vector<std::string> args;
     std::string shuckleAddress = defaultShuckleAddress;
+    uint8_t numAddressesFound = 0;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
             if (i+1 >= argc) {
@@ -182,12 +181,11 @@ int main(int argc, char** argv) {
             options.simulateOutgoingPacketDrop = parseProbability(getNextArg());
         } else if (arg == "-shuckle") {
             shuckleAddress = getNextArg();
-        } else if (arg == "-addr-1") {
-            if(!parseIpv4Addr(getNextArg(), options.shardAddrs[0])) {
+        } else if (arg == "-addr") {
+            if (numAddressesFound == options.shardAddrs.size()) {
                 dieWithUsage();
             }
-        } else if (arg == "-addr-2") {
-            if(!parseIpv4Addr(getNextArg(), options.shardAddrs[1])) {
+            if(!parseIpv4Addr(getNextArg(), options.shardAddrs[numAddressesFound++])) {
                 dieWithUsage();
             }
         } else if (arg == "-syslog") {
@@ -244,10 +242,9 @@ int main(int argc, char** argv) {
         dieWithUsage();
     }
 
-    if (options.shardAddrs[0].ip == Ip({0,0,0,0})) {
-        fprintf(stderr, "Please provide -addr-1.\n\n");
-        usage(argv[0]);
-        exit(2);
+    if ( numAddressesFound == 0 || options.shardAddrs[0].ip == Ip({0,0,0,0})) {
+        fprintf(stderr, "Please provide at least one valid address\n\n");
+        dieWithUsage();
     }
 
     fs::path dbDir(args.at(0));

@@ -17,10 +17,8 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
     fprintf(stderr, " -shuckle host:port\n");
     fprintf(stderr, "    	How to reach shuckle, default '%s'\n", defaultShuckleAddress.c_str());
-    fprintf(stderr, " -addr-1 ipv4 ip:port\n");
-    fprintf(stderr, "    	The first address to bind ourselves too, we'll also advertise it to shuckle.\n");
-    fprintf(stderr, " -addr-2 ipv4 ip:port\n");
-    fprintf(stderr, "    	The second address to bind ourselves too, we'll also advertise it to shuckle. Optional.\n");
+    fprintf(stderr, " -addr ipv4 ip:port\n");
+    fprintf(stderr, "    	Addresses we bind ourselves too and advertise to shuckle. At least one needs to be provided and at most 2\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -shard-timeout-ms milliseconds\n");
@@ -106,6 +104,7 @@ int main(int argc, char** argv) {
     CDCOptions options;
     std::vector<std::string> args;
     std::string shuckleAddress = defaultShuckleAddress;
+    uint8_t numAddressesFound = 0;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
             if (i+1 >= argc) {
@@ -138,18 +137,16 @@ int main(int argc, char** argv) {
             options.logFile = getNextArg();
         } else if (arg == "-shuckle") {
             shuckleAddress = getNextArg();
-        } else if (arg == "-addr-1") {
-            if (!parseIpv4Addr(getNextArg(), options.cdcAddrs[0])) {
+        } else if (arg == "-addr") {
+            if (numAddressesFound == 2) {
                 dieWithUsage();
             }
-            options.cdcToShardAddress[0] = options.cdcAddrs[0];
-            options.cdcToShardAddress[0].port = 0; // auto-assign
-        } else if (arg == "-addr-2") {
-            if (!parseIpv4Addr(getNextArg(), options.cdcAddrs[1])) {
+            if (!parseIpv4Addr(getNextArg(), options.cdcAddrs[numAddressesFound])) {
                 dieWithUsage();
             }
-            options.cdcToShardAddress[1] = options.cdcAddrs[1];
-            options.cdcToShardAddress[1].port = 0; // auto-assign
+            options.cdcToShardAddress[numAddressesFound] = options.cdcAddrs[numAddressesFound];
+            options.cdcToShardAddress[numAddressesFound].port = 0; // auto-assign
+            numAddressesFound++;
         } else if (arg == "-syslog") {
             options.syslog = true;
         } else if (arg == "-shard-timeout-ms") {
@@ -208,10 +205,9 @@ int main(int argc, char** argv) {
         dieWithUsage();
     }
 
-    if (options.cdcAddrs[0].ip == Ip({0,0,0,0})) {
-        fprintf(stderr, "Please provide -addr-1.\n\n");
-        usage(argv[0]);
-        exit(2);
+    if (numAddressesFound == 0 || options.cdcAddrs[0].ip == Ip({0,0,0,0})) {
+        fprintf(stderr, "Please provide at least one valid -addr.\n\n");
+        dieWithUsage();
     }
 
     fs::path dbDir(args.at(0));

@@ -204,27 +204,27 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	syslog := flag.Bool("syslog", false, "")
-	addr1Str := flag.String("addr-1", "", "First address that we'll bind to.")
-	addr2Str := flag.String("addr-2", "", "Second address that we'll bind to. If it is not provided, we will only bind to the first IP.")
+	var addresses lib.StringArrayFlags
+	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to.")
 	shuckleAddr1 := flag.String("shuckle-1", "", "First shuckle address to advertise")
 	shuckleAddr2 := flag.String("shuckle-2", "", "Second shuckle address to advertise")
 
 	flag.Parse()
 	noRunawayArgs()
 
-	if *addr1Str == "" {
-		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n")
+	if len(addresses) == 0 || len(addresses) > 2 {
+		fmt.Fprintf(os.Stderr, "at least one -addr and no more than two needs to be provided\n")
 		os.Exit(2)
 	}
-	ownIp1, port1, err := lib.ParseIPV4Addr(*addr1Str)
+	ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
 	if err != nil {
 		panic(err)
 	}
 
 	var ownIp2 [4]byte
 	var port2 uint16
-	if *addr2Str != "" {
-		ownIp2, port2, err = lib.ParseIPV4Addr(*addr2Str)
+	if len(addresses) == 2 {
+		ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
 		if err != nil {
 			panic(err)
 		}
@@ -264,8 +264,7 @@ func main() {
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical", PrintQuietAlerts: true})
 
 	log.Info("Running shuckle beacon with options:")
-	log.Info("  addr1 = %s", *addr1Str)
-	log.Info("  addr2 = %s", *addr2Str)
+	log.Info("  addr = %v", addresses)
 	log.Info("  shuckleAddr1 = %s", *shuckleAddr1)
 	log.Info("  shuckleAddr2 = %s", *shuckleAddr2)
 	log.Info("  logFile = '%v'", *logFile)
@@ -278,7 +277,7 @@ func main() {
 	defer bincodeListener1.Close()
 
 	var bincodeListener2 net.Listener
-	if *addr1Str != "" {
+	if len(addresses) == 2 {
 		var err error
 		bincodeListener2, err = net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), port2))
 		if err != nil {

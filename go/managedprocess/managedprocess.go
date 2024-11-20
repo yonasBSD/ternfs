@@ -287,11 +287,11 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
-		"-addr-1", opts.Addr1,
+		"-addr", opts.Addr1,
 		"-log-file", path.Join(opts.Path, "log"),
 	}
 	if opts.Addr2 != "" {
-		args = append(args, "-addr-2", opts.Addr2)
+		args = append(args, "-addr", opts.Addr2)
 	}
 	if opts.FutureCutoff != nil {
 		args = append(args, "-future-cutoff", opts.FutureCutoff.String())
@@ -406,7 +406,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-data-dir", opts.Dir,
-		"-addr-1", opts.Addr1,
+		"-addr", opts.Addr1,
 	}
 	if opts.LogLevel == lib.DEBUG {
 		args = append(args, "-verbose")
@@ -424,7 +424,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 		args = append(args, "-scripts-js", opts.ScriptsJs)
 	}
 	if opts.Addr2 != "" {
-		args = append(args, "-addr-2", opts.Addr2)
+		args = append(args, "-addr", opts.Addr2)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "shuckle",
@@ -490,10 +490,10 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 		"-shuckle", opts.ShuckleAddress,
-		"-addr-1", opts.Addr1,
+		"-addr", opts.Addr1,
 	}
 	if opts.Addr2 != "" {
-		args = append(args, "-addr-2", opts.Addr2)
+		args = append(args, "-addr", opts.Addr2)
 	}
 	if opts.TransientDeadlineInterval != nil {
 		args = append(args, "-transient-deadline-interval", fmt.Sprintf("%dns", opts.TransientDeadlineInterval.Nanoseconds()))
@@ -584,10 +584,10 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-shuckle", opts.ShuckleAddress,
-		"-addr-1", opts.Addr1,
+		"-addr", opts.Addr1,
 	}
 	if opts.Addr2 != "" {
-		args = append(args, "-addr-2", opts.Addr2)
+		args = append(args, "-addr", opts.Addr2)
 	}
 	if opts.ShardTimeout != 0 {
 		args = append(args, "-shard-timeout-ms", fmt.Sprintf("%v", opts.ShardTimeout.Milliseconds()))
@@ -662,7 +662,7 @@ func (procs *ManagedProcesses) StartShuckleBeacon(ll *lib.Logger, opts *ShuckleB
 	createDataDir(opts.Dir)
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
-		"-addr-1", opts.Addr1,
+		"-addr", opts.Addr1,
 		"-shuckle-1", opts.ShuckleAddr1,
 	}
 	if opts.LogLevel == lib.DEBUG {
@@ -672,7 +672,7 @@ func (procs *ManagedProcesses) StartShuckleBeacon(ll *lib.Logger, opts *ShuckleB
 		args = append(args, "-trace")
 	}
 	if opts.Addr2 != "" {
-		args = append(args, "-addr-2", opts.Addr2)
+		args = append(args, "-addr", opts.Addr2)
 	}
 	if opts.ShuckleAddr2 != "" {
 		args = append(args, "-shuckle-2", opts.ShuckleAddr2)

@@ -1506,8 +1506,8 @@ func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
-	addr1 := flag.String("addr-1", "", "First address to bind to, and that will be advertised to shuckle.")
-	addr2 := flag.String("addr-2", "", "Second address to bind to, and that will be advertised to shuckle. Optional.")
+	var addresses lib.StringArrayFlags
+	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to, and that will be advertised to shuckle.")
 	verbose := flag.Bool("verbose", false, "")
 	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
 	trace := flag.Bool("trace", false, "")
@@ -1535,8 +1535,8 @@ func main() {
 		flagErrors = true
 	}
 
-	if *addr1 == "" {
-		fmt.Fprintf(os.Stderr, "-addr-1 must be provided.\n\n")
+	if len(addresses) == 0 || len(addresses) > 2 {
+		fmt.Fprintf(os.Stderr, "at least one -addr and no more than two needs to be provided\n")
 		flagErrors = true
 	}
 
@@ -1545,14 +1545,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	ownIp1, port1, err := lib.ParseIPV4Addr(*addr1)
+	ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
 	if err != nil {
 		panic(err)
 	}
 	var ownIp2 [4]byte
 	var port2 uint16
-	if *addr2 != "" {
-		ownIp2, port2, err = lib.ParseIPV4Addr(*addr2)
+	if len(addresses) == 2 {
+		ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
 		if err != nil {
 			panic(err)
 		}
@@ -1626,8 +1626,7 @@ func main() {
 	log.Info("Running block service with options:")
 	log.Info("  failureDomain = %v", *failureDomainStr)
 	log.Info("  futureCutoff = %v", *futureCutoff)
-	log.Info("  addr1 = '%v'", *addr1)
-	log.Info("  addr2 = '%v'", *addr2)
+	log.Info("  addr = '%v'", *&addresses)
 	log.Info("  logLevel = %v", level)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
@@ -1750,7 +1749,7 @@ func main() {
 
 	var listener2 net.Listener
 	var actualPort2 uint16
-	if *addr2 != "" {
+	if len(addresses) == 2 {
 		listener2, err = net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), port2))
 		if err != nil {
 			panic(err)

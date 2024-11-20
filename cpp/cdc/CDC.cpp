@@ -809,8 +809,10 @@ private:
         if (unlikely(respMsg.body.kind() == CDCMessageKind::ERROR)) {
             auto err = respMsg.body.getError();
             LOG_DEBUG(_env, "will send error %s to %s", err, clientAddr);
-            if (err != EggsError::DIRECTORY_NOT_EMPTY && err != EggsError::EDGE_NOT_FOUND) {
+            if (err != EggsError::DIRECTORY_NOT_EMPTY && err != EggsError::EDGE_NOT_FOUND && err != EggsError::MISMATCHING_CREATION_TIME) {
                 RAISE_ALERT(_env, "request %s of kind %s from client %s failed with err %s", respMsg.id, reqKind, clientAddr, err);
+            } else {
+                LOG_INFO(_env, "request %s of kind %s from client %s failed with err %s", respMsg.id, reqKind, clientAddr, err);
             }
         } else {
             LOG_DEBUG(_env, "will send response to CDC req %s, kind %s, to %s", respMsg.id, reqKind, clientAddr);

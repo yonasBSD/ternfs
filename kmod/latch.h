@@ -21,6 +21,7 @@ struct eggsfs_latch {
     })
 
 #define eggsfs_latch_release(_latch, _seqno) ({ \
+    	BUG_ON(_seqno & 1); \
         smp_mb__before_atomic(); \
         atomic64_set(&(_latch)->counter, (_seqno) + 2); \
         wake_up_all(&(_latch)->wq); \

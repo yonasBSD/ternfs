@@ -95,7 +95,11 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
     eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 
     int ret = 0;
-    if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, enode->getattr_async_seqno)) {
+    u64 seqno = 0;
+    if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
+        // it is not safe to pass enode->getattr_async_seqno directly to eggsfs_latch_try_acquire as subsequent calls while lock is held
+        // overwrite the seqno we need for release causing a deadlock
+        enode->getattr_async_seqno = seqno;
         // Schedule the work immediately, so that we can't end up in the situation where
         // the async completes before we schedule the work and we run the complete twice.
         BUG_ON(!schedule_delayed_work(&enode->getattr_async_work, eggsfs_initial_shard_timeout_jiffies));

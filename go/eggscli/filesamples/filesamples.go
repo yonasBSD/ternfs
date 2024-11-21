@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
@@ -112,6 +114,11 @@ func (r *resolver) ResolveFilePaths(sampleFilesDir string, outputFileName string
 	if err != nil {
 		return fmt.Errorf("failed to identify sample files: %w", err)
 	}
+	// Remove the output file if it happens to have been included in the sample files list.
+	sampleFiles = slices.DeleteFunc(sampleFiles, func(sampleFile string) bool {
+		// If either path ends with the other, then they're probably pointing at the same location.
+		return strings.HasSuffix(sampleFile, outputFileName) || strings.HasSuffix(outputFileName, sampleFile)
+	})
 	samples := make([][]*FileSample, len(sampleFiles))
 	for i := range samples {
 		samples[i] = make([]*FileSample, 0)

@@ -1525,11 +1525,11 @@ func main() {
 		"Path to the file where the resolved samples should be written")
 	resolveSamplePathsRun := func() {
 		if *resolveSamplePathsInputDir == "" {
-			log.ErrorNoAlert("You must specify --samples-dir")
+			log.ErrorNoAlert("You must specify -samples-dir")
 			os.Exit(1)
 		}
 		if *resolveSamplePathsOutputFile == "" {
-			log.ErrorNoAlert("You must specify --output-file")
+			log.ErrorNoAlert("You must specify -output-file")
 			os.Exit(1)
 		}
 		resolver := filesamples.NewPathResolver(getClient(), log)

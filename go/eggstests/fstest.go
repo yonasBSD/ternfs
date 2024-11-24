@@ -900,7 +900,7 @@ func fsTestInternal[Id comparable](
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
 
-			migrator := cleanup.Migrator(shuckleAddress, log, c, 1, 0, 1, false)
+			migrator := cleanup.Migrator(shuckleAddress, log, c, 1, 0, 1, false, "")
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {

@@ -100,6 +100,7 @@ func main() {
 	numMigrators := flag.Int("num-migrators", 1, "How many migrate instances are running. 1 by default")
 	migratorIdx := flag.Int("migrator-idx", 0, "Which migrate instance is this. should be less than num-migrators. 0 by default")
 	numMigrationsPerShard := flag.Int("num-migrations-per-shard", 1, "Number of file migrations to do in parallel per shard. 1 by default")
+	migrateFailureDomain := flag.String("migrate-failure-domain", "", "If present, will only migrate block services from this failure domain.")
 	migratorLogOnly := flag.Bool("migrator-log-only", false, "if true will only log files that would be migrated")
 	scrub := flag.Bool("scrub", false, "scrub")
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
@@ -346,7 +347,7 @@ func main() {
 	if *migrate {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			migrator := cleanup.Migrator(*shuckleAddress, log, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly)
+			migrator := cleanup.Migrator(*shuckleAddress, log, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
 			migrator.Run()
 		}()
 	} else {

@@ -572,9 +572,10 @@ type migrator struct {
 	stopC                     chan bool
 
 	logOnly bool
+	failureDomainFilter string
 }
 
-func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int, logOnly bool) *migrator {
+func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int, logOnly bool, failureDomain string) *migrator {
 	res := migrator{
 		shuckleAddress,
 		log,
@@ -592,7 +593,8 @@ func Migrator(shuckleAddress string, log *lib.Logger, client *client.Client, num
 		[256]chan msgs.InodeId{},
 		make(chan MigrateStats, 10),
 		make(chan bool),
-		logOnly}
+		logOnly,
+		failureDomain}
 	for i := 0; i < len(res.fileMigratorsNewFile); i++ {
 		res.fileFetchers[i] = make(chan msgs.BlockServiceId, 500)
 		res.fileMigratorsNewFile[i] = make(chan msgs.InodeId, res.numFilesPerShard)
@@ -632,6 +634,10 @@ OUT:
 			m.log.ClearNC(shuckleResponseAlert)
 			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
 			for _, bs := range blockServices.BlockServices {
+				if m.failureDomainFilter != "" && (bs.FailureDomain.String() != m.failureDomainFilter) {
+					continue
+				}
+
 				if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 					m.ScheduleBlockService(bs.Id)
 				} else {
@@ -640,7 +646,6 @@ OUT:
 					m.blockServicesLock.Unlock()
 				}
 			}
-
 		}
 	}
 	m.log.Debug("stop received waiting for fetchers to stop")

@@ -189,6 +189,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	c.SetFetchBlockServices()
 	c.SetShardTimeouts(shardTimeouts)
 	c.SetCDCTimeouts(cdcTimeouts)
 	c.SetBlockTimeout(blockTimeouts)

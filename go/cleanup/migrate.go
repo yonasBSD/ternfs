@@ -71,16 +71,12 @@ func writeBlock(
 	c *client.Client,
 	scratch scratch.ScratchFile,
 	file msgs.InodeId,
-	blacklist []msgs.BlockServiceId,
+	blacklist []msgs.BlacklistEntry,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
 	newContents io.ReadSeeker,
 ) (msgs.InodeId, msgs.BlockId, msgs.BlockServiceId, uint64, error) {
-	blacklistEntries := make([]msgs.BlacklistEntry, len(blacklist))
-	for i := 0; i < len(blacklistEntries); i++ {
-		blacklistEntries[i].BlockService = blacklist[i]
-	}
 	lockedScratchFile, err := scratch.Lock()
 	if err != nil {
 		return msgs.NULL_INODE_ID, 0, 0, 0, err
@@ -95,7 +91,7 @@ func writeBlock(
 			Size:         blockSize,
 			Crc:          block.Crc,
 			StorageClass: storageClass,
-			Blacklist:    blacklistEntries,
+			Blacklist:    blacklist[:],
 			Parity:       rs.MkParity(1, 0),
 			Stripes:      1,
 			CellSize:     blockSize,
@@ -144,7 +140,7 @@ func copyBlock(
 	scratch scratch.ScratchFile,
 	file msgs.InodeId,
 	blockServices []msgs.BlockService,
-	blacklist []msgs.BlockServiceId,
+	blacklist []msgs.BlacklistEntry,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	block *msgs.FetchedBlock,
@@ -165,7 +161,7 @@ func reconstructBlock(
 	fileId msgs.InodeId,
 	scratchFile scratch.ScratchFile,
 	blockServices []msgs.BlockService,
-	blacklist []msgs.BlockServiceId,
+	blacklist []msgs.BlacklistEntry,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	parity rs.Parity,
@@ -326,9 +322,15 @@ func migrateBlocksInFileGeneric(
 			B := body.Parity.Blocks()
 			// we keep going until we're out of bad blocks. in the overwhelming majority
 			// of cases it'll only be once.
-			blacklist := make([]msgs.BlockServiceId, B)
+			blacklist := make([]msgs.BlacklistEntry, B)
 			for blockIx, block := range body.Blocks {
-				blacklist[blockIx] = fileSpansResp.BlockServices[block.BlockServiceIx].Id
+				failureDomain, ok := c.GetFailureDomainForBlockService(fileSpansResp.BlockServices[block.BlockServiceIx].Id)
+				if !ok {
+					return fmt.Errorf("could not find failure domain for [%v]", fileSpansResp.BlockServices[block.BlockServiceIx].Id)
+				}
+
+				blacklist[blockIx].BlockService = fileSpansResp.BlockServices[block.BlockServiceIx].Id
+				blacklist[blockIx].FailureDomain = failureDomain
 			}
 			for _, blockToMigrateIx := range blocksToMigrateIxs {
 				blockToMigrateId := body.Blocks[blockToMigrateIx].BlockId
@@ -370,7 +372,11 @@ func migrateBlocksInFileGeneric(
 						}
 						if err == nil {
 							replacementFound = true
-							blacklist = append(blacklist, newBlockServiceId)
+							failureDomain, ok := c.GetFailureDomainForBlockService(newBlockServiceId)
+							if !ok {
+								return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
+							}
+							blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
 							break
 						}
 					}
@@ -398,7 +404,11 @@ func migrateBlocksInFileGeneric(
 					if err != nil {
 						return err
 					}
-					blacklist = append(blacklist, newBlockServiceId)
+					failureDomain, ok := c.GetFailureDomainForBlockService(newBlockServiceId)
+					if !ok {
+						return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
+					}
+					blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
 				}
 				if newBlock != 0 {
 					swapReq := msgs.SwapBlocksReq{

@@ -227,6 +227,7 @@ func main() {
 			clientMu.Unlock()
 			panic(fmt.Errorf("could not create client: %v", err))
 		}
+		c.SetFetchBlockServices()
 		mbClient = c
 		shardTimeouts := client.DefaultShardTimeout
 		printTimeouts := false

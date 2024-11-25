@@ -895,6 +895,7 @@ func fsTestInternal[Id comparable](
 			if err != nil {
 				panic(err)
 			}
+			c.SetFetchBlockServices()
 			c.SetCounters(counters)
 			defer c.Close()
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
@@ -1024,6 +1025,7 @@ func fsTest(
 	if err != nil {
 		panic(err)
 	}
+	c.SetFetchBlockServices()
 	defer c.Close()
 	c.SetCounters(counters)
 	if realFs == "" {

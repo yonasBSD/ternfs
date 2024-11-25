@@ -255,6 +255,7 @@ func (r *RunTests) run(
 	if err != nil {
 		panic(err)
 	}
+	c.SetFetchBlockServices()
 	c.SetUseRandomFetchApi(true)
 	defer c.Close()
 	updateTimeouts(c)

@@ -968,6 +968,10 @@ type Client struct {
 	addrsRefreshClose    chan (struct{})
 	shuckleConn          *ShuckleConn
 	useRandomFetchApi    int32
+
+	fetchBlockServices	        bool
+	blockServicesLock           *sync.RWMutex
+	blockServiceToFailureDomain map[msgs.BlockServiceId]msgs.FailureDomain
 }
 
 func (c *Client) refreshAddrs(log *lib.Logger) error {
@@ -997,6 +1001,40 @@ func (c *Client) refreshAddrs(log *lib.Logger) error {
 		cdcAddrs = cdc.Addrs
 	}
 	c.SetAddrs(cdcAddrs, &shardAddrs)
+
+	fetchBlockServices := func () bool {
+		c.blockServicesLock.RLock()
+		defer c.blockServicesLock.RUnlock()
+		return c.fetchBlockServices
+	}()
+	if !fetchBlockServices {
+		return nil
+	}
+
+	blockServicesResp, err := c.shuckleConn.Request(&msgs.AllBlockServicesReq{})
+	if err != nil {
+		return fmt.Errorf("could not request block services from shuckle: %w", err)
+	}
+	blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+	var blockServicesToAdd []msgs.BlacklistEntry
+	func () {
+
+		for _, bs := range blockServices.BlockServices {
+			if _, ok := c.blockServiceToFailureDomain[bs.Id]; !ok {
+				blockServicesToAdd = append(blockServicesToAdd, msgs.BlacklistEntry{bs.FailureDomain, bs.Id})
+			}
+		}
+	}()
+	if len(blockServicesToAdd) > 0 {
+		func() {
+			c.blockServicesLock.Lock()
+			defer c.blockServicesLock.Unlock()
+			for _, bs := range blockServicesToAdd {
+				c.blockServiceToFailureDomain[bs.BlockService] = bs.FailureDomain
+			}
+		}()
+	}
+
 	return nil
 }
 
@@ -1021,6 +1059,7 @@ func NewClient(
 	c.addrsRefreshClose = make(chan struct{})
 	addressRefreshAlert := log.NewNCAlert(5 * time.Minute)
 	go func() {
+
 		for {
 			select {
 			case <-c.addrsRefreshClose:
@@ -1034,6 +1073,7 @@ func NewClient(
 			}
 		}
 	}()
+
 	return c, nil
 }
 
@@ -1098,6 +1138,9 @@ func NewClientDirectNoAddrs(
 				return bytes.NewBuffer([]byte{})
 			},
 		},
+		fetchBlockServices: false,
+		blockServicesLock: &sync.RWMutex{},
+		blockServiceToFailureDomain: make(map[msgs.BlockServiceId]msgs.FailureDomain),
 	}
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
@@ -1541,4 +1584,20 @@ func (c *Client) CheckBlock(log *lib.Logger, blockService *msgs.BlockService, bl
 func (c *Client) ConvertBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
 	_, err := c.singleBlockReq(log, nil, &c.checkBlockProcessors, convertBlockSendArgs(blockService, blockId, size, crc, nil))
 	return err
+}
+
+func (c *Client) SetFetchBlockServices() {
+	c.blockServicesLock.Lock()
+	defer c.blockServicesLock.Unlock()
+	c.fetchBlockServices = true
+}
+
+func (c *Client) GetFailureDomainForBlockService(blockServiceId msgs.BlockServiceId) (msgs.FailureDomain, bool) {
+	c.blockServicesLock.RLock()
+	defer c.blockServicesLock.RUnlock()
+	if !c.fetchBlockServices {
+		panic("GetFailureDomainForBlockService called and flag to keep block services information not set")
+	}
+	failureDomain, ok := c.blockServiceToFailureDomain[blockServiceId]
+	return failureDomain, ok
 }

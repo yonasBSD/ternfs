@@ -201,6 +201,7 @@ const (
 	EDGE_NOT_OWNED EggsError = 91
 	CANNOT_CREATE_DB_SNAPSHOT EggsError = 92
 	BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE EggsError = 93
+	SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN EggsError = 94
 )
 
 func (err EggsError) String() string {
@@ -373,6 +374,8 @@ func (err EggsError) String() string {
 		return "CANNOT_CREATE_DB_SNAPSHOT"
 	case 93:
 		return "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE"
+	case 94:
+		return "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN"
 	default:
 		return fmt.Sprintf("EggsError(%d)", err)
 	}

@@ -84,6 +84,7 @@ const char* eggsfs_err_str(int err) {
     case 91: return "EDGE_NOT_OWNED";
     case 92: return "CANNOT_CREATE_DB_SNAPSHOT";
     case 93: return "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE";
+    case 94: return "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN";
     default: return "UNKNOWN";
     }
 }

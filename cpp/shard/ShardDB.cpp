@@ -21,6 +21,7 @@
 #include "Bincode.hpp"
 #include "BlockServicesCacheDB.hpp"
 #include "Common.hpp"
+#include "MsgsGen.hpp"
 #include "crc32c.h"
 #include "Crypto.hpp"
 #include "Env.hpp"
@@ -1333,6 +1334,7 @@ struct ShardDBImpl {
             std::vector<BlockServiceId> candidateBlockServices;
             candidateBlockServices.reserve(inMemoryBlockServicesData.currentBlockServices.size());
             LOG_DEBUG(_env, "Starting out with %s current block services", candidateBlockServices.size());
+            std::vector<BlacklistEntry> blacklist{req.blacklist.els};
             {
                 for (BlockServiceId id: inMemoryBlockServicesData.currentBlockServices) {
                     const auto& cache = inMemoryBlockServicesData.blockServices.at(id.u64);
@@ -1340,11 +1342,15 @@ struct ShardDBImpl {
                         LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", id, (int)cache.storageClass, (int)entry.storageClass);
                         continue;
                     }
-                    if (_blockServiceMatchesBlacklist(req.blacklist.els, cache.failureDomain, id, cache)) {
+                    if (_blockServiceMatchesBlacklist(blacklist, cache.failureDomain, id, cache)) {
                         LOG_DEBUG(_env, "Skipping %s because it matches blacklist", id);
                         continue;
                     }
                     candidateBlockServices.emplace_back(id);
+                    BlacklistEntry newBlacklistEntry;
+                    newBlacklistEntry.failureDomain.name.data = cache.failureDomain;
+                    newBlacklistEntry.blockService = id;
+                    blacklist.emplace_back(std::move(newBlacklistEntry));
                 }
             }
             LOG_DEBUG(_env, "Starting out with %s block service candidates, parity %s", candidateBlockServices.size(), entry.parity);
@@ -3207,8 +3213,11 @@ struct ShardDBImpl {
         if (block1.crc() != block2.crc()) {
             return EggsError::SWAP_BLOCKS_MISMATCHING_CRC;
         }
+
+        auto blockServiceCache = _blockServicesCache.getCache();
         // Check that we're not creating a situation where we have two blocks in the same block service
-        const auto checkNoDuplicateBlockServices = [](const auto blocks, int blockToBeReplacedIx, const auto newBlock) {
+        const auto checkNoDuplicateBlockServicesOrFailureDomains = [&blockServiceCache](const auto blocks, int blockToBeReplacedIx, const auto newBlock) {
+            auto& newFailureDomain = blockServiceCache.blockServices.at(newBlock.blockService().u64).failureDomain;
             for (int i = 0; i < blocks.parity().blocks(); i++) {
                 if (i == blockToBeReplacedIx) {
                     continue;
@@ -3217,19 +3226,24 @@ struct ShardDBImpl {
                 if (block.blockService() == newBlock.blockService()) {
                     return EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE;
                 }
+
+                if (newFailureDomain == blockServiceCache.blockServices.at(block.blockService().u64).failureDomain) {
+                    return EggsError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN;
+                }
             }
             return EggsError::NO_ERROR;
         };
         {
-            EggsError err = checkNoDuplicateBlockServices(blocks1, block1Ix, block2);
+            EggsError err = checkNoDuplicateBlockServicesOrFailureDomains(blocks1, block1Ix, block2);
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
-            err = checkNoDuplicateBlockServices(blocks2, block2Ix, block1);
+            err = checkNoDuplicateBlockServicesOrFailureDomains(blocks2, block2Ix, block1);
             if (err != EggsError::NO_ERROR) {
                 return err;
             }
         }
+
         // Record the block counts
         _addBlockServicesToFiles(batch, block1.blockService(), entry.fileId1, -1);
         _addBlockServicesToFiles(batch, block2.blockService(), entry.fileId1, +1);

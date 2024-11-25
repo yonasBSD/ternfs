@@ -259,6 +259,9 @@ std::ostream& operator<<(std::ostream& out, EggsError err) {
     case EggsError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE:
         out << "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE";
         break;
+    case EggsError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN:
+        out << "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN";
+        break;
     default:
         out << "EggsError(" << ((int)err) << ")";
         break;

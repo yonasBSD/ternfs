@@ -683,3 +683,74 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
     outputStream.close();
     ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");
 }
+
+void ShardDBTools::outputFilesWithDuplicateFailureDomains(const std::string& dbPath, const std::string& outputFilePath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::ofstream outputStream(outputFilePath);
+    ALWAYS_ASSERT(outputStream.is_open(), "Failed to open output file");
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+    sharedDb.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
+
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions);
+    auto db = sharedDb.db();
+    BlockServicesCacheDB blockServiceDB{logger, xmon, sharedDb};
+    auto blockServiceCache = blockServiceDB.getCache();
+
+    rocksdb::ReadOptions options;
+    auto spansCf = sharedDb.getCF("spans");
+    std::unordered_map<InodeId, uint8_t> filesToFailureDomainTolerance;
+    std::unordered_set<std::string> failureDomains;
+    {
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
+            if (spanK().fileId().type() != InodeType::FILE) {
+                continue;
+            }
+
+            auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
+            if (spanV().storageClass() == INLINE_STORAGE) {
+                continue;
+            }
+            failureDomains.clear();
+            auto blocksBody = spanV().blocksBody();
+            uint8_t failureToleranceCount = blocksBody.parity().parityBlocks();
+
+            for (uint8_t i = 0; i < blocksBody.parity().blocks(); ++i) {
+                auto blockServiceId = blocksBody.block(i).blockService();
+
+                auto it = blockServiceCache.blockServices.find(blockServiceId.u64);
+                ALWAYS_ASSERT(it != blockServiceCache.blockServices.end());
+                auto failureDomainString = std::string((char*)(&it->second.failureDomain[0]), it->second.failureDomain.size());
+                failureDomains.insert(failureDomainString);
+            }
+            uint8_t duplicateFailureDomains = blocksBody.parity().blocks() - failureDomains.size();
+            if (duplicateFailureDomains == 0) {
+                continue;
+            }
+            failureToleranceCount -= std::min(failureToleranceCount, duplicateFailureDomains);
+            auto fileId = filesToFailureDomainTolerance.find(spanK().fileId());
+            if (fileId != filesToFailureDomainTolerance.end()) {
+                fileId->second = std::min<uint8_t>(fileId->second, failureToleranceCount);
+            } else {
+                filesToFailureDomainTolerance[spanK().fileId()] = failureToleranceCount;
+            }
+        }
+        ROCKS_DB_CHECKED(it->status());
+    }
+    if (!filesToFailureDomainTolerance.empty()) {
+        outputStream << "[" << std::endl;
+        for (auto it : filesToFailureDomainTolerance) {
+            outputStream << "{\"fileId\": " << it.first << ", \"failure_domain_tolerance\": " << (int)it.second << "}," << std::endl;
+        }
+        outputStream << "]";
+    }
+    outputStream.close();
+    ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");
+}

@@ -23,6 +23,8 @@ static void usage(const char* binary) {
     fprintf(stderr, "       Outputs entries from distributed log. The RocksDB database will be opened as read only.\n");
     fprintf(stderr, "  sample-files DB_PATH OUTPUT_FILE_PATH\n");
     fprintf(stderr, "       Outputs per directory usage statistics in binary format. The RocksDB database will be opened as read only.\n");
+    fprintf(stderr, "  find-failure-domain-duplicates DB_PATH OUTPUT_FILE_PATH\n");
+    fprintf(stderr, "       Outputs files with spans that have duplicate failure domain, along with how many failure domain failures they can tolerate.\n");
 }
 
 int main(int argc, char** argv) {
@@ -69,6 +71,10 @@ int main(int argc, char** argv) {
             std::string dbPath = getNextArg();
             std::string outputFilePath = getNextArg();
             ShardDBTools::sampleFiles(dbPath, outputFilePath);
+        } else if (arg == "find-failure-domain-duplicates") {
+            std::string dbPath = getNextArg();
+            std::string outputFilePath = getNextArg();
+            ShardDBTools::outputFilesWithDuplicateFailureDomains(dbPath, outputFilePath);
         } else {
             dieWithUsage();
         }

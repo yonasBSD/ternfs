@@ -1587,9 +1587,16 @@ func (c *Client) ConvertBlock(log *lib.Logger, blockService *msgs.BlockService, 
 }
 
 func (c *Client) SetFetchBlockServices() {
-	c.blockServicesLock.Lock()
-	defer c.blockServicesLock.Unlock()
-	c.fetchBlockServices = true
+	var needToInitFetch = false
+	func() {
+		c.blockServicesLock.Lock()
+		defer c.blockServicesLock.Unlock()
+		needToInitFetch = !c.fetchBlockServices
+		c.fetchBlockServices = true
+	}()
+	if needToInitFetch {
+		c.refreshAddrs(c.shuckleConn.log)
+	}
 }
 
 func (c *Client) GetFailureDomainForBlockService(blockServiceId msgs.BlockServiceId) (msgs.FailureDomain, bool) {

@@ -162,6 +162,7 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
                 expandKey(v().secretKey(), cache.secretKey);
                 cache.storageClass = v().storageClass();
                 cache.flags = v().flags();
+                cache.failureDomain = v().failureDomain();
             }
             ROCKS_DB_CHECKED(it->status());
         }

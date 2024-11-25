@@ -486,6 +486,12 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 			for _, count := range blockServiceSet {
 				stats.minTimesBlockServicePicked = min(count, stats.minTimesBlockServicePicked)
 			}
+			if stats.minTimesBlockServicePicked *5 < stats.maxTimesBlockServicePicked {
+				log.RaiseAlert("hot spotting block services in storage class %v. Min times picked: %d, max times picked: %d", storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+			}
+			if stats.minTimesBlockServicePicked > 10 {
+				log.RaiseAlert("high load on block services in storage class %v. Min times picked: %d", storageClass, stats.minTimesBlockServicePicked)
+			}
 
 			log.Info("finished calculating current block services for storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d}",
 				storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)

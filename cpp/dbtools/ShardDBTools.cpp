@@ -746,10 +746,14 @@ void ShardDBTools::outputFilesWithDuplicateFailureDomains(const std::string& dbP
     }
     if (!filesToFailureDomainTolerance.empty()) {
         outputStream << "[" << std::endl;
-        for (auto it : filesToFailureDomainTolerance) {
-            outputStream << "{\"fileId\": " << it.first << ", \"failure_domain_tolerance\": " << (int)it.second << "}," << std::endl;
+
+        for (auto it = filesToFailureDomainTolerance.begin(); it != filesToFailureDomainTolerance.end();) {
+            outputStream << "{\"fileId\": \"" << it->first << "\", \"failure_domain_tolerance\": " << (int)it->second << "\"}";
+            if (++it != filesToFailureDomainTolerance.end())
+                outputStream << ",";
+            outputStream << std::endl;
         }
-        outputStream << "]";
+        outputStream << "]" << std::endl;
     }
     outputStream.close();
     ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");

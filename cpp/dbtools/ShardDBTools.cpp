@@ -26,6 +26,7 @@
 #include "SharedRocksDB.hpp"
 #include "ShardDBData.hpp"
 #include "Time.hpp"
+#include "json.hpp"
 
 namespace rocksdb {
 std::ostream& operator<<(std::ostream& out, const rocksdb::Slice& slice) {
@@ -486,6 +487,20 @@ void ShardDBTools::fsck(const std::string& dbPath) {
 #undef ERROR
 }
 
+void to_json(nlohmann::json &j, const InodeId &inode)
+{
+    std::stringstream stream;
+    stream << inode;
+    j = stream.str();
+}
+
+void to_json(nlohmann::json &j, const EggsTime &time)
+{
+    std::stringstream stream;
+    stream << time;
+    j = stream.str();
+}
+
 struct SizePerStorageClass {
     uint64_t logical{0};
     uint64_t flash{0};
@@ -662,19 +677,21 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             if (someOutputWritten) {
                 outputStream << ",\n";
             }
-            outputStream << R"js({"owner": ")js" << edgeK().dirId() << "\","
-                         << R"js("inode": ")js" << ownedTargetId << "\","
-                         << R"js("name": ")js" << std::string(edgeK().name().data(), edgeK().name().size()) << "\","
-                         << R"js("current": )js" << (current ? "true" : "false") << ","
-                         << R"js("logical": )js" << file_id->second.size.logical << ","
-                         << R"js("hdd": )js" << file_id->second.size.hdd << ","
-                         << R"js("flash": )js" << file_id->second.size.flash << ","
-                         << R"js("inline": )js" << file_id->second.size.inMetadata << ","
-                         << R"js("creation_time": ")js" << creationTime << "\","
-                         << R"js("deletion_time": ")js" << deletionTime << "\","
-                         << R"js("mtime": ")js" << file_id->second.mTime << "\","
-                         << R"js("atime": ")js" << file_id->second.aTime << "\","
-                         << R"js("size_weight": )js" << file_id->second.size_weight << "}";
+            nlohmann::json data;
+            data["owner"] = edgeK().dirId();
+            data["inode"] = ownedTargetId;
+            data["name"] = std::string(edgeK().name().data(), edgeK().name().size());
+            data["current"] = current;
+            data["logical"] = file_id->second.size.logical;
+            data["hdd"] = file_id->second.size.hdd;
+            data["flash"] = file_id->second.size.flash;
+            data["inline"] = file_id->second.size.inMetadata;
+            data["creation_time"] = creationTime;
+            data["deletion_time"] = deletionTime;
+            data["mtime"] = file_id->second.mTime;
+            data["atime"] = file_id->second.aTime;
+            data["size_weight"] = file_id->second.size_weight;
+            outputStream << data.dump();
             someOutputWritten = true;
         }
         ROCKS_DB_CHECKED(it->status());

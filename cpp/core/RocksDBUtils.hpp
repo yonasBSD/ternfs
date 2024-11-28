@@ -138,6 +138,7 @@ public:
         _val._data = (char*)malloc(sz);
         ALWAYS_ASSERT(_val._data);
         _val.afterAlloc(std::forward<Args>(args)...);
+        ALWAYS_ASSERT(_val.size() == sz);
     }
 
     ~OwnedValue() {

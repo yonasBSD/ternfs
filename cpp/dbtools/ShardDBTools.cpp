@@ -411,13 +411,17 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 ERROR("Expected offset %s, got %s in span for file %s", expectedNextOffset, spanK().offset(), thisFile);
             }
             expectedNextOffset = spanK().offset() + spanV().spanSize();
-            if (spanV().storageClass() == EMPTY_STORAGE) {
-                ERROR("File %s has empty storage span at offset %s", thisFile, spanK().offset());
-            } else if (spanV().storageClass() != INLINE_STORAGE) {
-                const auto& spanBlock = spanV().blocksBody();
-                for (int i = 0; i < spanBlock.parity().blocks(); i++) {
-                    auto block = spanBlock.block(i);
-                    blockServicesToFiles[std::pair<BlockServiceId, InodeId>(block.blockService(), thisFile)] += 1;
+            if (!spanV().isInlineStorage()) {
+                for (uint8_t i = 0; i < spanV().locationCount(); ++i) {
+                    auto blocksBody = spanV().blocksBodyReadOnly(i);
+                    if (blocksBody.storageClass() == EMPTY_STORAGE) {
+                        ERROR("File %s has empty storage span at offset %s", thisFile, spanK().offset());
+                    } else {
+                        for (int i = 0; i < blocksBody.parity().blocks(); i++) {
+                            auto block = blocksBody.block(i);
+                            blockServicesToFiles[std::pair<BlockServiceId, InodeId>(block.blockService(), thisFile)] += 1;
+                        }
+                    }
                 }
             }
         }
@@ -582,20 +586,22 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                 thisFileInlineSize = 0;
             }
 
-            auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
-            if (spanV().storageClass() == INLINE_STORAGE) {
+            const auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
+            if (spanV().isInlineStorage()) {
                 thisFileInlineSize += spanV().size();
                 continue;
             }
-            auto blocksBody = spanV().blocksBody();
-            auto physicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
-            switch (spanV().storageClass()){
-                case HDD_STORAGE:
-                    thisFileHddSize += physicalSize;
-                    break;
-                case FLASH_STORAGE:
-                    thisFileFlashSize += physicalSize;
-                    break;
+            for(uint8_t i = 0; i < spanV().locationCount(); ++i) {
+                auto blocksBody = spanV().blocksBodyReadOnly(i);
+                auto physicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
+                switch (blocksBody.storageClass()){
+                    case HDD_STORAGE:
+                        thisFileHddSize += physicalSize;
+                        break;
+                    case FLASH_STORAGE:
+                        thisFileFlashSize += physicalSize;
+                        break;
+                }
             }
         }
         auto file_it = files.find(thisFile);
@@ -732,31 +738,33 @@ void ShardDBTools::outputFilesWithDuplicateFailureDomains(const std::string& dbP
             }
 
             auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
-            if (spanV().storageClass() == INLINE_STORAGE) {
+            if (spanV().isInlineStorage() == INLINE_STORAGE) {
                 continue;
             }
             failureDomains.clear();
-            auto blocksBody = spanV().blocksBody();
-            uint8_t failureToleranceCount = blocksBody.parity().parityBlocks();
+            for (uint8_t i = 0; i < spanV().locationCount(); ++i) {
+                auto blocksBody = spanV().blocksBodyReadOnly(i);
+                uint8_t failureToleranceCount = blocksBody.parity().parityBlocks();
 
-            for (uint8_t i = 0; i < blocksBody.parity().blocks(); ++i) {
-                auto blockServiceId = blocksBody.block(i).blockService();
+                for (uint8_t i = 0; i < blocksBody.parity().blocks(); ++i) {
+                    auto blockServiceId = blocksBody.block(i).blockService();
 
-                auto it = blockServiceCache.blockServices.find(blockServiceId.u64);
-                ALWAYS_ASSERT(it != blockServiceCache.blockServices.end());
-                auto failureDomainString = std::string((char*)(&it->second.failureDomain[0]), it->second.failureDomain.size());
-                failureDomains.insert(failureDomainString);
-            }
-            uint8_t duplicateFailureDomains = blocksBody.parity().blocks() - failureDomains.size();
-            if (duplicateFailureDomains == 0) {
-                continue;
-            }
-            failureToleranceCount -= std::min(failureToleranceCount, duplicateFailureDomains);
-            auto fileId = filesToFailureDomainTolerance.find(spanK().fileId());
-            if (fileId != filesToFailureDomainTolerance.end()) {
-                fileId->second = std::min<uint8_t>(fileId->second, failureToleranceCount);
-            } else {
-                filesToFailureDomainTolerance[spanK().fileId()] = failureToleranceCount;
+                    auto it = blockServiceCache.blockServices.find(blockServiceId.u64);
+                    ALWAYS_ASSERT(it != blockServiceCache.blockServices.end());
+                    auto failureDomainString = std::string((char*)(&it->second.failureDomain[0]), it->second.failureDomain.size());
+                    failureDomains.insert(failureDomainString);
+                }
+                uint8_t duplicateFailureDomains = blocksBody.parity().blocks() - failureDomains.size();
+                if (duplicateFailureDomains == 0) {
+                    continue;
+                }
+                failureToleranceCount -= std::min(failureToleranceCount, duplicateFailureDomains);
+                auto fileId = filesToFailureDomainTolerance.find(spanK().fileId());
+                if (fileId != filesToFailureDomainTolerance.end()) {
+                    fileId->second = std::min<uint8_t>(fileId->second, failureToleranceCount);
+                } else {
+                    filesToFailureDomainTolerance[spanK().fileId()] = failureToleranceCount;
+                }
             }
         }
         ROCKS_DB_CHECKED(it->status());

@@ -759,12 +759,13 @@ struct ShardDBImpl {
                 respSpan.header.byteOffset = key().offset();
                 respSpan.header.size = value().spanSize();
                 respSpan.header.crc = value().crc();
-                if (value().storageClass() == INLINE_STORAGE) {
+                if (value().isInlineStorage()) {
                     auto& respSpanInline = respSpan.setInlineSpan();
                     respSpanInline.body = value().inlineBody();
                 } else {
-                    const auto& spanBlock = value().blocksBody();
-                    auto& respSpanBlock = respSpan.setBlocksSpan(value().storageClass());
+                    ALWAYS_ASSERT(value().locationCount() == 1);
+                    auto spanBlock = value().blocksBodyReadOnly(0);
+                    auto& respSpanBlock = respSpan.setBlocksSpan(spanBlock.storageClass());
                     respSpanBlock.parity = spanBlock.parity();
                     respSpanBlock.stripes = spanBlock.stripes();
                     respSpanBlock.cellSize = spanBlock.cellSize();
@@ -1388,8 +1389,9 @@ struct ShardDBImpl {
                 }
                 auto k = ExternalValue<SpanKey>::FromSlice(it->key());
                 auto span = ExternalValue<SpanBody>::FromSlice(it->value());
-                if (span().storageClass() == INLINE_STORAGE) { return; }
-                const auto blocks = span().blocksBody();
+                if (span().isInlineStorage()) { return; }
+                ALWAYS_ASSERT(span().locationCount() == 1);
+                auto blocks = span().blocksBodyReadOnly(0);
                 for (
                     int i = 0;
                     i < blocks.parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;
@@ -2598,11 +2600,10 @@ struct ShardDBImpl {
             ALWAYS_ASSERT(spanKey().fileId() == entry.fileId); // again, we know the file isn't empty
             span = ExternalValue<SpanBody>::FromSlice(spanIt->value());
         }
-        ALWAYS_ASSERT(span().storageClass() != EMPTY_STORAGE);
         resp.byteOffset = spanKey().offset();
 
         // If the span is blockless, the only thing we need to to do is remove it
-        if (span().storageClass() == INLINE_STORAGE) {
+        if (span().isInlineStorage()) {
             ROCKS_DB_CHECKED(batch.Delete(_spansCf, spanKey.toSlice()));
             file().setFileSize(spanKey().offset());
             {
@@ -2611,7 +2612,8 @@ struct ShardDBImpl {
             }
             return EggsError::NO_ERROR;
         }
-        const auto blocks = span().blocksBody();
+        ALWAYS_ASSERT(span().locationCount() == 1);
+        const auto blocks = span().blocksBodyReadOnly(0);
 
         // Otherwise, we need to condemn it first, and then certify the deletion.
         // Note that we allow to remove dirty spans -- this is important to deal well with
@@ -2659,9 +2661,8 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(batch.Put(_defaultCf, shardMetadataKey(&NEXT_BLOCK_ID_KEY), v.toSlice()));
     }
 
-    void _fillInAddSpanInitiate(const SpanBlocksBody blocks, AddSpanInitiateResp& resp) {
+    void _fillInAddSpanInitiate(const BlocksBodyReadOnly blocks, AddSpanInitiateResp& resp) {
         resp.blocks.els.reserve(blocks.parity().blocks());
-        BlockBody block;
         auto inMemoryBlockServiceData = _blockServicesCache.getCache();
         for (int i = 0; i < blocks.parity().blocks(); i++) {
             const BlockBody block = blocks.block(i);
@@ -2726,7 +2727,7 @@ struct ShardDBImpl {
                 ExternalValue<SpanBody> existingSpan(spanValue);
                 if (
                     existingSpan().spanSize() != entry.size ||
-                    existingSpan().storageClass() != INLINE_STORAGE ||
+                    !existingSpan().isInlineStorage()||
                     existingSpan().crc() != entry.crc ||
                     existingSpan().inlineBody() != entry.body
                 ) {
@@ -2754,10 +2755,8 @@ struct ShardDBImpl {
         // Now manufacture and add the span
         OwnedValue<SpanBody> spanBody(entry.body.ref());
         {
-            spanBody().setVersion(0);
             spanBody().setSpanSize(entry.size);
             spanBody().setCrc(entry.crc.u32);
-            spanBody().setStorageClass(entry.storageClass);
             ROCKS_DB_CHECKED(batch.Put(_spansCf, spanKey.toSlice(), spanBody.toSlice()));
         }
 
@@ -2801,16 +2800,17 @@ struct ShardDBImpl {
                 ExternalValue<SpanBody> existingSpan(spanValue);
                 if (
                     existingSpan().spanSize() != entry.size ||
-                    existingSpan().storageClass() == INLINE_STORAGE ||
+                    existingSpan().isInlineStorage() ||
                     existingSpan().crc() != entry.crc ||
-                    existingSpan().blocksBody().cellSize() != entry.cellSize ||
-                    existingSpan().blocksBody().stripes() != entry.stripes ||
-                    existingSpan().blocksBody().parity() != entry.parity
+                    existingSpan().locationCount() != 1 ||
+                    existingSpan().blocksBodyReadOnly(0).cellSize() != entry.cellSize ||
+                    existingSpan().blocksBodyReadOnly(0).stripes() != entry.stripes ||
+                    existingSpan().blocksBodyReadOnly(0).parity() != entry.parity
                 ) {
                     LOG_DEBUG(_env, "file size does not match, and existing span does not match");
                     return EggsError::SPAN_NOT_FOUND;
                 }
-                _fillInAddSpanInitiate(existingSpan().blocksBody(), resp);
+                _fillInAddSpanInitiate(existingSpan().blocksBodyReadOnly(0), resp);
                 return EggsError::NO_ERROR;
             }
             LOG_DEBUG(_env, "expecting file size %s, but got %s, returning span not found", entry.byteOffset, file().fileSize());
@@ -2832,15 +2832,11 @@ struct ShardDBImpl {
 
         // Now manufacture and add the span, also recording the blocks
         // in the block service -> files index.
-        OwnedValue<SpanBody> spanBody(entry.storageClass, entry.parity, entry.stripes);
+        OwnedValue<SpanBody> spanBody(0, entry.storageClass, entry.parity, entry.stripes);
         {
-            spanBody().setVersion(0);
             spanBody().setSpanSize(entry.size);
             spanBody().setCrc(entry.crc.u32);
-            spanBody().setStorageClass(entry.storageClass);
-            auto blocks = spanBody().blocksBody();
-            blocks.setParity(entry.parity);
-            blocks.setStripes(entry.stripes);
+            auto blocks = spanBody().blocksBody(0);
             blocks.setCellSize(entry.cellSize);
             uint64_t nextBlockId = _getNextBlockId();
             for (int i = 0; i < entry.parity.blocks(); i++) {
@@ -2859,7 +2855,7 @@ struct ShardDBImpl {
         }
 
         // Fill in the response
-        _fillInAddSpanInitiate(spanBody().blocksBody(), resp);
+        _fillInAddSpanInitiate(spanBody().blocksBodyReadOnly(0), resp);
 
         return EggsError::NO_ERROR;
     }
@@ -2966,10 +2962,11 @@ struct ShardDBImpl {
             }
             ALWAYS_ASSERT(file().lastSpanState() == SpanState::DIRTY);
             // Now verify the proofs
-            if (span().storageClass() == INLINE_STORAGE) {
+            if (span().isInlineStorage()) {
                 return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
             }
-            auto blocks = span().blocksBody();
+            ALWAYS_ASSERT(span().locationCount() == 1);
+            auto blocks = span().blocksBodyReadOnly(0);
             if (blocks.parity().blocks() != entry.proofs.els.size()) {
                 return EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS;
             }
@@ -3056,11 +3053,11 @@ struct ShardDBImpl {
             span = ExternalValue<SpanBody>(spanValue);
         }
 
-        ALWAYS_ASSERT(span().storageClass() != EMPTY_STORAGE);
-        if (span().storageClass() == INLINE_STORAGE) {
+        if (span().isInlineStorage()) {
             return EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN;
         }
-        auto blocks = span().blocksBody();
+        ALWAYS_ASSERT(span().locationCount() == 1);
+        auto blocks = span().blocksBodyReadOnly(0);
 
         // Make sure we're condemned
         if (file().lastSpanState() != SpanState::CONDEMNED) {
@@ -3170,11 +3167,13 @@ struct ShardDBImpl {
         if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
-        if (span1().storageClass() == INLINE_STORAGE || span2().storageClass() == INLINE_STORAGE) {
+        if (span1().isInlineStorage() == INLINE_STORAGE || span2().isInlineStorage() == INLINE_STORAGE) {
             return EggsError::SWAP_BLOCKS_INLINE_STORAGE;
         }
-        auto blocks1 = span1().blocksBody();
-        auto blocks2 = span2().blocksBody();
+        ALWAYS_ASSERT(span1().locationCount() == 1);
+        ALWAYS_ASSERT(span2().locationCount() == 1);
+        auto blocks1 = span1().blocksBodyReadOnly(0);
+        auto blocks2 = span2().blocksBodyReadOnly(0);
         uint32_t blockSize1 = blocks1.cellSize()*blocks1.stripes();
         uint32_t blockSize2 = blocks2.cellSize()*blocks2.stripes();
         if (blockSize1 != blockSize2) {
@@ -3188,7 +3187,7 @@ struct ShardDBImpl {
             return EggsError::SWAP_BLOCKS_MISMATCHING_STATE;
         }
         // Find blocks
-        const auto findBlock = [](const SpanBlocksBody blocks, uint64_t blockId, BlockBody& block) -> int {
+        const auto findBlock = [](const BlocksBodyReadOnly blocks, uint64_t blockId, BlockBody& block) -> int {
             for (int i = 0; i < blocks.parity().blocks(); i++) {
                 block = blocks.block(i);
                 if (block.blockId() == blockId) {
@@ -3330,8 +3329,9 @@ struct ShardDBImpl {
             auto k = InodeIdKey::Static(entry.fileId2);
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile2.toSlice()));
         }
+        ALWAYS_ASSERT(span().locationCount() == 1);
         // record block count changes
-        auto blocksBody = span().blocksBody();
+        auto blocksBody = span().blocksBodyReadOnly(0);
         for (int i = 0; i < blocksBody.parity().blocks(); i++) {
             auto block = blocksBody.block(i);
             _addBlockServicesToFiles(batch, block.blockService(), entry.fileId1, -1);
@@ -3354,11 +3354,13 @@ struct ShardDBImpl {
         if (!_fetchSpan(entry.fileId2, entry.byteOffset2, span2Key, span2Value, span2)) {
             return EggsError::SPAN_NOT_FOUND;
         }
-        if (span1().storageClass() == INLINE_STORAGE || span2().storageClass() == INLINE_STORAGE) {
+        if (span1().isInlineStorage() || span2().isInlineStorage()) {
             return EggsError::SWAP_SPANS_INLINE_STORAGE;
         }
-        auto blocks1 = span1().blocksBody();
-        auto blocks2 = span2().blocksBody();
+        ALWAYS_ASSERT(span1().locationCount() == 1);
+        ALWAYS_ASSERT(span1().locationCount() == 1);
+        auto blocks1 = span1().blocksBodyReadOnly(0);
+        auto blocks2 = span2().blocksBodyReadOnly(0);
         // check that size and crc is the same
         if (span1().spanSize() != span2().spanSize()) {
             return EggsError::SWAP_SPANS_MISMATCHING_SIZE;
@@ -3373,7 +3375,7 @@ struct ShardDBImpl {
             return EggsError::SWAP_SPANS_NOT_CLEAN;
         }
         // check if we've already swapped
-        const auto blocksMatch = [](const SpanBlocksBody span, const BincodeList<uint64_t>& blocks) {
+        const auto blocksMatch = [](const BlocksBodyReadOnly span, const BincodeList<uint64_t>& blocks) {
             if (span.parity().blocks() != blocks.els.size()) { return false; }
             for (int i = 0; i < blocks.els.size(); i++) {
                 if (span.block(i).blockId() != blocks.els[i]) { return false; }
@@ -3387,7 +3389,7 @@ struct ShardDBImpl {
             return EggsError::SWAP_SPANS_MISMATCHING_BLOCKS;
         }
         // we're ready to swap, first do the blocks bookkeeping
-        const auto adjustBlockServices = [this, &batch](const SpanBlocksBody blocks, InodeId addTo, InodeId subtractFrom) {
+        const auto adjustBlockServices = [this, &batch](const BlocksBodyReadOnly blocks, InodeId addTo, InodeId subtractFrom) {
             for (int i = 0; i < blocks.parity().blocks(); i++) {
                 const auto block = blocks.block(i);
                 _addBlockServicesToFiles(batch, block.blockService(), addTo, +1);

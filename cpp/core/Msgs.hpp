@@ -314,7 +314,7 @@ struct Parity {
 
     constexpr Parity(): u8(0) {}
 
-    constexpr Parity(uint8_t data): u8(data) {}
+    explicit constexpr Parity(uint8_t data): u8(data) {}
 
     constexpr Parity(uint8_t dataBlocks, uint8_t parityBlocks): u8(dataBlocks | (parityBlocks << 4)) {
         ALWAYS_ASSERT(dataBlocks != 0 && dataBlocks < 16);

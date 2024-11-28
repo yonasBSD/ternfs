@@ -3,10 +3,12 @@
 #include <cstdint>
 #include <ostream>
 #include <rocksdb/slice.h>
+#include <sys/types.h>
 
 #include "Assert.hpp"
 #include "Common.hpp"
 #include "Bincode.hpp"
+#include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Time.hpp"
 #include "RocksDBUtils.hpp"
@@ -96,7 +98,7 @@ struct BlockBody {
     constexpr static size_t SIZE = MAX_SIZE;
 };
 
-struct SpanBlocksBody {
+struct SpanBlocksBodyV0 {
     FIELDS(
         LE, Parity,   parity, setParity,
         LE, uint8_t,  stripes, setStripes,
@@ -108,7 +110,7 @@ struct SpanBlocksBody {
     // * []BlockBody blocks
     // * []u32 stripesCrc
 
-    SpanBlocksBody(char* data) : _data(data) {}
+    SpanBlocksBodyV0(char* data) : _data(data) {}
 
     static size_t calcSize(Parity parity, uint8_t stripes) {
         ALWAYS_ASSERT(stripes > 0 && stripes < 16);
@@ -117,7 +119,7 @@ struct SpanBlocksBody {
     }
 
     void afterAlloc(Parity parity, uint8_t stripes) {
-        setParity(parity.u8);
+        setParity(parity);
         setStripes(stripes);
     }
 
@@ -153,34 +155,135 @@ struct SpanBlocksBody {
     }
 };
 
-struct SpanBody {
+struct SpanBlocksBody {
     FIELDS(
-        LE, uint8_t,  version, setVersion,
-        LE, uint32_t, spanSize, setSpanSize,
-        LE, uint32_t, crc, setCrc,
+        LE, uint8_t,  location, setLocation,
         LE, uint8_t,  storageClass, setStorageClass,
+        LE, Parity,   parity, setParity,
+        LE, uint8_t,  stripes, setStripes,
+        LE, uint32_t, cellSize, setCellSize,
         EMIT_OFFSET, MIN_SIZE,
         END
     )
+
+    // after this:
+    // * []BlockBody blocks
+    // * []u32 stripesCrc
+
+    SpanBlocksBody(char* data) : _data(data) {}
+
+    static size_t calcSize(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
+        ALWAYS_ASSERT(stripes > 0 && stripes < 16);
+        ALWAYS_ASSERT(parity.dataBlocks() > 0);
+        return MIN_SIZE + BlockBody::SIZE*parity.blocks() + sizeof(uint32_t)*stripes;
+    }
+
+    void afterAlloc(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
+        ALWAYS_ASSERT(storageClass != EMPTY_STORAGE && storageClass != INLINE_STORAGE);
+        setLocation(location);
+        setStorageClass(storageClass);
+        setParity(parity);
+        setStripes(stripes);
+    }
+
+    size_t size() const {
+        return MIN_SIZE + BlockBody::SIZE*parity().blocks() + sizeof(uint32_t)*stripes();
+    }
+
+    const BlockBody block(uint64_t ix) const {
+        ALWAYS_ASSERT(ix < parity().blocks());
+        BlockBody b;
+        b._data = _data + MIN_SIZE + ix * BlockBody::SIZE;
+        return b;
+    }
+    BlockBody block(uint64_t ix) {
+        ALWAYS_ASSERT(ix < parity().blocks());
+        BlockBody b;
+        b._data = _data + MIN_SIZE + ix * BlockBody::SIZE;
+        return b;
+    }
+
+    uint32_t stripeCrc(uint64_t ix) const {
+        static_assert(std::endian::native == std::endian::little);
+        ALWAYS_ASSERT(ix < stripes());
+        uint32_t crc;
+        memcpy(&crc, _data + MIN_SIZE + parity().blocks()*BlockBody::SIZE + ix*sizeof(uint32_t), sizeof(uint32_t));
+        return crc;
+    }
+
+    void setStripeCrc(uint64_t ix, uint32_t crc) {
+        static_assert(std::endian::native == std::endian::little);
+        ALWAYS_ASSERT(ix < stripes());
+        memcpy(_data + MIN_SIZE + parity().blocks()*BlockBody::SIZE + ix*sizeof(uint32_t), &crc, sizeof(uint32_t));
+    }
+
+};
+
+struct SpanBody;
+
+// We support two formats of BlocksBody
+// We want to provide same api when reading regardless of format
+// We don't want to allow changes to data in old format.
+// This class covers all the above
+class BlocksBodyReadOnly {
+public:
+    BlocksBodyReadOnly(char* span, char* spanBlockBodyData) : _spanData(span), _bodyData(spanBlockBodyData) {}
+
+    uint8_t location() const;
+    uint8_t storageClass() const;
+    const Parity parity() const;
+    uint8_t stripes() const;
+    uint32_t cellSize() const;
+
+    const BlockBody block(uint64_t ix) const;
+    uint32_t stripeCrc(uint64_t ix) const;
+
+    size_t size() const;
+private:
+    char* _spanData;
+    char* _bodyData;
+};
+
+struct SpanBody {
+    FIELDS(
+        LE, uint8_t,  version, _setVersion,
+        LE, uint32_t, spanSize, setSpanSize,
+        LE, uint32_t, crc, setCrc,
+        // in version 0 we store storageClas
+        // in version 1 we store locationCount where locationCount 255 repressentis inline storage
+        LE, uint8_t,  _storageClassOrLocationCount, _setStorageClassOrLocationCount,
+        EMIT_OFFSET, MIN_SIZE,
+        END
+    )
+
+    static constexpr uint8_t LOCATION_COUNT_INLINE = 255;
     // after this:
     // * Inline body for inline spans (bytes)
-    // * Blocks for normal spans
+    // * Blocks for normal spans BlocksBodyOld (version 0)
+    // * Blocks per location for normal spans []BlocksBody (version 1)
 
+    // In new format storage type is stored in BlocksBody
+    // This function maintains same external api to determine if span is inline or not.
+    bool isInlineStorage() const {
+        return version() == 0 ? INLINE_STORAGE == _storageClassOrLocationCount() : _storageClassOrLocationCount() == LOCATION_COUNT_INLINE;
+    }
+
+    // inline storage
     BincodeBytesRef inlineBody() const {
-        ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
+        ALWAYS_ASSERT(isInlineStorage());
         return BincodeBytesRef((const char*)(_data+MIN_SIZE+1), (uint8_t)(int)*(_data+MIN_SIZE));
     }
 
-    void setInlineBody(const BincodeBytesRef& body) {
-        ALWAYS_ASSERT(storageClass() == INLINE_STORAGE);
+    void _setInlineBody(const BincodeBytesRef& body) {
+        ALWAYS_ASSERT(isInlineStorage());
         size_t offset = MIN_SIZE;
-        *(_data+offset) = (char)(int)body.size();
+        *((uint8_t*)_data+offset) = body.size();
         memcpy(_data+offset+1, body.data(), body.size());
     }
 
     void checkSize(size_t sz) {
         ALWAYS_ASSERT(sz >= MIN_SIZE);
-        if (storageClass() == INLINE_STORAGE) {
+        if (isInlineStorage()) {
             ALWAYS_ASSERT(sz >= MIN_SIZE+1); // length
         }
         ALWAYS_ASSERT(sz == size());
@@ -191,39 +294,105 @@ struct SpanBody {
         return MIN_SIZE + 1 + inlineBody.size();
     }
     void afterAlloc(const BincodeBytesRef& inlineBody) {
-        setStorageClass(INLINE_STORAGE);
-        setInlineBody(inlineBody);
+        _setVersion(1);
+        _setStorageClassOrLocationCount(LOCATION_COUNT_INLINE);
+        _setInlineBody(inlineBody);
     }
 
-    // blocks
-    static size_t calcSize(uint8_t storageClass, Parity parity, uint8_t stripes) {
-        ALWAYS_ASSERT(storageClass != EMPTY_STORAGE && storageClass != INLINE_STORAGE);
-        return MIN_SIZE + SpanBlocksBody::calcSize(parity, stripes);
+
+    // * Blocks per location for normal spans []BlocksBody (version 1)
+    // * we don't have a usecase for creating a span with multiple locations so far so only constructor for one is provided.
+    static size_t calcSize(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
+        return MIN_SIZE + SpanBlocksBody::calcSize(location, storageClass, parity, stripes);
     }
-    void afterAlloc(uint8_t storageClass, Parity parity, uint8_t stripes) {
-        setStorageClass(storageClass);
-        blocksBody().afterAlloc(parity, stripes);
+
+    void afterAlloc(uint8_t location, uint8_t storageClass, Parity parity, uint8_t stripes) {
+        _setVersion(1);
+        _setStorageClassOrLocationCount(1);
+        blocksBody(0).afterAlloc(location, storageClass, parity, stripes);
     }
-    SpanBlocksBody blocksBody() {
-        ALWAYS_ASSERT(storageClass() != INLINE_STORAGE);
-        return SpanBlocksBody(_data + MIN_SIZE);
+
+    uint8_t locationCount() const {
+        ALWAYS_ASSERT(!isInlineStorage());
+        return version() == 0 ? 1 : _storageClassOrLocationCount();
     }
-    const SpanBlocksBody blocksBody() const {
-        ALWAYS_ASSERT(storageClass() != INLINE_STORAGE);
-        return SpanBlocksBody(_data + MIN_SIZE);
+
+    const BlocksBodyReadOnly blocksBodyReadOnly(uint8_t idx) const {
+        ALWAYS_ASSERT(idx < locationCount());
+        return BlocksBodyReadOnly(_data, version() == 0 ? _data + MIN_SIZE : _blocksBodyOffset(idx));
+    }
+
+    // we only allow modifications of new format so non const version does not need compatibility wrapper
+    SpanBlocksBody blocksBody(uint8_t idx) {
+        return SpanBlocksBody(_blocksBodyOffset(idx));
+    }
+
+    char* _blocksBodyOffset(uint8_t idx) const {
+        ALWAYS_ASSERT(version() == 1);
+        ALWAYS_ASSERT(!isInlineStorage());
+        ALWAYS_ASSERT(idx < locationCount());
+        char* offset = _data + MIN_SIZE;
+        for (uint8_t i = 0; i < idx; ++i) {
+            size_t blocksBodySize = SpanBlocksBody(offset).size();
+            offset += blocksBodySize;
+        }
+        return offset;
     }
 
     size_t size() const {
-        ALWAYS_ASSERT(storageClass() != EMPTY_STORAGE);
-        size_t sz = MIN_SIZE;
-        if (storageClass() == INLINE_STORAGE) {
-            sz += 1 + (uint8_t)(int)*(_data + MIN_SIZE);
-        } else {
-            sz += blocksBody().size();
+        if (isInlineStorage()) {
+            return MIN_SIZE + 1 + *((uint8_t*)_data + MIN_SIZE);
         }
-        return sz;
+        if (version() == 0) {
+            auto blocksBody = blocksBodyReadOnly(0);
+            ALWAYS_ASSERT(version() != 0 || blocksBody.storageClass() != EMPTY_STORAGE);
+            return MIN_SIZE + blocksBodyReadOnly(0).size();
+        }
+        ALWAYS_ASSERT(version() == 1);
+        ALWAYS_ASSERT(locationCount() != 0);
+        char* lastOffset = _blocksBodyOffset(locationCount() - 1);
+        return lastOffset - _data + SpanBlocksBody(lastOffset).size();
     }
+    SpanBody() : _data(nullptr) {}
+    SpanBody(char* data) : _data(data) {}
 };
+
+inline uint8_t BlocksBodyReadOnly::location() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? 0 : SpanBlocksBody(_bodyData).location();
+}
+
+inline uint8_t BlocksBodyReadOnly::storageClass() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? SpanBody(_spanData)._storageClassOrLocationCount() : SpanBlocksBody(_bodyData).storageClass();
+}
+
+inline const Parity BlocksBodyReadOnly::parity() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).parity() : SpanBlocksBody(_bodyData).parity();
+}
+
+inline uint8_t BlocksBodyReadOnly::stripes() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).stripes() : SpanBlocksBody(_bodyData).stripes();
+}
+
+inline uint32_t BlocksBodyReadOnly::cellSize() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).cellSize() : SpanBlocksBody(_bodyData).cellSize();
+}
+inline const BlockBody BlocksBodyReadOnly::block(uint64_t ix) const {
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).block(ix) : SpanBlocksBody(_bodyData).block(ix);
+}
+
+inline uint32_t BlocksBodyReadOnly::stripeCrc(uint64_t ix) const {
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).stripeCrc(ix) : SpanBlocksBody(_bodyData).stripeCrc(ix);
+}
+
+inline size_t BlocksBodyReadOnly::size() const {
+    ALWAYS_ASSERT(!SpanBody(_spanData).isInlineStorage());
+    return SpanBody(_spanData).version() == 0 ? SpanBlocksBodyV0(_bodyData).size() : SpanBlocksBody(_bodyData).size();
+}
 
 enum class HashMode : uint8_t {
     // TODO add docs regarding why we like 63 bit hashes, specifically the fact

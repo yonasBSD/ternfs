@@ -2,6 +2,7 @@
 
 #include <linux/sched/mm.h>
 
+#include "latch.h"
 #include "log.h"
 #include "dir.h"
 #include "metadata.h"
@@ -40,6 +41,7 @@ struct inode* eggsfs_inode_alloc(struct super_block* sb) {
     }
 
     eggsfs_latch_init(&enode->getattr_update_latch);
+    eggsfs_latch_init(&enode->getattr_update_init_latch);
     INIT_DELAYED_WORK(&enode->getattr_async_work, &getattr_async_complete);
 
     eggsfs_debug("done enode=%p", enode);
@@ -96,14 +98,19 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
 
     int ret = 0;
     u64 seqno = 0;
+    u64 init_seqno = 0;
     if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
         // it is not safe to pass enode->getattr_async_seqno directly to eggsfs_latch_try_acquire as subsequent calls while lock is held
         // overwrite the seqno we need for release causing a deadlock
         enode->getattr_async_seqno = seqno;
+        // This latch is guaranteeing completion does not finish and free update_latch before we are finished with it
+        // As we didn't schedule completion yet no one could be holding it
+        BUG_ON(!eggsfs_latch_try_acquire(&enode->getattr_update_init_latch, init_seqno));
+        ihold(&enode->inode); // we need the request until we're done
         // Schedule the work immediately, so that we can't end up in the situation where
         // the async completes before we schedule the work and we run the complete twice.
         BUG_ON(!schedule_delayed_work(&enode->getattr_async_work, eggsfs_initial_shard_timeout_jiffies));
-        ihold(&enode->inode); // we need the request until we're done
+
 
         u64 ts = get_jiffies_64();
         if (smp_load_acquire(&enode->getattr_expiry) > ts) {
@@ -138,6 +145,8 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
     }
 
 out:
+    //we are done with init, relase the init latch
+    eggsfs_latch_release(&enode->getattr_update_init_latch, init_seqno);
     if (ret <= 0) {
         // The timeout might have already ran, in which case it'll be the one
         // releasing the latch.
@@ -153,6 +162,16 @@ out:
 static void getattr_async_complete(struct work_struct* work) {
     struct eggsfs_inode* enode = container_of(to_delayed_work(work), struct eggsfs_inode, getattr_async_work);
     eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+
+    u64 seqno = 0;
+    if(!eggsfs_latch_try_acquire(&enode->getattr_update_init_latch, seqno)) {
+        // wait until eggsfs_do_getattr is finished with init
+        eggsfs_latch_wait(&enode->getattr_update_init_latch, seqno);
+        // we are holding getattr_update_latch no one will acquire init latch before we release it
+        BUG_ON(!eggsfs_latch_try_acquire(&enode->getattr_update_init_latch, seqno));
+    }
+    // we might as well release it now, we are holding getattr_update_latch
+    eggsfs_latch_release(&enode->getattr_update_init_latch, seqno);
     // if we have a buffer, we're done, otherwise it's a timeout
     if (enode->getattr_async_req.skb) {
         int err;
@@ -213,9 +232,9 @@ static void getattr_async_complete(struct work_struct* work) {
         }
     }
     eggsfs_metadata_remove_request(&((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info)->sock, enode->getattr_async_req.request_id);
-    // And release latch, put inode
-    eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+    // And put inode, release latch ordering is not important in this case but it's good practice to release references/locks in reverse order of acquisition
     iput(&enode->inode);
+    eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
 }
 
 int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {

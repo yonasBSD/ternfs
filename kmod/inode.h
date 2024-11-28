@@ -169,9 +169,12 @@ struct eggsfs_inode {
     //    do the metadata request normally;
     // 2. Asynchronously, where we take the `getattr_update_latch` and then
     //    have `getattr_async_work` complete it, without retries.
+    //    Due to async nature of completion it may race with init and relase the
+    //    latch before init completes. To avoid it we use `getattr_update_init_latch`.
     // Method 2 is used when doing speculative getattrs when opening directories.
     u64 getattr_expiry;
     struct eggsfs_latch getattr_update_latch;
+    struct eggsfs_latch getattr_update_init_latch;
     struct eggsfs_metadata_request getattr_async_req;
     struct delayed_work getattr_async_work;
     s64 getattr_async_seqno;

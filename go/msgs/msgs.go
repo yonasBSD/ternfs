@@ -440,7 +440,7 @@ func (id BlockId) Path() string {
 	h := sha1.New()
 	h.Write([]byte(hex))
 	dir := fmt.Sprintf("%02x", h.Sum(nil)[0])
-	return path.Join(dir, hex)
+	return path.Join("with_crc", dir, hex)
 }
 
 func MakeInodeId(typ InodeType, shard ShardId, id uint64) InodeId {

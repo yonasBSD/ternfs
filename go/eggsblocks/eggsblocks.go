@@ -892,8 +892,6 @@ func readBlocksRequest(
 		req = &msgs.TestWriteReq{}
 	case msgs.CHECK_BLOCK:
 		req = &msgs.CheckBlockReq{}
-	case msgs.CONVERT_BLOCK:
-		req = &msgs.ConvertBlockReq{}
 	default:
 		log.RaiseAlert("bad blocks request kind %v", kind)
 		return 0, nil, msgs.MALFORMED_REQUEST

@@ -1980,11 +1980,6 @@ func main() {
 			reflect.TypeOf(msgs.CheckBlockReq{}),
 			reflect.TypeOf(msgs.CheckBlockResp{}),
 		},
-		{
-			0x07,
-			reflect.TypeOf(msgs.ConvertBlockReq{}),
-			reflect.TypeOf(msgs.ConvertBlockResp{}),
-		},
 	}...)
 
 	logReqResps := []reqRespType{

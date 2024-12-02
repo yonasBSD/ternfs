@@ -966,8 +966,6 @@ func (k BlocksMessageKind) String() string {
 		return "TEST_WRITE"
 	case 6:
 		return "CHECK_BLOCK"
-	case 7:
-		return "CONVERT_BLOCK"
 	default:
 		return fmt.Sprintf("BlocksMessageKind(%d)", k)
 	}
@@ -981,7 +979,6 @@ const (
 	ERASE_BLOCK BlocksMessageKind = 0x1
 	TEST_WRITE BlocksMessageKind = 0x5
 	CHECK_BLOCK BlocksMessageKind = 0x6
-	CONVERT_BLOCK BlocksMessageKind = 0x7
 )
 
 var AllBlocksMessageKind = [...]BlocksMessageKind{
@@ -991,10 +988,9 @@ var AllBlocksMessageKind = [...]BlocksMessageKind{
 	ERASE_BLOCK,
 	TEST_WRITE,
 	CHECK_BLOCK,
-	CONVERT_BLOCK,
 }
 
-const MaxBlocksMessageKind BlocksMessageKind = 7
+const MaxBlocksMessageKind BlocksMessageKind = 6
 
 func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 	switch {
@@ -1010,8 +1006,6 @@ func MkBlocksMessage(k string) (BlocksRequest, BlocksResponse, error) {
 		return &TestWriteReq{}, &TestWriteResp{}, nil
 	case k == "CHECK_BLOCK":
 		return &CheckBlockReq{}, &CheckBlockResp{}, nil
-	case k == "CONVERT_BLOCK":
-		return &ConvertBlockReq{}, &ConvertBlockResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -6378,48 +6372,6 @@ func (v *CheckBlockResp) Pack(w io.Writer) error {
 }
 
 func (v *CheckBlockResp) Unpack(r io.Reader) error {
-	return nil
-}
-
-func (v *ConvertBlockReq) BlocksRequestKind() BlocksMessageKind {
-	return CONVERT_BLOCK
-}
-
-func (v *ConvertBlockReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint32(v.Size)); err != nil {
-		return err
-	}
-	if err := bincode.PackScalar(w, uint32(v.Crc)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *ConvertBlockReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint32)(&v.Size)); err != nil {
-		return err
-	}
-	if err := bincode.UnpackScalar(r, (*uint32)(&v.Crc)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *ConvertBlockResp) BlocksResponseKind() BlocksMessageKind {
-	return CONVERT_BLOCK
-}
-
-func (v *ConvertBlockResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *ConvertBlockResp) Unpack(r io.Reader) error {
 	return nil
 }
 

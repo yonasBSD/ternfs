@@ -382,7 +382,6 @@ enum class BlocksMessageKind : uint8_t {
     ERASE_BLOCK = 1,
     TEST_WRITE = 5,
     CHECK_BLOCK = 6,
-    CONVERT_BLOCK = 7,
     EMPTY = 255,
 };
 
@@ -393,10 +392,9 @@ const std::vector<BlocksMessageKind> allBlocksMessageKind {
     BlocksMessageKind::ERASE_BLOCK,
     BlocksMessageKind::TEST_WRITE,
     BlocksMessageKind::CHECK_BLOCK,
-    BlocksMessageKind::CONVERT_BLOCK,
 };
 
-constexpr int maxBlocksMessageKind = 7;
+constexpr int maxBlocksMessageKind = 6;
 
 std::ostream& operator<<(std::ostream& out, BlocksMessageKind kind);
 
@@ -4824,46 +4822,6 @@ struct CheckBlockResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const CheckBlockResp& x);
-
-struct ConvertBlockReq {
-    uint64_t blockId;
-    uint32_t size;
-    Crc crc;
-
-    static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4; // blockId + size + crc
-
-    ConvertBlockReq() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += 8; // blockId
-        _size += 4; // size
-        _size += 4; // crc
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ConvertBlockReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ConvertBlockReq& x);
-
-struct ConvertBlockResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    ConvertBlockResp() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const ConvertBlockResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const ConvertBlockResp& x);
 
 struct LogWriteReq {
     LeaderToken token;

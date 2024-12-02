@@ -611,6 +611,10 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 				VALUES
 					(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT DO UPDATE SET
+					ip1 = excluded.ip1,
+					port1 = excluded.port1,
+					ip2 = excluded.ip2,
+					port2 = excluded.port2,
 					flags =
 						IIF(
 							(flags & ?) <> 0,
@@ -625,7 +629,8 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 						IIF(
 							(
 								((flags & ?) <> 0) OR
-								(((flags & ~?) | (excluded.flags & ?)) = flags)
+								(((flags & ~?) | (excluded.flags & ?)) = flags) OR
+								(ip1 <> excluded.ip1 OR ip2 <> excluded.ip2)
 							),
 							flags_last_changed,
 							?

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <memory>
+#include <regex>
 #include <rocksdb/db.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
@@ -26,7 +27,6 @@
 #include "SharedRocksDB.hpp"
 #include "ShardDBData.hpp"
 #include "Time.hpp"
-#include "json.hpp"
 
 namespace rocksdb {
 std::ostream& operator<<(std::ostream& out, const rocksdb::Slice& slice) {
@@ -491,20 +491,6 @@ void ShardDBTools::fsck(const std::string& dbPath) {
 #undef ERROR
 }
 
-void to_json(nlohmann::json &j, const InodeId &inode)
-{
-    std::stringstream stream;
-    stream << inode;
-    j = stream.str();
-}
-
-void to_json(nlohmann::json &j, const EggsTime &time)
-{
-    std::stringstream stream;
-    stream << time;
-    j = stream.str();
-}
-
 struct SizePerStorageClass {
     uint64_t logical{0};
     uint64_t flash{0};
@@ -622,9 +608,6 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
         EggsTime thisDirMaxTime = 0;
         std::string thisDirMaxTimeEdge;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
-        bool someOutputWritten = false;
-        // The output is a JSON array, so we need to output just the start of a list.
-        outputStream << "[";
         for (it->SeekToFirst(); it->Valid(); it->Next())
         {
             auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
@@ -681,29 +664,23 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                 // not sampled skip
                 continue;
             }
-            if (someOutputWritten) {
-                outputStream << ",\n";
-            }
-            nlohmann::json data;
-            data["owner"] = edgeK().dirId();
-            data["inode"] = ownedTargetId;
-            data["name"] = std::string(edgeK().name().data(), edgeK().name().size());
-            data["current"] = current;
-            data["logical"] = file_id->second.size.logical;
-            data["hdd"] = file_id->second.size.hdd;
-            data["flash"] = file_id->second.size.flash;
-            data["inline"] = file_id->second.size.inMetadata;
-            data["creation_time"] = creationTime;
-            data["deletion_time"] = deletionTime;
-            data["mtime"] = file_id->second.mTime;
-            data["atime"] = file_id->second.aTime;
-            data["size_weight"] = file_id->second.size_weight;
-            outputStream << data.dump();
-            someOutputWritten = true;
+            auto name = std::string(edgeK().name().data(), edgeK().name().size());
+            outputStream << "\"" << std::regex_replace(name, std::regex(R"(")"), R"("")") << "\",";
+            outputStream << edgeK().dirId() << ",";
+            outputStream << ownedTargetId << ",";
+            outputStream << current << ",";
+            outputStream << file_id->second.size.logical << ",";
+            outputStream << file_id->second.size.hdd << ",";
+            outputStream << file_id->second.size.flash << ",";
+            outputStream << file_id->second.size.inMetadata << ",";
+            outputStream << creationTime << ",";
+            outputStream << deletionTime << ",";
+            outputStream << file_id->second.mTime << ",";
+            outputStream << file_id->second.aTime << ",";
+            outputStream << file_id->second.size_weight << "\n";
         }
         ROCKS_DB_CHECKED(it->status());
     }
-    outputStream << "]";
     outputStream.close();
     ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");
 }

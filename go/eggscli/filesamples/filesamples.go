@@ -79,12 +79,14 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 			return "", fmt.Errorf("StatDirectoryReq to shard %v for inode %v failed: %w", currentDir.Shard(), currentDir, err)
 		}
 		owner := statResp.Owner
-		// If there is nothing else to chase, then we're done.
-		if owner == msgs.NULL_INODE_ID {
-			return filepath, nil
-		}
-		if owner == msgs.ROOT_DIR_INODE_ID {
+		// If we're at the top level, then we're done.
+		if currentDir == msgs.ROOT_DIR_INODE_ID {
 			return path.Join("/", filepath), nil
+		}
+		// If we've found a null inode ID, then we won't be able to chase things any further.
+		if owner == msgs.NULL_INODE_ID {
+			r.logger.ErrorNoAlert("Unable to resolve path for file in deleted directory: %v", filepath)
+			return filepath, nil
 		}
 		// Get the name of the next node locally if possible.
 		if dirName, exists := r.getDirName(currentDir); exists {

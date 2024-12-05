@@ -1,50 +1,24 @@
 package filesamples
 
 import (
-	"encoding/json"
+	"encoding/csv"
 	"fmt"
-	"os"
+	"io"
 	"path"
-	"path/filepath"
-	"slices"
-	"strings"
+	"strconv"
 	"sync"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
 )
 
-type FileSample struct {
-	Owner        msgs.InodeId  `json:"owner"`
-	Inode        msgs.InodeId  `json:"inode"`
-	Name         string        `json:"name"`
-	Path         string        `json:"path"`
-	Current      bool          `json:"current"`
-	LogicalSize  uint64        `json:"logical"`
-	HDDSize      uint64        `json:"hdd"`
-	FlashSize    uint64        `json:"flash"`
-	InlineSize   uint64        `json:"inline"`
-	CreationTime msgs.EggsTime `json:"creation_time"`
-	DeletionTime msgs.EggsTime `json:"deletion_time"`
-	MTime        msgs.EggsTime `json:"mtime"`
-	ATime        msgs.EggsTime `json:"atime"`
-	SizeWeight   uint64        `json:"size_weight"`
-}
-
 type PathResolver interface {
 	// Given an inode ID and the name of a file, returns the full path to the file.
 	Resolve(inode msgs.InodeId, filename string) (string, error)
 
-	// Given a directory containing `sample-files` outputs, resolves the full path for every sample
-	// in every file in the directory.
-	// For example, given a directory such as:
-	//   /path/to/samples/
-	//     - shard_000_0.json
-	//     - shard_001_0.json
-	//     - shard_002_0.json
-	// This will load each of the json files, determine the full path for each sample, and then
-	// write ALL of the enriched samples into the output file.
-	ResolveFilePaths(sampleFilesDir string, outputFileName string) error
+	// Given an input of `sample-files` output, resolves the full path for every sample,
+	// and writes enriched samples to output.
+	ResolveFilePaths(input io.Reader, output io.Writer)
 }
 
 // Returns a thread-safe PathResolver that can be used concurrently in multiple goroutines.
@@ -104,124 +78,69 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 	}
 }
 
-func (r *resolver) ResolveFilePaths(sampleFilesDir string, outputFileName string) error {
-	// We open the output file first to make sure that it's accessible _before_ we do anything expensive.
-	outputFile, err := os.Create(outputFileName)
-	if err != nil {
-		return fmt.Errorf("failed to open output file: %w", err)
-	}
-	// Load all of the sample files.
-	r.logger.Info("Loading sample files")
-	sampleFiles, err := filepath.Glob(path.Join(sampleFilesDir, "*.json"))
-	if err != nil {
-		return fmt.Errorf("failed to identify sample files: %w", err)
-	}
-	// Remove the output file if it happens to have been included in the sample files list.
-	sampleFiles = slices.DeleteFunc(sampleFiles, func(sampleFile string) bool {
-		// If either path ends with the other, then they're probably pointing at the same location.
-		return strings.HasSuffix(sampleFile, outputFileName) || strings.HasSuffix(outputFileName, sampleFile)
-	})
-	samples := make([][]*FileSample, len(sampleFiles))
-	for i := range samples {
-		samples[i] = make([]*FileSample, 0)
-	}
-	errChan := make(chan error, len(sampleFiles))
-	wg := sync.WaitGroup{}
-	for i, sampleFile := range sampleFiles {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			f, err := os.Open(sampleFile)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to open sample file %v: %w", sampleFile, err)
-			}
-			decoder := json.NewDecoder(f)
-			err = decoder.Decode(&samples[i])
-			if err != nil {
-				errChan <- fmt.Errorf("failed to decode sample file %v: %w", sampleFile, err)
-			}
-		}()
-	}
-	r.logger.Info("Waiting for sample files to load")
-	wg.Wait()
-	loadingErrors := false
-errorReportingLoop:
-	for {
-		select {
-		case err := <-errChan:
-			loadingErrors = true
-			r.logger.ErrorNoAlert("%v", err)
-		default:
-			break errorReportingLoop
-		}
-	}
-	if loadingErrors {
-		return fmt.Errorf("an error occurred while loading sample files, check the logs")
-	}
-	numSamples := 0
-	for _, sampleSet := range samples {
-		numSamples += len(sampleSet)
-	}
-	idx := 0
-	outputSamples := make([]*FileSample, numSamples)
-	for _, sampleSet := range samples {
-		for _, sample := range sampleSet {
-			outputSamples[idx] = sample
-			idx += 1
-		}
-	}
-	r.logger.Info("Sample files loaded - %d samples found", numSamples)
-	// Resolve all of the sample files.
-	r.logger.Info("Resolving file paths")
-	type task struct {
-		idx    int
-		sample *FileSample
-	}
+func (r *resolver) ResolveFilePaths(input io.Reader, output io.Writer) {
+	reader := csv.NewReader(input)
+	writer := csv.NewWriter(output)
 	// Start the workers going.
 	numWorkers := 100
-	workQueue := make(chan *task, numWorkers)
+	workQueue := make(chan []string, numWorkers)
+	outputQueue := make(chan []string, 1000)
+	wg := sync.WaitGroup{}
 	for range numWorkers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for {
-				t, ok := <-workQueue
+				sample, ok := <-workQueue
 				if !ok {
 					return
 				}
-				path, err := r.Resolve(t.sample.Owner, t.sample.Name)
+				filename := sample[0]
+				owner, err := strconv.ParseUint(sample[1], 0, 63)
+				if err != nil {
+					panic(fmt.Errorf("Couldn't parse owner inode (%v): %v", sample[1], err))
+				}
+				path, err := r.Resolve(msgs.InodeId(owner), filename)
 				if err != nil {
 					r.logger.ErrorNoAlert("Failed to resolve file path: %v", err)
+				} else {
+					sample[0] = path // overwrite filename with resolved path
 				}
-				if t.idx%1000 == 0 {
-					r.logger.Info("%d samples processed", t.idx)
-				}
-				t.sample.Path = path
+				outputQueue <- sample
 			}
 		}()
 	}
-
-	for i, sample := range outputSamples {
-		workQueue <- &task{idx: i, sample: sample}
+	go func() {
+		enqueued := 0
+		for {
+			sample, err := reader.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				panic(fmt.Errorf("error reading csv: %v", err))
+			}
+			workQueue <- sample
+			enqueued += 1
+			if enqueued%1000 == 0 {
+				r.logger.Info("%d samples enqueued", enqueued)
+			}
+		}
+		r.logger.Info("Finished reading input")
+		close(workQueue)
+		wg.Wait()
+		close(outputQueue)
+	}()
+	for sample := range outputQueue {
+		err := writer.Write(sample)
+		if err != nil {
+			panic(fmt.Errorf("error writing csv: %v", err))
+		}
 	}
-	close(workQueue)
-	wg.Wait()
-	r.logger.Info("Path resolution complete")
-
-	// Write the output.
-	r.logger.Info("Writing output file")
-	encoder := json.NewEncoder(outputFile)
-	err = encoder.Encode(outputSamples)
-	if err != nil {
-		return fmt.Errorf("failed to write samples to the output file: %w", err)
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		panic(fmt.Errorf("Couldn't flush the results: %v", err))
 	}
-	err = outputFile.Close()
-	if err != nil {
-		return fmt.Errorf("failed to close the output file: %w", err)
-	}
-	r.logger.Info("Output file written")
-	return nil
 }
 
 // Queries the shards to list the contents of the parent directory and get the name of the target inode.

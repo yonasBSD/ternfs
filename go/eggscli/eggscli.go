@@ -1437,33 +1437,13 @@ func main() {
 	}
 
 	resolveSamplePathsCmd := flag.NewFlagSet("resolve-sample-paths", flag.ExitOnError)
-	resolveSamplePathsInputDir := resolveSamplePathsCmd.String(
-		"samples-dir",
-		""/*value*/,
-		"Path to directory containing all of the sample files you want to resolve")
-	resolveSamplePathsOutputFile := resolveSamplePathsCmd.String(
-		"output-file",
-		""/*value*/,
-		"Path to the file where the resolved samples should be written")
 	resolveSamplePathsRun := func() {
-		if *resolveSamplePathsInputDir == "" {
-			log.ErrorNoAlert("You must specify -samples-dir")
-			os.Exit(1)
-		}
-		if *resolveSamplePathsOutputFile == "" {
-			log.ErrorNoAlert("You must specify -output-file")
-			os.Exit(1)
-		}
 		resolver := filesamples.NewPathResolver(getClient(), log)
-		err := resolver.ResolveFilePaths(*resolveSamplePathsInputDir, *resolveSamplePathsOutputFile)
-		if err != nil {
-			log.ErrorNoAlert("Failed to resolve sample file paths: %v", err)
-			panic(err)
-		}
+		resolver.ResolveFilePaths(os.Stdin, os.Stdout)
 	}
 	commands["resolve-sample-paths"] = commandSpec{
 		flags: resolveSamplePathsCmd,
-		run: resolveSamplePathsRun,
+		run:   resolveSamplePathsRun,
 	}
 
 	flag.Parse()

@@ -87,7 +87,7 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 			return path.Join("/", filepath), nil
 		}
 		// Get the name of the next node locally if possible.
-		if dirName, exists := r.getDirName(owner); exists {
+		if dirName, exists := r.getDirName(currentDir); exists {
 			filepath = path.Join(dirName, filepath)
 			currentDir = owner
 			continue

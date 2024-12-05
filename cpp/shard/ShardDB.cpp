@@ -1541,8 +1541,20 @@ struct ShardDBImpl {
                 auto k = ExternalValue<SpanKey>::FromSlice(it->key());
                 auto span = ExternalValue<SpanBody>::FromSlice(it->value());
                 if (span().isInlineStorage()) { return; }
-                ALWAYS_ASSERT(span().locationCount() == 1);
-                auto blocks = span().blocksBodyReadOnly(0);
+
+                // find correct location
+                uint8_t loc_idx = INVALID_LOCATION;
+                for(uint8_t idx = 0; idx < span().locationCount(); ++idx) {
+                    if (span().blocksBodyReadOnly(idx).location() == request.locationId) {
+                        loc_idx = idx;
+                        break;
+                    }
+                }
+                if (loc_idx == INVALID_LOCATION) {
+                    // we couldn't find information in this location nothing more to do
+                    return;
+                }
+                auto blocks = span().blocksBodyReadOnly(loc_idx);
                 for (
                     int i = 0;
                     i < blocks.parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;

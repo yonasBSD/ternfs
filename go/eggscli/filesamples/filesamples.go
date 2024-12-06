@@ -59,7 +59,6 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 		}
 		// If we've found a null inode ID, then we won't be able to chase things any further.
 		if owner == msgs.NULL_INODE_ID {
-			r.logger.ErrorNoAlert("Unable to resolve path for file in deleted directory: %v", filepath)
 			return filepath, nil
 		}
 		// Get the name of the next node locally if possible.
@@ -111,7 +110,6 @@ func (r *resolver) ResolveFilePaths(input io.Reader, output io.Writer) {
 		}()
 	}
 	go func() {
-		enqueued := 0
 		for {
 			sample, err := reader.Read()
 			if err == io.EOF {
@@ -121,20 +119,21 @@ func (r *resolver) ResolveFilePaths(input io.Reader, output io.Writer) {
 				panic(fmt.Errorf("error reading csv: %v", err))
 			}
 			workQueue <- sample
-			enqueued += 1
-			if enqueued%1000 == 0 {
-				r.logger.Info("%d samples enqueued", enqueued)
-			}
 		}
 		r.logger.Info("Finished reading input")
 		close(workQueue)
 		wg.Wait()
 		close(outputQueue)
 	}()
+	processed := 0
 	for sample := range outputQueue {
 		err := writer.Write(sample)
 		if err != nil {
 			panic(fmt.Errorf("error writing csv: %v", err))
+		}
+		processed += 1
+		if processed%10000 == 0 {
+			r.logger.Info("%d samples processed", processed)
 		}
 	}
 	writer.Flush()

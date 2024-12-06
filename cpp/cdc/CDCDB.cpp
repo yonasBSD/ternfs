@@ -1476,7 +1476,7 @@ struct CDCDBImpl {
 
     void _setVersion(rocksdb::Transaction& dbTxn, uint64_t version) {
         auto v = U64Value::Static(version);
-        ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&VERSION_KEY), v.toSlice()));
+        ROCKS_DB_CHECKED(dbTxn.Put(_defaultCf, cdcMetadataKey(&VERSION_KEY), v.toSlice()));
     }
 
     void _initDbV0(rocksdb::Transaction& dbTxn) {
@@ -1552,7 +1552,7 @@ struct CDCDBImpl {
         options.sync = true;
         std::unique_ptr<rocksdb::Transaction> dbTxn(_dbDontUseDirectly->BeginTransaction(options));
 
-        if (_version(*dbTxn), -1) {
+        if (_version(*dbTxn) == -1) {
             _initDbV0(*dbTxn);
             _setVersion(*dbTxn, 0);
         }
@@ -1938,7 +1938,7 @@ struct CDCDBImpl {
         std::vector<CDCTxnId> txnIdsToStart;
         // Just collect all executing txns, and run them
         std::unique_ptr<rocksdb::Iterator> it(dbTxn->GetIterator({}, _executingCf));
-        for (it->Seek(""); it->Valid(); it->Next()) {
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto txnIdK = ExternalValue<CDCTxnIdKey>::FromSlice(it->key());
             _advanceWithResp(*dbTxn, txnIdK().id(), nullptr, step, txnIdsToStart);
         }

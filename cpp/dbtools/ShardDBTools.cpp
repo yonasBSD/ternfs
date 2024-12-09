@@ -761,3 +761,60 @@ void ShardDBTools::outputFilesWithDuplicateFailureDomains(const std::string& dbP
     outputStream.close();
     ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");
 }
+
+
+void ShardDBTools::outputBlockServiceUsage(const std::string& dbPath, const std::string& outputFilePath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::ofstream outputStream(outputFilePath);
+    ALWAYS_ASSERT(outputStream.is_open(), "Failed to open output file");
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "ShardDBTools");
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
+    sharedDb.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
+
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions);
+    auto db = sharedDb.db();
+
+    rocksdb::ReadOptions options;
+    auto spansCf = sharedDb.getCF("spans");
+    std::unordered_map<uint64_t, std::pair<uint64_t,uint64_t>> blockServices;
+    {
+        std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
+        for (it->SeekToFirst(); it->Valid(); it->Next()) {
+            auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
+            if (spanK().fileId().type() != InodeType::FILE) {
+                continue;
+            }
+
+            auto spanV = ExternalValue<SpanBody>::FromSlice(it->value());
+            if (spanV().isInlineStorage() == INLINE_STORAGE) {
+                continue;
+            }
+            for (uint8_t i = 0; i < spanV().locationCount(); ++i) {
+                auto blocksBody = spanV().blocksBodyReadOnly(i);
+                uint8_t failureToleranceCount = blocksBody.parity().parityBlocks();
+                auto blockSizePhysical = blocksBody.stripes() * blocksBody.cellSize();
+                for (uint8_t i = 0; i < blocksBody.parity().blocks(); ++i) {
+                    auto blockServiceId = blocksBody.block(i).blockService();
+                    auto& data = blockServices[blockServiceId.u64];
+                    ++data.first;
+                    data.second += blockSizePhysical;
+                }
+            }
+        }
+        ROCKS_DB_CHECKED(it->status());
+    }
+    outputStream << "[" << std::endl;
+    for (auto it = blockServices.begin(); it != blockServices.end();) {
+        outputStream << "{\"blockServiceId\": " << it->first << ", \"blockCount\": " << it->second.first << ", \"totalSize\": " << it->second.second << "}";
+            if (++it != blockServices.end())
+                outputStream << ",";
+            outputStream << std::endl;
+    }
+    outputStream << "]" << std::endl;
+    outputStream.close();
+    ALWAYS_ASSERT(!outputStream.bad(), "An error occurred while closing the sample output file");
+}

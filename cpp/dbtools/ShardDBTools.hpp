@@ -13,4 +13,5 @@ public:
     static void outputLogEntries(const std::string& dbPath, LogIdx startIdx = 0, size_t count = std::numeric_limits<size_t>::max());
     static void sampleFiles(const std::string& dbPath, const std::string& outputFilePath);
     static void outputFilesWithDuplicateFailureDomains(const std::string& dbPath, const std::string& outputFilePath);
+    static void outputBlockServiceUsage(const std::string& dbPath, const std::string& outputFilePath);
 };

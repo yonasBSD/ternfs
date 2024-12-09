@@ -163,7 +163,7 @@ func destructFilesWorker(
 				case terminateChan <- err:
 				default:
 				}
-				return
+				// we don't return here we wait for our channel to be closed
 			}
 		}
 	}
@@ -173,10 +173,12 @@ func destructFilesScraper(
 	log *lib.Logger,
 	c *client.Client,
 	state *DestructFilesState,
-	terminateChan chan any,
+	terminateChan chan<- any,
 	shid msgs.ShardId,
-	workerChan chan *destructFileRequest,
+	workerChan chan<- *destructFileRequest,
 ) {
+	// regardless how we exit we want to close worker channels
+	defer close(workerChan)
 	req := &msgs.VisitTransientFilesReq{
 		BeginId: state.Cursors[shid],
 	}
@@ -208,9 +210,7 @@ func destructFilesScraper(
 		state.Cursors[shid] = resp.NextId
 		req.BeginId = resp.NextId
 		if req.BeginId == 0 {
-			// this will terminate all the senders
-			log.Debug("file scraping done for shard %v, terminating workers", shid)
-			close(workerChan)
+			log.Debug("file scraping done for shard %v", shid)
 			return
 		}
 	}
@@ -232,6 +232,7 @@ func DestructFiles(
 		panic(fmt.Errorf("the number of workers should be positive, got %v", opts.NumWorkersPerShard))
 	}
 	terminateChan := make(chan any, 1)
+	defer close(terminateChan)
 	workersChan := make(chan *destructFileRequest, opts.WorkersQueueSize)
 
 	log.Info("destructing files in shard %v", shid)
@@ -241,29 +242,39 @@ func DestructFiles(
 		destructFilesScraper(log, c, stats, terminateChan, shid, workersChan)
 	}()
 
-	var workersWg sync.WaitGroup
-	workersWg.Add(opts.NumWorkersPerShard)
-	for j := 0; j < opts.NumWorkersPerShard; j++ {
-		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			destructFilesWorker(log, c, stats, shid, workersChan, terminateChan)
-			workersWg.Done()
-		}()
-	}
 	go func() {
+		var workersWg sync.WaitGroup
+		workersWg.Add(opts.NumWorkersPerShard)
+		for j := 0; j < opts.NumWorkersPerShard; j++ {
+			go func() {
+				defer workersWg.Done()
+				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				destructFilesWorker(log, c, stats, shid, workersChan, terminateChan)
+			}()
+		}
 		workersWg.Wait()
-		log.Info("all workers terminated, we're done with shard %v", shid)
-		atomic.AddUint32(&stats.Stats.Cycles[shid], 1)
 		terminateChan <- nil
 	}()
 
-	err := <-terminateChan
-	if err == nil {
-		return nil
-	} else {
-		log.Info("could not destruct files in shard %v: %v", shid, err)
-		return err.(error)
+	var err error
+	for {
+		workerErr := <- terminateChan
+		if workerErr != nil {
+			// remember first error
+			if err == nil {
+				err = workerErr.(error)
+			}
+			continue
+		}
+		break
 	}
+
+	log.Info("all workers terminated, we're done with shard %v", shid)
+	atomic.AddUint32(&stats.Stats.Cycles[shid], 1)
+	if err != nil {
+		log.Info("could not destruct files in shard %v: %v", shid, err)
+	}
+	return err
 }
 
 func DestructFilesInAllShards(

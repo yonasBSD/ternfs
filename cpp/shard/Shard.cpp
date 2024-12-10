@@ -1760,7 +1760,7 @@ private:
     bool _updatedOnce;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.options.isLeader() ? 2_mins : 1_mins}),
+        PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.options.isLeader() ? 1_mins : 30_sec}),
         _shared(shared),
         _shrid(_shared.options.shrid),
         _shuckleHost(_shared.options.shuckleHost),

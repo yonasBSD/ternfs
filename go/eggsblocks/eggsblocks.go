@@ -250,7 +250,7 @@ func initBlockServicesInfo(
 	return nil
 }
 
-var maximumRegisterInterval time.Duration = time.Minute * 2
+var maximumRegisterInterval time.Duration = time.Second * 30
 
 func registerPeriodically(
 	log *lib.Logger,
@@ -315,7 +315,7 @@ func updateBlockServiceInfoCapacityForever(
 				log.ClearNC(&bs.couldNotUpdateInfoCapacityAlert)
 			}
 		}
-		time.Sleep(time.Minute) // so that we won't busy loop in tests etc
+		time.Sleep(10*time.Second) // so that we won't busy loop in tests etc
 	}
 }
 

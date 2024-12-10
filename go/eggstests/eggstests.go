@@ -469,13 +469,11 @@ func (r *RunTests) run(
 				panic(fmt.Errorf("expected mtime %v, got %v", time2, mtime))
 			}
 			// atime is updated when opened
-			time.Sleep(time.Millisecond)
 			now := time.Now()
 			time.Sleep(time.Millisecond)
-			if _, err := ioutil.ReadFile(fn); err != nil {
+			if _, err := os.ReadFile(fn); err != nil {
 				panic(err)
 			}
-			time.Sleep(200 * time.Millisecond) // make sure the write has gone through
 			info, err = os.Stat(fn)
 			if err != nil {
 				panic(err)

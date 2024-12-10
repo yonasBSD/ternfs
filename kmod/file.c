@@ -21,7 +21,7 @@
 
 unsigned eggsfs_atime_update_interval_sec = 0;
 
-extern unsigned eggsfs_file_io_timeout_sec = 86400;
+unsigned eggsfs_file_io_timeout_sec = 86400;
 
 unsigned eggsfs_max_write_span_attempts = 5;
 
@@ -69,6 +69,7 @@ static int file_open(struct inode* inode, struct file* filp) {
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
     eggsfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
+    int err = 0;
 
     if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == EGGSFS_FILE_STATUS_WRITING)) {
         // this is the "common" writing case, we've just created a file to write it.
@@ -84,33 +85,47 @@ static int file_open(struct inode* inode, struct file* filp) {
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();
             struct timespec64 atime_ts = ns_to_timespec64(atime_ns);
-            u64 diff = atime_ts.tv_sec - enode->inode.i_atime.tv_sec;
-            if (diff >= eggsfs_atime_update_interval_sec) {
-                u64 atime = atime_ns | (1ull<<63);
-                // internal-repo/issues/292
-                // we might have cached data and another client updated atime.
-                // eggsfs_do_getattr is orders of magnitude cheaper than eggsfs_shard_set_time,
-                // so we might as well refresh and re-check
-                int err = eggsfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
-                if (err) {
-                    inode_unlock(inode);
-                    return err;
-                }
-                diff = atime_ts.tv_sec - enode->inode.i_atime.tv_sec;
-                if (diff >= eggsfs_atime_update_interval_sec) {
-                    err = eggsfs_shard_set_time((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
-                    if (err) {
-                        inode_unlock(inode);
-                        return err;
-                    }
-                }
+            u64 diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            if (diff < eggsfs_atime_update_interval_sec) {
+                // we don't think we should update
+                goto out;
             }
+
+            // internal-repo/issues/292
+            // we might have cached data and another client updated atime.
+            // eggsfs_do_getattr is orders of magnitude cheaper than eggsfs_shard_set_time,
+            // so we might as well refresh and re-check
+            int err = eggsfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
+            if (err) {
+                inode_unlock(inode);
+                return err;
+            }
+            diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            if (diff < eggsfs_atime_update_interval_sec) {
+                // out local time changed and we see we don't need to update
+                goto out;
+            }
+
+            if ((enode->inode.i_atime.tv_sec > atime_ts.tv_sec) ||
+                (enode->inode.i_atime.tv_sec == atime_ts.tv_sec &&
+                 enode->inode.i_atime.tv_nsec == atime_ts.tv_nsec
+                )
+            ) {
+                // we don't want atime to go into the past don't update
+                goto out;
+            }
+            u64 atime = atime_ns | (1ull<<63);
+            err = eggsfs_shard_set_time((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
+            if (err) {
+                goto out;
+            }
+            // we updated time. we don't need to refresh it now but allow refresh on next stat by getattr_expiry
+            smp_store_release(&enode->getattr_expiry, 0);
         }
     }
-
+out:
     inode_unlock(inode);
-
-    return 0;
+    return err;
 }
 
 static void init_transient_span(void* p) {

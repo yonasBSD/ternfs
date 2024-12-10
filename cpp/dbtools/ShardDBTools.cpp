@@ -491,10 +491,15 @@ void ShardDBTools::fsck(const std::string& dbPath) {
 #undef ERROR
 }
 
-struct SizePerStorageClass {
-    uint64_t logical{0};
+struct StorageClassSize {
     uint64_t flash{0};
     uint64_t hdd{0};
+};
+
+typedef std::array<StorageClassSize, 2> LocationSize;
+struct SizePerStorageClass {
+    uint64_t logical{0};
+    LocationSize size{StorageClassSize{0,0},StorageClassSize{0,0}};
     uint64_t inMetadata{0};
 };
 
@@ -542,7 +547,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             if ( logicalSize == 0) { continue; } // nothing in this
             auto probability = (double)logicalSize / SAMPLE_RATE_SIZE_LIMIT;
             if( probability > realDis(gen)) {
-                files.insert(std::make_pair(fileId, FileInfo{fileV().mtime(), fileV().atime(), SizePerStorageClass{logicalSize,0,0}, std::max(logicalSize, SAMPLE_RATE_SIZE_LIMIT)}));
+                files.insert(std::make_pair(fileId, FileInfo{fileV().mtime(), fileV().atime(), SizePerStorageClass{logicalSize,{StorageClassSize{0,0},StorageClassSize{0,0}},0}, std::max(logicalSize, SAMPLE_RATE_SIZE_LIMIT)}));
             }
         }
         ROCKS_DB_CHECKED(it->status());
@@ -550,10 +555,8 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
     {
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
         InodeId thisFile = NULL_INODE_ID;
-        uint64_t thisFileFlashSize = 0;
-        uint64_t thisFileHddSize = 0;
-        uint64_t thisFileInlineSize = 0;
-        uint64_t totalSize = 0;
+        LocationSize thisFileSize{StorageClassSize{0,0},StorageClassSize{0,0}};
+        uint64_t thisFileInlineSize{0};
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
             if (spanK().fileId().type() != InodeType::FILE) {
@@ -562,13 +565,11 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             if (spanK().fileId() != thisFile) {
                 auto file_it = files.find(thisFile);
                 if (file_it != files.end()) {
-                    file_it->second.size.flash = thisFileFlashSize;
-                    file_it->second.size.hdd = thisFileHddSize;
+                    file_it->second.size.size = thisFileSize;
                     file_it->second.size.inMetadata = thisFileInlineSize;
                 }
                 thisFile = spanK().fileId();
-                thisFileFlashSize = 0;
-                thisFileHddSize = 0;
+                thisFileSize = LocationSize{StorageClassSize{0,0},StorageClassSize{0,0}};
                 thisFileInlineSize = 0;
             }
 
@@ -585,10 +586,10 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                 auto physicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
                 switch (blocksBody.storageClass()){
                     case HDD_STORAGE:
-                        thisFileHddSize += physicalSize;
+                        thisFileSize[blocksBody.location()].hdd += physicalSize;
                         break;
                     case FLASH_STORAGE:
-                        thisFileFlashSize += physicalSize;
+                        thisFileSize[blocksBody.location()].flash += physicalSize;
                         break;
                 }
                 break;
@@ -596,8 +597,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
         }
         auto file_it = files.find(thisFile);
         if (file_it != files.end()) {
-            file_it->second.size.flash = thisFileFlashSize;
-            file_it->second.size.hdd = thisFileHddSize;
+            file_it->second.size.size = thisFileSize;
             file_it->second.size.inMetadata = thisFileInlineSize;
         }
         ROCKS_DB_CHECKED(it->status());
@@ -673,8 +673,10 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             outputStream << ownedTargetId << ",";
             outputStream << current << ",";
             outputStream << file_id->second.size.logical << ",";
-            outputStream << file_id->second.size.hdd << ",";
-            outputStream << file_id->second.size.flash << ",";
+            outputStream << file_id->second.size.size[0].hdd << ",";
+            outputStream << file_id->second.size.size[1].hdd << ",";
+            outputStream << file_id->second.size.size[0].flash << ",";
+            outputStream << file_id->second.size.size[1].flash << ",";
             outputStream << file_id->second.size.inMetadata << ",";
             outputStream << creationTime << ",";
             outputStream << deletionTime << ",";

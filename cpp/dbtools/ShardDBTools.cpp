@@ -579,6 +579,9 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             }
             for(uint8_t i = 0; i < spanV().locationCount(); ++i) {
                 auto blocksBody = spanV().blocksBodyReadOnly(i);
+                if (blocksBody.location() != 0) {
+                    continue;
+                }
                 auto physicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
                 switch (blocksBody.storageClass()){
                     case HDD_STORAGE:

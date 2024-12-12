@@ -132,15 +132,29 @@ There's also `./build.sh ubuntu` which will do the same but in a Ubuntu containe
 
 Will run the integration tests as CI would (inside a docker image). You can also run the tests outside docker by removing the `--docker` flag, but you might have to install some dependencies of the build process. These tests take a few minutes.
 
-To test the kernel module:
+To work with the qemu kmod tests you'll first need to download the base Ubuntu image we use for testing:
 
 ```
-% ./ci.py --build --kmod --short
+% wget 'https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img'
 ```
 
-This is _much_ longer (~1hr). Usually when developing the kernel module it's best to use `./kmod/restartsession.sh` to be dropped into qemu, and then run specific tests using `eggstests`.
+Then you can run the CI tests in kmod like so:
 
-Note that when merging code modifying eggsfs internals it's very important for the kmod tests to pass as well as the normal integration tests. This is due to the fact that the qemu environment is generally very different from the non-qemu env, which means that sometimes it'll surface issues that the non-qemu environment won't.
+```
+% ./ci.py --kmod --short --prepare-image=/full/path/to/focal-server-cloudimg-amd64.img --leader-only
+```
+
+The tests redirect dmesg output to `kmod/dmesg`, event tracing output to `kmod/trace`, and the full test log to `kmod/test-out`.
+
+You can also ssh into the qemu which is running the tests with
+
+```
+% ssh -p 2223 -i kmod/image-key fmazzol@localhost
+```
+
+Note that the kmod tests are very long (~1hr). Usually when developing the kernel module it's best to use `./kmod/restartsession.sh` to be dropped into qemu, and then run specific tests using `eggstests`.
+
+However when merging code modifying eggsfs internals it's very important for the kmod tests to pass as well as the normal integration tests. This is due to the fact that the qemu environment is generally very different from the non-qemu env, which means that sometimes it'll surface issues that the non-qemu environment won't.
 
 ## Playing with a local EggsFS instance
 
@@ -166,10 +180,6 @@ A multitude of directories to persist the whole thing will appear in `<data-dir>
 % (cd linux && make oldconfig && make prepare && make -j) # build Linux
 % make KDIR=linux -j kmod
 ```
-
-## Playing with the Kernel module
-
-There's infrastructure to spin up a minimal QEMU image with `eggsfs.ko` inserted, see `kmod/restartsession.sh`.
 
 ## VS Code
 

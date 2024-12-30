@@ -1,6 +1,7 @@
 #include <linux/inet.h>
 #include <net/tcp.h>
 #include <net/sock.h>
+#include <linux/atomic.h>
 #include <linux/workqueue.h>
 #include <linux/completion.h>
 
@@ -151,14 +152,12 @@ static void block_ops_init(struct block_ops* ops) {
 struct block_socket {
     struct socket* sock;
     struct sockaddr_in addr;
-    // If non-zero, we'll check that not more than `eggsfs_fetch_block_timeout_jiffies`
-    // has passed since this.
+    // We'll check that not more than `block_ops.timeout_jiffies` has passed since this.
     // For this reason, we set this timeout when:
+    // * We create or fetch socket (add to write/read list)
     // * We read anything
     // * We write anything
-    // * We add an element to the write/read list
-    // And we only remove it when both lists become are empty.
-    u64 timeout_start;
+    atomic64_t timeout_start;
     atomic_t err;
     // To store in the hashmap.
     struct hlist_node hnode;
@@ -208,9 +207,10 @@ struct block_request {
     struct work_struct complete_work;
 
     // To store the request in the read/write lists of the socket
-    struct list_head list;
+    struct list_head read_list;
+    struct list_head write_list;
 
-    // How much is left to write (including the block body if writin)
+    // How much is left to write (including the block body if writing)
     u32 left_to_write;
     // How much is left to read (including block body if reading)
     u32 left_to_read;
@@ -275,6 +275,7 @@ static struct block_socket* get_block_socket(
     struct block_socket* sock;
     hlist_for_each_entry_rcu(sock, &ops->sockets[bucket], hnode) {
         if (block_socket_key(&sock->addr) == key) {
+            atomic64_set(&sock->timeout_start, get_jiffies_64());
             return sock;
         }
     }
@@ -287,7 +288,7 @@ static struct block_socket* get_block_socket(
 
     memcpy(&sock->addr, addr, sizeof(struct sockaddr_in));
 
-    sock->timeout_start = 0;
+    atomic64_set(&sock->timeout_start, get_jiffies_64());
     atomic_set(&sock->err, 0);
 
     int err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock->sock);
@@ -448,20 +449,21 @@ static void remove_block_socket(
         INIT_LIST_HEAD(&all_reqs);
 
         spin_lock_bh(&socket->write_lock);
-        list_for_each_entry_safe(req, tmp, &socket->write, list) {
-            list_del(&req->list);
-            list_add(&req->list, &all_reqs);
-        }
-        spin_unlock_bh(&socket->write_lock);
-
         spin_lock_bh(&socket->read_lock);
-        list_for_each_entry_safe(req, tmp, &socket->read, list) {
-            list_del(&req->list);
-            list_add(&req->list, &all_reqs);
+        // All requests in write list have to be in the read list
+        // so it is enough to traverse the read list
+        list_for_each_entry_safe(req, tmp, &socket->read, read_list) {
+            if (!list_empty(&req->write_list)) {
+                list_del(&req->write_list);
+            }
+            list_del(&req->read_list);
+            list_add(&req->write_list, &all_reqs);
         }
         spin_unlock_bh(&socket->read_lock);
+        spin_unlock_bh(&socket->write_lock);
 
-        list_for_each_entry_safe(req, tmp, &all_reqs, list) {
+
+        list_for_each_entry_safe(req, tmp, &all_reqs, write_list) {
             atomic_cmpxchg(&req->err, 0, err);
             eggsfs_debug("completing request because of a socket winddown");
             ops->complete(req); // no need to go through wq, we're in process context already
@@ -499,17 +501,13 @@ static void block_work(
     }
 
     // Otherwise we need to write out requests.
+    // Get request, if any
+    struct block_request* req;
+    spin_lock_bh(&socket->write_lock);
+    req = list_first_entry_or_null(&socket->write, struct block_request, write_list);
+    spin_unlock_bh(&socket->write_lock);
 
-    for (;;) {
-        // Get request, if any
-        struct block_request* req;
-        spin_lock_bh(&socket->write_lock);
-        req = list_first_entry_or_null(&socket->write, struct block_request, list);
-        spin_unlock_bh(&socket->write_lock);
-
-        // Check if we've got nothing to do
-        if (req == NULL) { return; }
-
+    while (req != NULL) {
         // Can't be done already, we just got the req
         BUG_ON(req->left_to_write == 0);
 
@@ -519,24 +517,22 @@ static void block_work(
             remove_block_socket(ops, socket); // bail
             return;
         }
+        if (sent == 0) {
+            // we didn't make any progress, stop
+            break;
+        }
         BUG_ON(sent > req->left_to_write);
         req->left_to_write -= sent;
-        if (sent > 0) {
-            socket->timeout_start = get_jiffies_64();
-        }
+
+        atomic64_set(&socket->timeout_start, get_jiffies_64());
 
         if (req->left_to_write == 0) {
-            // we're done with this, move it to read list and keep going
+            // we are done with this requests, get a new one
             spin_lock_bh(&socket->write_lock);
-            list_del(&req->list);
+            list_del(&req->write_list);
+            INIT_LIST_HEAD(&req->write_list); // mark it empty for cleanup function
+            req = list_first_entry_or_null(&socket->write, struct block_request, write_list);
             spin_unlock_bh(&socket->write_lock);
-            spin_lock_bh(&socket->read_lock);
-            list_add_tail(&req->list, &socket->read);
-            socket->timeout_start = get_jiffies_64();
-            spin_unlock_bh(&socket->read_lock);
-        } else {
-            // we didn't manage to write out, stop
-            break;
         }
     }
 }
@@ -561,18 +557,13 @@ static int block_receive(
         return len0;
     }
 
-    socket->timeout_start = get_jiffies_64();
-
-    // eggsfs_info("enter sock=%p", socket);
-
     // line up first req
     struct block_request* req;
     spin_lock_bh(&socket->read_lock);
-    req = list_first_entry_or_null(&socket->read, struct block_request, list);
+    req = list_first_entry_or_null(&socket->read, struct block_request, read_list);
     spin_unlock_bh(&socket->read_lock);
 
-    for (;;) {
-        if (req == NULL) { break; }
+    while (len > 0) {
         int consumed = receive_single_req(req, skb, offset, len);
         if (consumed < 0) {
             // socket is scuppered, let the work handle this
@@ -580,37 +571,29 @@ static int block_receive(
             queue_work(eggsfs_wq, &socket->work);
             return len0;
         }
+        if (consumed == 0) {
+            // we didn't make any progress, stop
+            break;
+        }
+        atomic64_set(&socket->timeout_start, get_jiffies_64());
         BUG_ON(consumed > req->left_to_read);
         req->left_to_read -= consumed;
         eggsfs_debug("left_to_read=%u consumed=%d", req->left_to_read, consumed);
-        // eggsfs_info("sock=%p req=%p consumed=%d len=%llu offset=%u err=%d", socket, req, consumed, len, offset, req->err);
         len -= consumed;
         offset += consumed;
         if (req->left_to_read == 0 || atomic_read(&req->err)) {
-            // this request is done
+            // this request is done remove it from list and schedule completion
+            struct block_request* completed_req = req;
             spin_lock_bh(&socket->read_lock);
-            list_del(&req->list);
-            queue_work(eggsfs_wq, &req->complete_work);
-            req = list_first_entry_or_null(&socket->read, struct block_request, list);
-            if (req == NULL) {
-                // Non-blockingly reset timeout if we're the last ones here
-                // (note that not resetting it in this case it's fine, the other
-                // critical section will update it anyway, and it wouldn't matter
-                // either way)
-                if (spin_trylock_bh(&socket->write_lock)) {
-                    socket->timeout_start = 0;
-                    spin_unlock_bh(&socket->write_lock);
-                }
-            }
+            list_del(&req->read_list);
+            req = list_first_entry_or_null(&socket->read, struct block_request, read_list);
             spin_unlock_bh(&socket->read_lock);
-        } else {
-            break; // we're not done yet
+            queue_work(eggsfs_wq, &completed_req->complete_work);
         }
     }
 
-    // Intuitively we'd think that we always consume everything, but there's
-    // a time between sending the message and adding the req to the read list
-    // where we might have leftovers.
+    // We have more data but no requests. This should not happen
+    BUG_ON(req == NULL && len > 0);
     return len0 - len;
 }
 
@@ -672,10 +655,14 @@ sock_found:
     // We have a socket, and we also have the RCU lock. We need to hurry
     // and place the request in the queue, and schedule work. Everything
     // in the RCU section, since otherwise the socket might be cleared
-    // under our feet.
+    // under our feet. We need to put it in both write and read queue
+    // to avoid a race where we get response before we move it from write
+    // to read queue
     spin_lock_bh(&sock->write_lock);
-    list_add_tail(&req->list, &sock->write);
-    sock->timeout_start = get_jiffies_64();
+    spin_lock_bh(&sock->read_lock);
+    list_add_tail(&req->write_list, &sock->write);
+    list_add_tail(&req->read_list, &sock->read);
+    spin_unlock_bh(&sock->read_lock);
     spin_unlock_bh(&sock->write_lock);
 
     queue_work(eggsfs_wq, &sock->work);
@@ -698,13 +685,13 @@ static void timeout_sockets(struct block_ops* ops) {
 
     rcu_read_lock();
     hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
-        if (sock->timeout_start == 0) { continue; }
+        u64 timeout_start = atomic64_read(&sock->timeout_start);
         // this loop is relatively long, this could happen
-        if (unlikely(sock->timeout_start > now)) {
-            eggsfs_info("timeout start apparently in the future, skipping (%llums > %llums)", jiffies64_to_msecs(sock->timeout_start), now);
+        if (unlikely(timeout_start > now)) {
+            eggsfs_info("timeout start apparently in the future, skipping (%llums > %llums)", jiffies64_to_msecs(timeout_start), now);
             continue;
         }
-        u64 dt = now - sock->timeout_start;
+        u64 dt = now - timeout_start;
         if (dt > *ops->timeout_jiffies) {
             eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(*ops->timeout_jiffies));
             atomic_cmpxchg(&sock->err, 0, -ETIMEDOUT);
@@ -814,7 +801,7 @@ static void fetch_request_constructor(void* ptr) {
 }
 
 int eggsfs_drop_fetch_block_sockets(void) {
-    return drop_sockets(&fetch_block_pages_ops);
+    return drop_sockets(&fetch_block_pages_ops) + drop_sockets(&fetch_block_pages_witch_crc_ops);
 }
 
 // Returns a negative result if the socket has to be considered corrupted.
@@ -1504,8 +1491,7 @@ static void do_timeout_sockets(struct work_struct* w) {
     timeout_sockets(&fetch_block_pages_ops);
     timeout_sockets(&fetch_block_pages_witch_crc_ops);
     timeout_sockets(&write_ops);
-    queue_delayed_work(eggsfs_wq, &timeout_work, min(*fetch_block_pages_ops.timeout_jiffies, *write_ops.timeout_jiffies));
-    queue_delayed_work(eggsfs_wq, &timeout_work, min(*fetch_block_pages_witch_crc_ops.timeout_jiffies, *write_ops.timeout_jiffies));
+    queue_delayed_work(eggsfs_wq, &timeout_work, min3(*fetch_block_pages_ops.timeout_jiffies, *write_ops.timeout_jiffies, *fetch_block_pages_witch_crc_ops.timeout_jiffies));
 }
 
 // init/exit

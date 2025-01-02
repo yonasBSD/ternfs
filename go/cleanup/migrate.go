@@ -74,6 +74,7 @@ func writeBlock(
 	blacklist []msgs.BlacklistEntry,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
+	location msgs.Location,
 	block *msgs.FetchedBlock,
 	newContents io.ReadSeeker,
 ) (msgs.InodeId, msgs.BlockId, msgs.BlockServiceId, uint64, error) {
@@ -83,24 +84,27 @@ func writeBlock(
 	}
 	defer lockedScratchFile.Unlock()
 
-	initiateSpanReq := msgs.AddSpanInitiateWithReferenceReq{
-		Req: msgs.AddSpanInitiateReq{
-			FileId:       lockedScratchFile.FileId(),
-			Cookie:       lockedScratchFile.Cookie(),
-			ByteOffset:   lockedScratchFile.Size(),
-			Size:         blockSize,
-			Crc:          block.Crc,
-			StorageClass: storageClass,
-			Blacklist:    blacklist[:],
-			Parity:       rs.MkParity(1, 0),
-			Stripes:      1,
-			CellSize:     blockSize,
-			Crcs:         []msgs.Crc{block.Crc},
+	initiateSpanReq := msgs.AddSpanAtLocationInitiateReq{
+		LocationId: location,
+		Req: msgs.AddSpanInitiateWithReferenceReq {
+			Req: msgs.AddSpanInitiateReq{
+				FileId:       lockedScratchFile.FileId(),
+				Cookie:       lockedScratchFile.Cookie(),
+				ByteOffset:   lockedScratchFile.Size(),
+				Size:         blockSize,
+				Crc:          block.Crc,
+				StorageClass: storageClass,
+				Blacklist:    blacklist[:],
+				Parity:       rs.MkParity(1, 0),
+				Stripes:      1,
+				CellSize:     blockSize,
+				Crcs:         []msgs.Crc{block.Crc},
+			},
+			Reference: file,
 		},
-		Reference: file,
 	}
 
-	initiateSpanResp := msgs.AddSpanInitiateWithReferenceResp{}
+	initiateSpanResp := msgs.AddSpanAtLocationInitiateResp{}
 	if err := c.ShardRequest(log, lockedScratchFile.Shard(), &initiateSpanReq, &initiateSpanResp); err != nil {
 		lockedScratchFile.ClearOnUnlock(fmt.Sprintf("failed to initiate span %v", err))
 		return msgs.NULL_INODE_ID, 0, 0, 0, err
@@ -143,13 +147,14 @@ func copyBlock(
 	blacklist []msgs.BlacklistEntry,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
+	location msgs.Location,
 	block *msgs.FetchedBlock,
 ) (msgs.InodeId, msgs.BlockId, msgs.BlockServiceId, uint64, bool, error) {
 	data, err := fetchBlock(log, c, file, blockServices, blockSize, block)
 	if err != nil {
 		return msgs.NULL_INODE_ID, 0, 0, 0, true, err // might find other block services
 	}
-	fileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratch, file, blacklist, blockSize, storageClass, block, bytes.NewReader(data.Bytes()))
+	fileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratch, file, blacklist, blockSize, storageClass, location, block, bytes.NewReader(data.Bytes()))
 	c.PutFetchedBlock(data)
 	return fileId, blockId, blockServiceId, offset, false, err
 }
@@ -164,6 +169,7 @@ func reconstructBlock(
 	blacklist []msgs.BlacklistEntry,
 	blockSize uint32,
 	storageClass msgs.StorageClass,
+	location msgs.Location,
 	parity rs.Parity,
 	blocks []msgs.FetchedBlock,
 	blockToMigrateIx uint8,
@@ -214,7 +220,7 @@ func reconstructBlock(
 	wantBytes := bufPool.Get(int(blockSize))
 	defer bufPool.Put(wantBytes)
 	rs.RecoverInto(haveBlocksIxs, haveBlocks, blockToMigrateIx, wantBytes.Bytes())
-	dstFileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratchFile, fileId, blacklist, blockSize, storageClass, &blocks[blockToMigrateIx], bytes.NewReader(wantBytes.Bytes()))
+	dstFileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratchFile, fileId, blacklist, blockSize, storageClass, location, &blocks[blockToMigrateIx], bytes.NewReader(wantBytes.Bytes()))
 	if err != nil {
 		return msgs.NULL_INODE_ID, 0, 0, 0, err
 	}
@@ -287,143 +293,148 @@ func migrateBlocksInFileGeneric(
 			return err
 		}
 	}
-	fileSpansReq := msgs.LocalFileSpansReq{
+	fileSpansReq := msgs.FileSpansReq{
 		FileId:     fileId,
 		ByteOffset: 0,
 	}
-	fileSpansResp := msgs.LocalFileSpansResp{}
+	fileSpansResp := msgs.FileSpansResp{}
 	for {
 		if err := c.ShardRequest(log, fileId.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 			return err
 		}
 		for spanIx := range fileSpansResp.Spans {
 			span := &fileSpansResp.Spans[spanIx]
-			if span.Header.StorageClass == msgs.INLINE_STORAGE {
+			if span.Header.IsInline {
 				continue
 			}
-			body := span.Body.(*msgs.FetchedBlocksSpan)
-			blocksToMigrateIxs := []uint8{} // indices
-			for blockIx := range body.Blocks {
-				block := &body.Blocks[blockIx]
-				blockService := &fileSpansResp.BlockServices[block.BlockServiceIx]
-				isBadBlock, err := badBlock(blockService, body.CellSize*uint32(body.Stripes), block)
-				if err != nil {
-					return err
-				}
-				if isBadBlock {
-					blocksToMigrateIxs = append(blocksToMigrateIxs, uint8(blockIx))
-				}
-			}
-			if len(blocksToMigrateIxs) == 0 {
-				continue
-			}
-			D := body.Parity.DataBlocks()
-			P := body.Parity.ParityBlocks()
-			B := body.Parity.Blocks()
-			// we keep going until we're out of bad blocks. in the overwhelming majority
-			// of cases it'll only be once.
-			blacklist := make([]msgs.BlacklistEntry, B)
-			for blockIx, block := range body.Blocks {
-				failureDomain, ok := c.GetFailureDomainForBlockService(fileSpansResp.BlockServices[block.BlockServiceIx].Id)
-				if !ok {
-					return fmt.Errorf("could not find failure domain for [%v]", fileSpansResp.BlockServices[block.BlockServiceIx].Id)
-				}
+			locationsBody := span.Body.(*msgs.FetchedLocations)
+			for locIx := range locationsBody.Locations {
+				body := &locationsBody.Locations[locIx]
 
-				blacklist[blockIx].BlockService = fileSpansResp.BlockServices[block.BlockServiceIx].Id
-				blacklist[blockIx].FailureDomain = failureDomain
-			}
-			for _, blockToMigrateIx := range blocksToMigrateIxs {
-				blockToMigrateId := body.Blocks[blockToMigrateIx].BlockId
-				log.Debug("will migrate block %v in file %v", blockToMigrateId, fileId)
-				newBlock := msgs.BlockId(0)
-				scratchFileId := msgs.NULL_INODE_ID
-				scratchOffset := uint64(0)
-				if P == 0 {
-					return fmt.Errorf("could not migrate block %v in file %v, because there are no parity blocks", blockToMigrateId, fileId)
-				} else if D == 1 {
-					// For mirroring, this is pretty easy, we just get the first non-stale
-					// block. Otherwise, we need to recover from the others.
-					replacementFound := false
-					for blockIx := range body.Blocks {
-						block := &body.Blocks[blockIx]
-						blockService := fileSpansResp.BlockServices[block.BlockServiceIx]
-						if !blockService.Flags.CanRead() {
-							log.Debug("skipping block ix %v because of its flags %v", blockIx, blockService.Flags)
-							continue
-						}
-						goodToCopyFrom := true
-						for _, otherIx := range blocksToMigrateIxs {
-							if otherIx == uint8(blockIx) {
-								log.Debug("skipping block ix %v because it's one of the blocks to migrate", blockIx)
-								goodToCopyFrom = false
-								break
-							}
-						}
-						if !goodToCopyFrom {
-							continue
-						}
-						log.Debug("trying block ix %v", blockIx)
-						var err error
-						var canRetry bool
-						var newBlockServiceId msgs.BlockServiceId
-						scratchFileId, newBlock, newBlockServiceId, scratchOffset, canRetry, err = copyBlock(log, c, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), span.Header.StorageClass, block)
-						if err != nil && !canRetry {
-							return err
-						}
-						if err == nil {
-							replacementFound = true
-							failureDomain, ok := c.GetFailureDomainForBlockService(newBlockServiceId)
-							if !ok {
-								return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
-							}
-							blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
-							break
-						}
-					}
-					if !replacementFound {
-						return fmt.Errorf("could not migrate block %v in file %v, because a suitable replacement block was not found", blockToMigrateId, fileId)
-					}
-				} else {
-					var err error
-					var newBlockServiceId msgs.BlockServiceId
-					scratchFileId, newBlock, newBlockServiceId, scratchOffset, err = reconstructBlock(
-						log,
-						c,
-						bufPool,
-						fileId,
-						scratchFile,
-						fileSpansResp.BlockServices,
-						blacklist,
-						body.CellSize*uint32(body.Stripes),
-						span.Header.StorageClass,
-						body.Parity,
-						body.Blocks,
-						uint8(blockToMigrateIx),
-						blocksToMigrateIxs,
-					)
+				blocksToMigrateIxs := []uint8{} // indices
+				for blockIx := range body.Blocks {
+					block := &body.Blocks[blockIx]
+					blockService := &fileSpansResp.BlockServices[block.BlockServiceIx]
+					isBadBlock, err := badBlock(blockService, body.CellSize*uint32(body.Stripes), block)
 					if err != nil {
 						return err
 					}
-					failureDomain, ok := c.GetFailureDomainForBlockService(newBlockServiceId)
-					if !ok {
-						return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
+					if isBadBlock {
+						blocksToMigrateIxs = append(blocksToMigrateIxs, uint8(blockIx))
 					}
-					blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
 				}
-				if newBlock != 0 {
-					swapReq := msgs.SwapBlocksReq{
-						FileId1:     fileId,
-						ByteOffset1: span.Header.ByteOffset,
-						BlockId1:    blockToMigrateId,
-						FileId2:     scratchFileId,
-						ByteOffset2: scratchOffset,
-						BlockId2:    newBlock,
+				if len(blocksToMigrateIxs) == 0 {
+					continue
+				}
+				D := body.Parity.DataBlocks()
+				P := body.Parity.ParityBlocks()
+				B := body.Parity.Blocks()
+				// we keep going until we're out of bad blocks. in the overwhelming majority
+				// of cases it'll only be once.
+				blacklist := make([]msgs.BlacklistEntry, B)
+				for blockIx, block := range body.Blocks {
+					failureDomain, ok := c.GetFailureDomainForBlockService(fileSpansResp.BlockServices[block.BlockServiceIx].Id)
+					if !ok {
+						return fmt.Errorf("could not find failure domain for [%v]", fileSpansResp.BlockServices[block.BlockServiceIx].Id)
 					}
-					if err := c.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
-						return err
+
+					blacklist[blockIx].BlockService = fileSpansResp.BlockServices[block.BlockServiceIx].Id
+					blacklist[blockIx].FailureDomain = failureDomain
+				}
+				for _, blockToMigrateIx := range blocksToMigrateIxs {
+					blockToMigrateId := body.Blocks[blockToMigrateIx].BlockId
+					log.Debug("will migrate block %v in file %v", blockToMigrateId, fileId)
+					newBlock := msgs.BlockId(0)
+					scratchFileId := msgs.NULL_INODE_ID
+					scratchOffset := uint64(0)
+					if P == 0 {
+						return fmt.Errorf("could not migrate block %v in file %v, because there are no parity blocks", blockToMigrateId, fileId)
+					} else if D == 1 {
+						// For mirroring, this is pretty easy, we just get the first non-stale
+						// block. Otherwise, we need to recover from the others.
+						replacementFound := false
+						for blockIx := range body.Blocks {
+							block := &body.Blocks[blockIx]
+							blockService := fileSpansResp.BlockServices[block.BlockServiceIx]
+							if !blockService.Flags.CanRead() {
+								log.Debug("skipping block ix %v because of its flags %v", blockIx, blockService.Flags)
+								continue
+							}
+							goodToCopyFrom := true
+							for _, otherIx := range blocksToMigrateIxs {
+								if otherIx == uint8(blockIx) {
+									log.Debug("skipping block ix %v because it's one of the blocks to migrate", blockIx)
+									goodToCopyFrom = false
+									break
+								}
+							}
+							if !goodToCopyFrom {
+								continue
+							}
+							log.Debug("trying block ix %v", blockIx)
+							var err error
+							var canRetry bool
+							var newBlockServiceId msgs.BlockServiceId
+							scratchFileId, newBlock, newBlockServiceId, scratchOffset, canRetry, err = copyBlock(log, c, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), body.StorageClass, body.LocationId, block)
+							if err != nil && !canRetry {
+								return err
+							}
+							if err == nil {
+								replacementFound = true
+								failureDomain, ok := c.GetFailureDomainForBlockService(newBlockServiceId)
+								if !ok {
+									return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
+								}
+								blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
+								break
+							}
+						}
+						if !replacementFound {
+							return fmt.Errorf("could not migrate block %v in file %v, because a suitable replacement block was not found", blockToMigrateId, fileId)
+						}
+					} else {
+						var err error
+						var newBlockServiceId msgs.BlockServiceId
+						scratchFileId, newBlock, newBlockServiceId, scratchOffset, err = reconstructBlock(
+							log,
+							c,
+							bufPool,
+							fileId,
+							scratchFile,
+							fileSpansResp.BlockServices,
+							blacklist,
+							body.CellSize*uint32(body.Stripes),
+							body.StorageClass,
+							body.LocationId,
+							body.Parity,
+							body.Blocks,
+							uint8(blockToMigrateIx),
+							blocksToMigrateIxs,
+						)
+						if err != nil {
+							return err
+						}
+						failureDomain, ok := c.GetFailureDomainForBlockService(newBlockServiceId)
+						if !ok {
+							return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
+						}
+						blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
 					}
-					atomic.AddUint64(&stats.MigratedBlocks, 1)
-					atomic.AddUint64(&stats.MigratedBytes, uint64(D*int(body.CellSize)))
+					if newBlock != 0 {
+						swapReq := msgs.SwapBlocksReq{
+							FileId1:     fileId,
+							ByteOffset1: span.Header.ByteOffset,
+							BlockId1:    blockToMigrateId,
+							FileId2:     scratchFileId,
+							ByteOffset2: scratchOffset,
+							BlockId2:    newBlock,
+						}
+						if err := c.ShardRequest(log, fileId.Shard(), &swapReq, &msgs.SwapBlocksResp{}); err != nil {
+							return err
+						}
+						atomic.AddUint64(&stats.MigratedBlocks, 1)
+						atomic.AddUint64(&stats.MigratedBytes, uint64(D*int(body.CellSize)))
+					}
 				}
 			}
 		}

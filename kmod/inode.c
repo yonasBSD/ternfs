@@ -649,6 +649,12 @@ struct inode* eggsfs_get_inode(
         inode->i_mode |= 0777 & ~(S_ISDIR(inode->i_mode) ? fs_info->dmask : fs_info->fmask);
         inode->i_blocks = 0;
         inode->i_size = 0;
+        inode->i_mtime.tv_nsec = 0;
+        inode->i_mtime.tv_sec = 0;
+        inode->i_ctime.tv_nsec = 0;
+        inode->i_ctime.tv_sec = 0;
+        inode->i_atime.tv_nsec = 0;
+        inode->i_atime.tv_sec = 0;
 
         inode->i_op = NULL;
         inode->i_fop = NULL;

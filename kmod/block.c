@@ -772,7 +772,7 @@ static void fetch_complete(struct block_request* breq) {
     struct page* last_page = list_last_entry(&req->pages, struct page, lru);
     while(last_page->index < first_page->index || first_page->index == (unsigned long)-1) {
         list_rotate_left(&req->pages);
-        eggsfs_info("rotating list left: %d %d, first_page:%ld, last_page:%ld", req->count, req->bytes_fetched, first_page->index, last_page->index);
+        eggsfs_debug("rotating list left: %d %d, first_page:%ld, last_page:%ld", req->count, req->bytes_fetched, first_page->index, last_page->index);
         first_page = list_first_entry(&req->pages, struct page, lru);
         last_page = list_last_entry(&req->pages, struct page, lru);
         if (first_page == first_seen) {

@@ -170,6 +170,7 @@ struct block_socket {
     // This does both write work and also cleaning up timed out / errored sockets.
     struct work_struct work;
     bool terminal;
+    atomic_t has_requests;
     // Read end. "data available" callback does all the work.
     struct list_head read;
     spinlock_t read_lock;
@@ -290,6 +291,7 @@ static struct block_socket* get_block_socket(
 
     atomic64_set(&sock->timeout_start, get_jiffies_64());
     atomic_set(&sock->err, 0);
+    atomic_set(&sock->has_requests, 0);
 
     int err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock->sock);
     if (err != 0) { goto out_err; }
@@ -587,6 +589,9 @@ static int block_receive(
             spin_lock_bh(&socket->read_lock);
             list_del(&req->read_list);
             req = list_first_entry_or_null(&socket->read, struct block_request, read_list);
+            if (req == NULL) {
+                atomic_set(&socket->has_requests, 0);
+            }
             spin_unlock_bh(&socket->read_lock);
             queue_work(eggsfs_wq, &completed_req->complete_work);
         }
@@ -662,6 +667,7 @@ sock_found:
     spin_lock_bh(&sock->read_lock);
     list_add_tail(&req->write_list, &sock->write);
     list_add_tail(&req->read_list, &sock->read);
+    atomic_set(&sock->has_requests, 1);
     spin_unlock_bh(&sock->read_lock);
     spin_unlock_bh(&sock->write_lock);
 
@@ -693,7 +699,10 @@ static void timeout_sockets(struct block_ops* ops) {
         }
         u64 dt = now - timeout_start;
         if (dt > *ops->timeout_jiffies) {
-            eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(*ops->timeout_jiffies));
+            if (atomic_read(&sock->has_requests)) {
+                // we only want to log this if we timed out some work. not on inactive socket cleanup
+                eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(*ops->timeout_jiffies));
+            }
             atomic_cmpxchg(&sock->err, 0, -ETIMEDOUT);
             queue_work(eggsfs_wq, &sock->work);
         }

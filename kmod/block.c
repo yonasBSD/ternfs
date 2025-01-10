@@ -371,7 +371,7 @@ static struct block_socket* get_block_socket(
             rcu_read_unlock();
             spin_unlock(&ops->locks[bucket]);
             write_unlock(&sock->sock->sk->sk_callback_lock);
-            eggsfs_info("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
+            eggsfs_debug("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
             // call again rather than trying to `sock_release` with the
             // RCU read lock held, this might not be safe in atomic context.
             sock_release(sock->sock);

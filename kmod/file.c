@@ -682,6 +682,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
         up(&enode->file.flushing_span_sema);
         return 0;
     }
+    enode->file.writing_span = NULL;
 
     err = compute_span_parameters(
         enode->block_policy, enode->span_policy, enode->stripe_policy, span
@@ -722,7 +723,6 @@ out:
     }
     // we don't need this anymore (the requests might though)
     put_transient_span(span);
-    enode->file.writing_span = NULL;
     return err;
 }
 

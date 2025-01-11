@@ -535,6 +535,9 @@ static void block_work(
             INIT_LIST_HEAD(&req->write_list); // mark it empty for cleanup function
             req = list_first_entry_or_null(&socket->write, struct block_request, write_list);
             spin_unlock_bh(&socket->write_lock);
+        } else {
+            // stop hogging the work queue and wait for more space
+            break;
         }
     }
 }

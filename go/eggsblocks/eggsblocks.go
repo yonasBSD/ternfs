@@ -120,7 +120,6 @@ type env struct {
 	stats         map[msgs.BlockServiceId]*blockServiceStats
 	counters      map[msgs.BlocksMessageKind]*lib.Timings
 	eraseLocks 	  map[msgs.BlockServiceId]*sync.Mutex
-	ioSemaphores  map[msgs.BlockServiceId]chan struct{}
 	failureDomain string
 }
 
@@ -434,9 +433,6 @@ func (c *newToOldReadConverter) Read(p []byte) (int, error) {
 }
 
 func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool) error {
-	sem := env.ioSemaphores[blockServiceId]
-	sem <- struct{}{}
-	defer func(){ <-sem }()
 	if offset%msgs.EGGS_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
@@ -702,9 +698,6 @@ func writeBlock(
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
 ) error {
-	sem := env.ioSemaphores[blockServiceId]
-	sem <- struct{}{}
-	defer func(){ <-sem }()
 	filePath := path.Join(basePath, blockId.Path())
 	log.Debug("writing block %v at path %v", blockId, basePath)
 	// We don't check CRC here, we fully check tmpFile after it has been written and synced
@@ -1538,19 +1531,16 @@ func main() {
 		bufPool:       bufPool,
 		stats:         make(map[msgs.BlockServiceId]*blockServiceStats),
 		eraseLocks:    make(map[msgs.BlockServiceId]*sync.Mutex),
-		ioSemaphores:  make(map[msgs.BlockServiceId]chan struct{}),
 		failureDomain: *failureDomainStr,
 	}
 
 	for bsId := range blockServices {
 		env.stats[bsId] = &blockServiceStats{}
 		env.eraseLocks[bsId] = &sync.Mutex{}
-		env.ioSemaphores[bsId] = make(chan struct{}, 50)
 	}
 	for bsId := range deadBlockServices {
 		env.stats[bsId] = &blockServiceStats{}
 		env.eraseLocks[bsId] = &sync.Mutex{}
-		env.ioSemaphores[bsId] = make(chan struct{}, 50)
 	}
 	env.counters = make(map[msgs.BlocksMessageKind]*lib.Timings)
 	for _, k := range msgs.AllBlocksMessageKind {

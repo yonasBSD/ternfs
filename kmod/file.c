@@ -135,6 +135,8 @@ static void init_transient_span(void* p) {
     for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
         INIT_LIST_HEAD(&span->blocks[i]);
     }
+    // we set it to 0, we bug if not 0 when getting from cache
+    atomic_set(&span->refcount, 0);
     spin_lock_init(&span->lock);
 }
 
@@ -144,6 +146,7 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     if (span == NULL) { return span; }
     span->enode = enode;
     eggsfs_in_flight_begin(enode);
+    BUG_ON(atomic_read(&span->refcount) != 0);
     atomic_set(&span->refcount, 1);
     span->offset = offset;
     span->written = 0;
@@ -927,11 +930,8 @@ out:
     if (err) {
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-    // Put span, if any
-    if (enode->file.writing_span != NULL) {
-        put_transient_span(enode->file.writing_span);
-    }
-    enode->file.writing_span = NULL;
+    // We should have flushed everything, there should be no writing span
+    BUG_ON(enode->file.writing_span != NULL);
     // unlock
     inode_unlock(&enode->inode);
     // wait for all in flight requests to be done, this will mean that we will

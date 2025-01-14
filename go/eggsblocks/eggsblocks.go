@@ -121,6 +121,7 @@ type env struct {
 	counters      map[msgs.BlocksMessageKind]*lib.Timings
 	eraseLocks 	  map[msgs.BlockServiceId]*sync.Mutex
 	failureDomain string
+	readWholeFile bool
 }
 
 func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
@@ -498,6 +499,23 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			R: reader,
 			N: int64(count),
 		}
+		if (env.readWholeFile) {
+			buf := env.bufPool.Get(int(fi.Size()) - int(offset))
+			defer env.bufPool.Put(buf)
+			readBuf := buf.Bytes()
+			for len(readBuf) > 0 {
+				read, err := reader.Read(readBuf)
+				if err != nil {
+					if err == io.EOF {
+						return msgs.BLOCK_IO_ERROR_FILE
+					}
+					return err
+				}
+				readBuf = readBuf[read:]
+			}
+			lf.R = bytes.NewReader(buf.Bytes())
+		}
+
 		read, err := conn.ReadFrom(&lf)
 		if err != nil {
 			return err
@@ -1266,6 +1284,7 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
+
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
 	var addresses lib.StringArrayFlags
 	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to, and that will be advertised to shuckle.")
@@ -1281,6 +1300,7 @@ func main() {
 	reservedStorage := flag.Uint64("reserved-storage", 100<<30, "How many bytes to reserve and under-report capacity")
 	metrics := flag.Bool("metrics", false, "")
 	locationId := flag.Uint("location", 10000, "Location ID")
+	readWholeFile := flag.Bool("read-whole-file", false, "")
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {
@@ -1531,6 +1551,7 @@ func main() {
 		bufPool:       bufPool,
 		stats:         make(map[msgs.BlockServiceId]*blockServiceStats),
 		eraseLocks:    make(map[msgs.BlockServiceId]*sync.Mutex),
+		readWholeFile: *readWholeFile,
 		failureDomain: *failureDomainStr,
 	}
 

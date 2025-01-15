@@ -861,6 +861,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     inode_lock(&enode->inode);
 
     int err = 0;
+    bool flush_semaphore_acquired = false;
 
     // Not writing, there's nothing to do, there's nothing to do, files are immutable
     if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
@@ -894,6 +895,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     if (err < 0) { goto out; }
 
     down(&enode->file.flushing_span_sema);
+    flush_semaphore_acquired = true;
 
     // the requests might have failed
     err = atomic_read(&enode->file.transient_err);
@@ -930,8 +932,17 @@ out:
     if (err) {
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-    // We should have flushed everything, there should be no writing span
-    BUG_ON(enode->file.writing_span != NULL);
+    if (!flush_semaphore_acquired) {
+        // we didn't try flushing but we still need to wait for any in progress flush
+        down(&enode->file.flushing_span_sema);
+    }
+    // There are cases where we decide not to flush, we still need to free the writing span
+    if (enode->file.writing_span != NULL) {
+        put_transient_span(enode->file.writing_span);
+        enode->file.writing_span = NULL;
+    }
+
+
     // unlock
     inode_unlock(&enode->inode);
     // wait for all in flight requests to be done, this will mean that we will
@@ -939,6 +950,8 @@ out:
     eggsfs_wait_in_flight(enode);
     // now drop MM (otherwise the transient span might access it)
     inode_lock(&enode->inode);
+    // after we last cleared it should have no longer be set
+    BUG_ON(enode->file.writing_span != NULL);
     if (enode->file.mm) {
         mmdrop(enode->file.mm);
     }

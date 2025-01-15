@@ -201,8 +201,20 @@ static void block_ops_exit(struct block_ops* ops) {
     }
 }
 
+enum block_requests_state {
+    BR_ST_QUEUEING = 0,
+    BR_ST_WRITING = 1,
+    BR_ST_WAITING_RESPONSE = 2,
+    BR_ST_READING = 3,
+    BR_ST_MAX = 4
+};
+
 struct block_request {
     atomic_t err;
+    atomic_t state;
+    // there is no other reason for this to be atomic appart from preventing
+    // write req/read resp race where we can start reading the response before we finished updating state
+    atomic64_t timings[BR_ST_MAX];
 
     // What we use to call back into the callback from BH
     struct work_struct complete_work;
@@ -216,6 +228,31 @@ struct block_request {
     // How much is left to read (including block body if reading)
     u32 left_to_read;
 };
+
+static void log_block_request_completion(struct block_socket* socket, struct block_request* req) {
+    u64 completed = get_jiffies_64();
+    u64 created = atomic64_read(&req->timings[BR_ST_QUEUEING]);
+    u64 total = completed - created;
+    if (total < 10000000000ull) {
+        return;
+    }
+    int state = atomic_read(&req->state);
+    if (state != BR_ST_READING) {
+        // in case request timed out set end last operation
+        atomic64_set(&req->timings[state + 1], completed);
+    }
+    u64 writing_started = max(created, atomic64_read(&req->timings[BR_ST_WRITING]));
+    u64 waiting_started = max(writing_started, atomic64_read(&req->timings[BR_ST_WAITING_RESPONSE]));
+    u64 reading_started = max(waiting_started, atomic64_read(&req->timings[BR_ST_READING]));
+    u64 queued = writing_started - created;
+    u64 writing = waiting_started - writing_started;
+    u64 waiting = reading_started - waiting_started;
+    u64 reading = completed - reading_started;
+
+    eggsfs_info("slow block request to %pI4:%d last_state=%d elapsed=%llums [queued=%llums, writing=%llums, waiting=%llums, reading=%llums]",
+        &socket->addr.sin_addr, ntohs(socket->addr.sin_port), state, jiffies64_to_msecs(total),
+        jiffies64_to_msecs(queued), jiffies64_to_msecs(writing), jiffies64_to_msecs(waiting), jiffies64_to_msecs(reading));
+}
 
 static void block_state_check(struct sock* sk) {
     struct block_socket* socket = sk->sk_user_data;
@@ -468,6 +505,7 @@ static void remove_block_socket(
         list_for_each_entry_safe(req, tmp, &all_reqs, write_list) {
             atomic_cmpxchg(&req->err, 0, err);
             eggsfs_debug("completing request because of a socket winddown");
+            log_block_request_completion(socket, req);
             ops->complete(req); // no need to go through wq, we're in process context already
         }
     }
@@ -513,6 +551,11 @@ static void block_work(
         // Can't be done already, we just got the req
         BUG_ON(req->left_to_write == 0);
 
+        if (atomic_read(&req->state) == BR_ST_QUEUEING) {
+            atomic_set(&req->state, BR_ST_WRITING);
+            atomic64_set(&req->timings[BR_ST_WRITING], get_jiffies_64());
+        }
+
         int sent = ops->write(socket, req);
         if (sent < 0) {
             atomic_cmpxchg(&socket->err, 0, sent);
@@ -529,6 +572,9 @@ static void block_work(
         atomic64_set(&socket->timeout_start, get_jiffies_64());
 
         if (req->left_to_write == 0) {
+            atomic64_set(&req->timings[BR_ST_WAITING_RESPONSE], get_jiffies_64());
+            // we need to compare as we could be in reading state already
+            atomic_cmpxchg(&req->state, BR_ST_WRITING, BR_ST_WAITING_RESPONSE);
             // we are done with this requests, get a new one
             spin_lock_bh(&socket->write_lock);
             list_del(&req->write_list);
@@ -569,6 +615,10 @@ static int block_receive(
     spin_unlock_bh(&socket->read_lock);
 
     while (len > 0) {
+        if (atomic_read(&req->state) != BR_ST_READING) {
+            atomic_set(&req->state, BR_ST_READING);
+            atomic64_set(&req->timings[BR_ST_READING], get_jiffies_64());
+        }
         int consumed = receive_single_req(req, skb, offset, len);
         if (consumed < 0) {
             // socket is scuppered, let the work handle this
@@ -596,6 +646,7 @@ static int block_receive(
                 atomic_set(&socket->has_requests, 0);
             }
             spin_unlock_bh(&socket->read_lock);
+            log_block_request_completion(socket, completed_req);
             queue_work(eggsfs_wq, &completed_req->complete_work);
         }
     }
@@ -630,6 +681,11 @@ static int block_start(
     int err, i;
 
     atomic_set(&req->err, 0);
+    for (i = 0; i < BR_ST_MAX; ++i) {
+        atomic64_set(&req->timings[i], 0);
+    }
+    atomic_set(&req->state, BR_ST_QUEUEING);
+    atomic64_set(&req->timings[BR_ST_QUEUEING], get_jiffies_64());
 
     req->left_to_write = left_to_write;
     req->left_to_read = left_to_read;

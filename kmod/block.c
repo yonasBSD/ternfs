@@ -4,6 +4,7 @@
 #include <linux/atomic.h>
 #include <linux/workqueue.h>
 #include <linux/completion.h>
+#include <linux/prandom.h>
 
 #include "block.h"
 #include "log.h"
@@ -722,11 +723,19 @@ sock_found:
     // under our feet. We need to put it in both write and read queue
     // to avoid a race where we get response before we move it from write
     // to read queue
+    bool is_first = false;
     spin_lock_bh(&sock->write_lock);
     spin_lock_bh(&sock->read_lock);
     list_add_tail(&req->write_list, &sock->write);
+    is_first = list_first_entry_or_null(&sock->read, struct block_request, read_list) == NULL;
     list_add_tail(&req->read_list, &sock->read);
-    atomic_set(&sock->has_requests, 1);
+    // we only want to update timeout_start if the requests queue was fully empty on the socket
+    // otherwise, each new request enqueued for a block service would extend the time it takes
+    // head of queue request to timeout if block service is not responding
+    if (is_first) {
+        atomic64_set(&sock->timeout_start, get_jiffies_64());
+        atomic_set(&sock->has_requests, 1);
+    }
     spin_unlock_bh(&sock->read_lock);
     spin_unlock_bh(&sock->write_lock);
 
@@ -750,15 +759,25 @@ static void timeout_sockets(struct block_ops* ops) {
 
     rcu_read_lock();
     hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
+        bool has_requests = atomic_read(&sock->has_requests);
         u64 timeout_start = atomic64_read(&sock->timeout_start);
         // this loop is relatively long, this could happen
         if (unlikely(timeout_start > now)) {
             eggsfs_info("timeout start apparently in the future, skipping (%llums > %llums)", jiffies64_to_msecs(timeout_start), now);
             continue;
         }
+
+        // there is a race between timing out empty sockets and scheduling work on them
+        // to prevent timing out all at the same time we have this randomization where we smear them over 4x the timeout
+        // not that longer timeout does not matter here as there is no work on them anyway
+        if(!has_requests) {
+            timeout_start += (((u64)prandom_u32() << 32) | prandom_u32()) % (*ops->timeout_jiffies << 2);
+        }
+
         u64 dt = now - timeout_start;
+
         if (dt > *ops->timeout_jiffies) {
-            if (atomic_read(&sock->has_requests)) {
+            if (has_requests) {
                 // we only want to log this if we timed out some work. not on inactive socket cleanup
                 eggsfs_info("timing out socket to %pI4:%d (%llums > %llums)", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), jiffies64_to_msecs(dt), jiffies64_to_msecs(*ops->timeout_jiffies));
             }

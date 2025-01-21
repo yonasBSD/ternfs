@@ -23,7 +23,11 @@
 
 MODULE_LICENSE("GPL");
 
+// general purpose wq this is where various async completion function run
 struct workqueue_struct* eggsfs_wq;
+
+// fast wq, we don't want delays in these operations
+struct workqueue_struct* eggsfs_fast_wq;
 
 static int __init eggsfs_init(void) {
     int err;
@@ -35,6 +39,9 @@ static int __init eggsfs_init(void) {
 
     eggsfs_wq = alloc_workqueue("eggsfs-wq", 0, 0);
     if (!eggsfs_wq) { return -ENOMEM; }
+
+    eggsfs_fast_wq = alloc_workqueue("eggsfs-fast-wq", 0, 0);
+    if (!eggsfs_fast_wq) { goto out_fast_wq; }
 
     err = eggsfs_rs_init();
     if (err) { goto out_rs; }
@@ -97,6 +104,8 @@ out_block_service:
 out_policy:
     eggsfs_rs_exit();
 out_rs:
+    destroy_workqueue(eggsfs_fast_wq);
+out_fast_wq:
     destroy_workqueue(eggsfs_wq);
     return err;
 }
@@ -121,7 +130,8 @@ static void __exit eggsfs_exit(void) {
     // probe call, make sure that probe removal and module unload are safe.
     tracepoint_synchronize_unregister();
 
-    eggsfs_debug("destroying workqueue");
+    eggsfs_debug("destroying workqueues");
+    destroy_workqueue(eggsfs_fast_wq);
     destroy_workqueue(eggsfs_wq);
 }
 

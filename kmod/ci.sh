@@ -68,7 +68,7 @@ ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod eggsfs.ko"
 ssh -p 2223 -i image-key fmazzol@localhost "sudo chmod 666 /dev/kmsg"
 
 # Log dmesg
-ssh -p 2223 -i image-key fmazzol@localhost "sudo dmesg -wTH" > dmesg &
+ssh -p 2223 -i image-key fmazzol@localhost "stdbuf -oL sudo dmesg -wT" > dmesg &
 dmesg_pid=$!
 
 # Trace metadata requests

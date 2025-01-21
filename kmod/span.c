@@ -292,7 +292,9 @@ u64 eggsfs_drop_all_stripes(void) {
         total_iterations++;
     }
     s64 stripes_end = eggsfs_counter_get(&eggsfs_stat_cached_stripes);
-    eggsfs_info("reclaimed %llu pages, %lld stripes (approx), iterations:%d", dropped_pages, stripes_begin-stripes_end, total_iterations);
+    if (dropped_pages != 0 || total_iterations != 0) {
+        eggsfs_info("reclaimed %llu pages, %lld stripes (approx), iterations:%d", dropped_pages, stripes_begin-stripes_end, total_iterations);
+    }
     drop_stripes_end("all", examined_stripes, dropped_pages, 0);
     return dropped_pages;
 }

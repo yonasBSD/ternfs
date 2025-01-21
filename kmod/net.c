@@ -90,7 +90,7 @@ static void sock_readable(struct sock* sk) {
             read_unlock_bh(&sk->sk_callback_lock);
             return;
         }
-                              
+
         if (unlikely(skb_checksum_complete(skb))) {
             eggsfs_warn("dropping request with bad checksum");
             goto drop_skb;
@@ -155,7 +155,7 @@ drop_skb:
 
 // timer async request expired
 // if skb then retrun
-// requeue 
+// requeue
 // whoever wants to remove request needs to handle timer and workqueue
 
 void eggsfs_net_shard_free_socket(struct eggsfs_metadata_socket* s) {
@@ -429,84 +429,3 @@ out:
     *attempts = state.attempts;
     return skb;
 }
-
-#if 0
-
-static void eggsfs_shard_async_request_worker(struct work_struct* work) {
-    struct eggsfs_shard_async_request* req = container_of(to_delayed_work(work), struct eggsfs_shard_async_request, work);
-    struct kvec vec;
-    int err;
-
-    eggsfs_debug();
-
-    spin_lock_bh(&req->socket->lock);
-    if (req->request.skb) { goto out_done; }
-    if (req->request.attempt == 0) {
-        insert_shard_request(req->socket, &req->request);
-    } else if (req->request.attempt >= eggsfs_max_request_retries) {
-        rb_erase(&req->request.node, &req->socket->requests);
-        req->request.skb = ERR_PTR(-ETIMEDOUT);
-        goto out_failed;
-    }
-    ++req->request.attempt;
-    spin_unlock_bh(&req->socket->lock);
-
-    vec.iov_base = req + 1;
-    vec.iov_len = req->length;
-
-    err = kernel_sendmsg(req->socket->sock, &req->msg, &vec, 1, req->length);
-    if (err < 0) {
-        spin_lock_bh(&req->socket->lock);
-        if (!req->request.skb) {
-            rb_erase(&req->request.node, &req->socket->requests);
-            req->request.skb = ERR_PTR(err);
-            goto out_failed;
-        }
-        spin_unlock_bh(&req->socket->lock);
-    } else {
-        queue_delayed_work(eggsfs_wq, &req->work, HZ);
-    }
-
-    return;
-
-out_failed:
-    spin_unlock_bh(&req->socket->lock);
-    queue_work(system_wq, &req->callback);
-    return;
-
-out_done:
-    spin_unlock_bh(&req->socket->lock);
-    return;
-}
-
-// this layer needs to be capable of picking sockets / though we still need a list of them
-void eggsfs_shard_async_request(struct eggsfs_shard_async_request* req, struct eggsfs_metadata_socket* sock, struct msghdr* hdr, u64 req_id, u32 len) {
-    eggsfs_debug();
-
-    req->socket = sock;
-    req->request.request_id = req_id;
-    req->request.flags = EGGSFS_SHARD_ASYNC;
-    req->request.skb = NULL;
-    req->request.attempt = 0;
-    req->length = len;
-    req->msg = *hdr;
-    INIT_DELAYED_WORK(&req->work, eggsfs_shard_async_request_worker);
-    queue_delayed_work(eggsfs_wq, &req->work, 0);
-}
-
-void eggsfs_shard_async_cleanup(struct eggsfs_shard_async_request* req) {
-    cancel_delayed_work_sync(&req->work);
-}
-
-#endif
-
-/*
-void eggsfs_shard_async_cancel(struct eggsfs_shard_async_request* req) {
-    spin_lock_bh(&req->socket->lock);
-    if (!req->request.skb) {
-        rb_erase(&req.node, &sock->requests);
-    }
-    spin_unlock_bh(&req->socket->lock);
-    cancel_delayed_work_sync(&req->work);
-}
-*/

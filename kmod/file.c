@@ -1270,6 +1270,11 @@ out_err:
     goto out;
 }
 
+// Files are not visible until they're fully persisted, so fsync is unnecessary.
+int file_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
+    return 0;
+}
+
 const struct file_operations eggsfs_file_operations = {
     .open = file_open,
     .read_iter = file_read_iter,
@@ -1279,6 +1284,7 @@ const struct file_operations eggsfs_file_operations = {
     .splice_read = generic_file_splice_read,
     .splice_write = iter_file_splice_write,
     .mmap = generic_file_readonly_mmap,
+    .fsync = file_fsync,
 };
 
 void process_file_pages(struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {

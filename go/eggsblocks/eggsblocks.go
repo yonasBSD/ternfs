@@ -119,9 +119,10 @@ type env struct {
 	bufPool       *lib.BufPool
 	stats         map[msgs.BlockServiceId]*blockServiceStats
 	counters      map[msgs.BlocksMessageKind]*lib.Timings
-	eraseLocks 	  map[msgs.BlockServiceId]*sync.Mutex
+	eraseLocks    map[msgs.BlockServiceId]*sync.Mutex
 	failureDomain string
 	readWholeFile bool
+	ioAlertPercent uint8
 }
 
 func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
@@ -134,9 +135,6 @@ func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 }
 
 func raiseAlertAndHardwareEvent(logger *lib.Logger, failureDomain string, blockServiceId string, msg string) {
-	// TODO(nchapma): Stop raising alerts here once we're confident that these are
-	// flowing through to HDB
-	logger.RaiseAlert(msg)
 	logger.RaiseHardwareEvent(failureDomain, blockServiceId, msg)
 }
 
@@ -317,7 +315,7 @@ func updateBlockServiceInfoCapacityForever(
 				log.ClearNC(&bs.couldNotUpdateInfoCapacityAlert)
 			}
 		}
-		time.Sleep(10*time.Second) // so that we won't busy loop in tests etc
+		time.Sleep(10 * time.Second) // so that we won't busy loop in tests etc
 	}
 }
 
@@ -499,7 +497,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			R: reader,
 			N: int64(count),
 		}
-		if (env.readWholeFile) {
+		if env.readWholeFile {
 			buf := env.bufPool.Get(int(fi.Size()) - int(offset))
 			defer env.bufPool.Put(buf)
 			readBuf := buf.Bytes()
@@ -596,7 +594,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		log.RaiseAlert("could not read file %v : %v", blockPath, err)
+		log.ErrorNoAlert("could not read file %v : %v", blockPath, err)
 		return err
 	}
 	s := env.stats[blockServiceId]
@@ -604,12 +602,12 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	atomic.AddUint64(&s.bytesChecked, uint64(expectedSize))
 
 	if uint32(fi.Size())%msgs.EGGS_PAGE_WITH_CRC_SIZE != 0 {
-		log.RaiseAlert("size %v for block %v, not multiple of EGGS_PAGE_WITH_CRC_SIZE", uint32(fi.Size()), blockPath)
+		log.ErrorNoAlert("size %v for block %v, not multiple of EGGS_PAGE_WITH_CRC_SIZE", uint32(fi.Size()), blockPath)
 		return msgs.BAD_BLOCK_CRC
 	}
 	actualDataSize := (uint32(fi.Size()) / msgs.EGGS_PAGE_WITH_CRC_SIZE) * msgs.EGGS_PAGE_SIZE
 	if actualDataSize != expectedSize {
-		log.RaiseAlert("size %v for block %v, not equal to expected size %v", actualDataSize, blockPath, expectedSize)
+		log.ErrorNoAlert("size %v for block %v, not equal to expected size %v", actualDataSize, blockPath, expectedSize)
 		return msgs.BAD_BLOCK_CRC
 	}
 	bufPtr := env.bufPool.Get(1 << 20)
@@ -624,7 +622,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		return syscall.EIO
 	}
 	if os.IsNotExist(err) {
-		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
+		log.ErrorNoAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
 	}
 	if err != nil {
@@ -734,12 +732,12 @@ func writeBlock(
 	defer env.bufPool.Put(readBufPtr)
 	err = verifyCrcFile(log, readBufPtr.Bytes(), tmpFile, int64(len(bufPtr.Bytes())), expectedCrc)
 	if err != nil {
-		log.RaiseAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
+		log.ErrorNoAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
 		return err
 	}
 	err = moveFileAndSyncDir(tmpFile, filePath)
 	if err != nil {
-		log.RaiseAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
+		log.ErrorNoAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
 		return err
 	}
 
@@ -828,7 +826,7 @@ func handleRequestError(
 			err = msgs.BLOCK_IO_ERROR_FILE
 		}
 		atomic.AddUint64(&blockService.ioErrors, 1)
-		log.RaiseAlertStack("", 1, "got unxpected IO error %v from %v for req kind %v, block service %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, blockServiceId, err, *lastError)
+		log.ErrorNoAlert("got unxpected IO error %v from %v for req kind %v, block service %v, will return %v, previous error: %v", err, conn.RemoteAddr(), req, blockServiceId, err, *lastError)
 		writeBlocksResponseError(log, conn, err.(msgs.EggsError))
 		return false
 	}
@@ -968,6 +966,7 @@ func handleSingleRequest(
 		// don't have.
 		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
 	}
+	atomic.AddUint64(&blockService.requests, 1)
 	switch whichReq := req.(type) {
 	case *msgs.EraseBlockReq:
 		if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq); err != nil {
@@ -976,7 +975,7 @@ func handleSingleRequest(
 		cutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
 		now := time.Now()
 		if now.Before(cutoffTime) {
-			log.RaiseAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
+			log.ErrorNoAlert("block %v is too recent to be deleted (now=%v, cutoffTime=%v)", whichReq.BlockId, now, cutoffTime)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_RECENT_FOR_DELETION)
 		}
 		if err := eraseBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId); err != nil {
@@ -1008,7 +1007,7 @@ func handleSingleRequest(
 			panic(fmt.Errorf("block %v is in the future! (now=%v, pastCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime))
 		}
 		if now.After(futureCutoffTime) {
-			log.RaiseAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
+			log.ErrorNoAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
 		}
 		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq); err != nil {
@@ -1174,6 +1173,23 @@ func getDiskStats(log *lib.Logger, statsPath string) (map[string]diskStats, erro
 	return ret, nil
 }
 
+func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService) {
+	for {
+		for bsId, bs := range blockServices {
+			ioErrors := bs.lastIoErrors
+			requests := bs.lastRequests
+			bs.lastIoErrors = atomic.LoadUint64(&bs.ioErrors)
+			bs.lastRequests = atomic.LoadUint64(&bs.requests)
+			ioErrors = bs.lastIoErrors - ioErrors
+			requests = bs.lastRequests - requests
+			if requests*uint64(env.ioAlertPercent) < ioErrors*100 {
+				log.RaiseAlert("block service %v had %v ioErrors from %v requests in the last 5 mintues which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
+			}
+		}
+		time.Sleep(5 * time.Minute)
+	}
+}
+
 func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(mrand.Uint64())
@@ -1256,6 +1272,9 @@ type blockService struct {
 	couldNotUpdateInfoCapacity      bool
 	couldNotUpdateInfoCapacityAlert lib.XmonNCAlert
 	ioErrors                        uint64
+	requests                        uint64
+	lastIoErrors                    uint64
+	lastRequests                    uint64
 }
 
 func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error) {
@@ -1301,6 +1320,7 @@ func main() {
 	metrics := flag.Bool("metrics", false, "")
 	locationId := flag.Uint("location", 10000, "Location ID")
 	readWholeFile := flag.Bool("read-whole-file", false, "")
+	ioAlertPercent := flag.Uint("io-alert-percent", 80, "Threshold percent of I/O errors over which we alert")
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {
@@ -1324,6 +1344,10 @@ func main() {
 
 	if *locationId > 255 {
 		fmt.Fprintf(os.Stderr, "Provide valid location id\n")
+		flagErrors = true
+	}
+	if *ioAlertPercent > 100 {
+		fmt.Fprintf(os.Stderr, "io-alert-percent should not be above 100\n")
 		flagErrors = true
 	}
 
@@ -1502,7 +1526,7 @@ func main() {
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				log.RaiseAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
+				log.ErrorNoAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
 				delete(blockServices, bs.Id)
 				deadBlockServices[bs.Id] = deadBlockService{}
 			}
@@ -1553,6 +1577,7 @@ func main() {
 		eraseLocks:    make(map[msgs.BlockServiceId]*sync.Mutex),
 		readWholeFile: *readWholeFile,
 		failureDomain: *failureDomainStr,
+		ioAlertPercent: uint8(*ioAlertPercent),
 	}
 
 	for bsId := range blockServices {
@@ -1589,6 +1614,11 @@ func main() {
 			sendMetrics(log, env, blockServices, *failureDomainStr)
 		}()
 	}
+
+	go func() {
+		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		raiseAlerts(log,env,blockServices)
+	}()
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()

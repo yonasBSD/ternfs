@@ -354,9 +354,10 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
     // fill in blacklist
     for (i = 0; i < B; i++) {
         if (span->blocks_errs[i]) {
-            if (span->blacklist_length >= EGGSFS_MAX_BLACKLIST_LENGTH) {
-                eggsfs_info("could not fit blacklist! this almost certainly means we're screwed anyway");
-                return -EIO;
+            if (span->blacklist_length == EGGSFS_MAX_BLACKLIST_LENGTH) {
+                // it's ok to try again, we have limit on number of attempts
+                eggsfs_warn("span initiate blacklist full, dropping other errored out blocks");
+                break;
             }
             static_assert(sizeof(span->blacklisted_failure_domains[span->blacklist_length]) == sizeof(span->failure_domains[i]));
             memcpy(span->blacklisted_failure_domains[span->blacklist_length], span->failure_domains[i], sizeof(span->failure_domains[i]));

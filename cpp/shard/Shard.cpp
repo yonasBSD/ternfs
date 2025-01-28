@@ -850,7 +850,7 @@ public:
         // catchup requests first as progressing state is more important then sending new requests
         auto now = eggsNow();
         for(auto& req : _proxyCatchupRequests) {
-            if (now - req.second.second < 100_ms) {
+            if (now - req.second.second < 50_ms) {
                 continue;
             }
             req.second.second = now;
@@ -866,7 +866,7 @@ public:
             });
         }
         for(auto& req : _proxyShardRequests) {
-            if(now - req.second.lastSent < 100_ms) {
+            if(now - req.second.lastSent < 50_ms) {
                 continue;
             }
             req.second.lastSent = now;
@@ -1294,9 +1294,51 @@ public:
                 continue;
             }
             auto& req = it->second.req;
-            if (unlikely(resp.body.checkPointIdx <= _logsDB.getLastReleased())) {
-                // it is possible we already applied the log entry, applying which would give us response
-                // This is extremeley unlikely but there is nothing we can do except drop the entry and let client retry
+            // it is possible we already applied the log entry, forward the response
+            if (resp.body.checkPointIdx <= _logsDB.getLastReleased()) {
+                if (likely(req.msg.id)) {
+                    LOG_DEBUG(_env, "applying log entry for request %s kind %s from %s", req.msg.id, req.msg.body.kind(), req.clientAddr);
+                } else {
+                    LOG_DEBUG(_env, "applying request-less log entry");
+                    // client does not care about response
+                    _proxyShardRequests.erase(it);
+                    continue;
+                }
+
+                // depending on protocol we need different kind of responses
+                bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+                ALWAYS_ASSERT(req.protocol == SHARD_REQ_PROTOCOL_VERSION);
+                {
+                    ShardRespMsg forwarded_resp;
+                    forwarded_resp.id = req.msg.id;
+                    forwarded_resp.body = std::move(resp.body.resp);
+                    if (forwarded_resp.body.kind() == ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE) {
+                        ShardRespContainer tmpResp;
+                        switch (req.msg.body.kind()) {
+                            case ShardMessageKind::ADD_SPAN_INITIATE:
+                            {
+                                auto& addResp = tmpResp.setAddSpanInitiate();
+                                addResp.blocks = std::move(forwarded_resp.body.getAddSpanAtLocationInitiate().resp.blocks);
+                                forwarded_resp.body.setAddSpanInitiate().blocks = std::move(addResp.blocks);
+                                break;
+                            }
+                            case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
+                            {
+                                auto& addResp = tmpResp.setAddSpanInitiateWithReference();
+                                addResp.resp.blocks = std::move(forwarded_resp.body.getAddSpanAtLocationInitiate().resp.blocks);
+                                forwarded_resp.body.setAddSpanInitiateWithReference().resp.blocks = std::move(addResp.resp.blocks);
+                                break;
+                            }
+                            case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+                            {
+                                break;
+                            }
+                            default:
+                                ALWAYS_ASSERT(false, "Unexpected reponse kind %s for requests kind %s", forwarded_resp.body.kind(), req.msg.body.kind() );
+                        }
+                    }
+                    packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, req, forwarded_resp);
+                }
                 ALWAYS_ASSERT(_inFlightRequestKeys.erase(InFlightRequestKey{req.msg.id, req.clientAddr}) == 1);
                 _proxyShardRequests.erase(it);
                 continue;

@@ -112,6 +112,13 @@ struct EggsTime {
         return EggsTime(ns - d.ns);
     }
 
+    Duration operator-(EggsTime t) const {
+        if (unlikely(t.ns > ns)) {
+            return 0;
+        }
+        return Duration(ns - t.ns);
+    }
+
     // Two positive times might give one negative
     // duration.
     #ifdef __clang__

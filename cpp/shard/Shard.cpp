@@ -726,6 +726,9 @@ struct std::hash<InFlightRequestKey> {
 struct ProxyShardReq {
     ShardReq req;
     EggsTime lastSent;
+    EggsTime created;
+    EggsTime gotLogIdx;
+    EggsTime finished;
 };
 
 struct ShardWriter : Loop {
@@ -772,12 +775,13 @@ private:
 
     std::unordered_map<uint64_t, ProxyShardReq> _proxyShardRequests; // outstanding proxied shard requests
     std::unordered_map<uint64_t, std::pair<LogIdx, EggsTime>> _proxyCatchupRequests; // outstanding logsdb catchup requests to primary leader
-    std::unordered_map<uint64_t, ShardRespContainer> _proxiedResponses; // responses from primary location that we need to send back to client
+    std::unordered_map<uint64_t, std::pair<ShardRespContainer, ProxyShardReq>> _proxiedResponses; // responses from primary location that we need to send back to client
 
     std::vector<ProxyLogsDBRequest> _proxyReadRequests; // currently processing proxied read requests
     std::vector<LogIdx>  _proxyReadRequestsIndices;  // indices from above reuqests as LogsDB api needs them
 
-    std::array<std::pair<uint64_t,LogsDBLogEntry>,LogsDB::IN_FLIGHT_APPEND_WINDOW> _catchupWindow;
+    static constexpr size_t CATCHUP_BUFFER_SIZE = 1 << 17;
+    std::array<std::pair<uint64_t,LogsDBLogEntry>,CATCHUP_BUFFER_SIZE> _catchupWindow;
     uint64_t _catchupWindowIndex; // index into the catchup window
 
     // The enqueued requests, but indexed by req id + ip + port. We
@@ -999,7 +1003,9 @@ public:
                             auto it = _proxiedResponses.find(logsDBEntry.idx.u64);
                             if (it != _proxiedResponses.end()) {
                                 ALWAYS_ASSERT(_shared.options.isProxyLocation());
-                                resp.body = std::move(it->second);
+                                it->second.second.finished = eggsNow();
+                                logSlowProxyReq(it->second.second);
+                                resp.body = std::move(it->second.first);
                                 _proxiedResponses.erase(it);
                             }
                             if (resp.body.kind() == ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE) {
@@ -1115,7 +1121,7 @@ public:
         ALWAYS_ASSERT(_shardEntries.empty());
         ALWAYS_ASSERT(_knownLastReleased.u64 >= _currentLogIndex + _inFlightEntries.size());
         // first we move any continuous entries from cathup window and schedule them for replication
-        auto maxToWrite = _catchupWindow.size() - _inFlightEntries.size();
+        auto maxToWrite = LogsDB::IN_FLIGHT_APPEND_WINDOW - _inFlightEntries.size();
         auto expectedLogIdx = _currentLogIndex + _inFlightEntries.size() + 1;
         while(maxToWrite > 0) {
             --maxToWrite;
@@ -1147,8 +1153,18 @@ public:
                 // already requested or already have it
                 continue;
             }
+            if (_proxyCatchupRequests.size() == LogsDB::CATCHUP_WINDOW * 4) {
+                break;
+            }
             catchupEntry.first = ++_requestIdCounter;
             _proxyCatchupRequests.insert({catchupEntry.first, {expectedLogIdx+i, 0}});
+        }
+    }
+
+    void logSlowProxyReq(const ProxyShardReq& req) {
+        auto elapsed = req.finished - req.created;
+        if (elapsed > 5_sec) {
+            LOG_ERROR(_env, "slow proxy requests, elapsed %s, waiting response %s, waiting log apply %s", elapsed, req.gotLogIdx - req.created, req.finished-req.gotLogIdx);
         }
     }
 
@@ -1232,7 +1248,7 @@ public:
                     _inFlightRequestKeys.insert(InFlightRequestKey{req.msg.id, req.clientAddr});
                 }
                 // we send them out later along with timed out ones
-                _proxyShardRequests.insert({++_requestIdCounter, ProxyShardReq{std::move(req), 0}});
+                _proxyShardRequests.insert({++_requestIdCounter, ProxyShardReq{std::move(req), 0, now, 0, 0}});
                 continue;
             }
 
@@ -1294,6 +1310,8 @@ public:
                 continue;
             }
             auto& req = it->second.req;
+            it->second.gotLogIdx = now;
+
             // it is possible we already applied the log entry, forward the response
             if (resp.body.checkPointIdx <= _logsDB.getLastReleased()) {
                 if (likely(req.msg.id)) {
@@ -1304,6 +1322,9 @@ public:
                     _proxyShardRequests.erase(it);
                     continue;
                 }
+                it->second.finished = now;
+
+                logSlowProxyReq(it->second);
 
                 // depending on protocol we need different kind of responses
                 bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
@@ -1343,10 +1364,19 @@ public:
                 _proxyShardRequests.erase(it);
                 continue;
             }
+            if (resp.body.checkPointIdx.u64 > _knownLastReleased.u64 + 1000) {
+                    LOG_ERROR(_env, "new last known released on proxy response receive, lag of %s",resp.body.checkPointIdx.u64 - _knownLastReleased.u64 );
+
+            }
+            _knownLastReleased = std::max(_knownLastReleased, resp.body.checkPointIdx);
+            if (resp.body.checkPointIdx.u64 - _logsDB.getLastReleased().u64 > 1000) {
+                LOG_ERROR(_env, "large log lag on proxy response receive %s", resp.body.checkPointIdx.u64 - _logsDB.getLastReleased().u64);
+            }
+
             // we have the response but we will not reply immediately as we need to wait for logsDB to apply the log entry to guarantee
             // read your own writes
-            _proxiedResponses.insert({resp.body.checkPointIdx.u64, std::move(resp.body.resp)});
             _logIdToShardRequest.insert({resp.body.checkPointIdx.u64, std::move(req)});
+            _proxiedResponses.insert({resp.body.checkPointIdx.u64, std::pair<ShardRespContainer, ProxyShardReq>({std::move(resp.body.resp), std::move(it->second)})});
             _proxyShardRequests.erase(it);
         }
 
@@ -1382,6 +1412,9 @@ public:
             case LogMessageKind::LOG_WRITE:
                 {
                     auto& write= req.request.msg.body.getLogWrite();
+                    if (_knownLastReleased + 1000 < write.lastReleased) {
+                        LOG_ERROR(_env, "received large update for _lastKnownRelaease %s", write.lastReleased.u64 - _knownLastReleased.u64);
+                    }
                     _knownLastReleased = std::max(_knownLastReleased, write.lastReleased);
                     if (write.idx.u64 <= _currentLogIndex + _inFlightEntries.size()) {
                         LOG_ERROR(_env, "we have received write from leader but we are already replicating it. This should never happen");

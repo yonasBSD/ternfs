@@ -86,6 +86,7 @@ func main() {
 	collectDirectories := flag.Bool("collect-directories", false, "")
 	collectDirectoriesWorkersPerShard := flag.Int("collect-directories-workers-per-shard", 10, "")
 	collectDirectoriesWorkersQueueSize := flag.Int("collect-directories-workers-queue-size", 50, "")
+	collectDirectoriesMinEdgeAge := flag.Duration("collect-directories-min-edge-age", time.Hour, "Minimum age of edges to be collected")
 	destructFiles := flag.Bool("destruct-files", false, "")
 	destructFilesWorkersPerShard := flag.Int("destruct-files-workers-per-shard", 10, "")
 	destructFilesWorkersQueueSize := flag.Int("destruct-files-workers-queue-size", 50, "")
@@ -271,7 +272,7 @@ func main() {
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
 				for {
-					if err := cleanup.CollectDirectories(log, c, dirInfoCache, nil, opts, collectDirectoriesState, shid); err != nil {
+					if err := cleanup.CollectDirectories(log, c, dirInfoCache, nil, opts, collectDirectoriesState, shid, *collectDirectoriesMinEdgeAge); err != nil {
 						panic(fmt.Errorf("could not collect directories in shard %v: %v", shid, err))
 					}
 				}

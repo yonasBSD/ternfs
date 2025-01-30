@@ -270,11 +270,12 @@ func main() {
 
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
 	collectDirIdU64 := collectCmd.Uint64("dir", 0, "Directory inode id to GC. If not present, they'll all be collected.")
+	collectDirMinEdgeAge := collectCmd.Duration("min-edge-age", time.Hour, "Minimum age of edges to be collected")
 	collectRun := func() {
 		dirInfoCache := client.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
 			state := &cleanup.CollectDirectoriesState{}
-			if err := cleanup.CollectDirectoriesInAllShards(log, getClient(), dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+			if err := cleanup.CollectDirectoriesInAllShards(log, getClient(), dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state, *collectDirMinEdgeAge); err != nil {
 				panic(err)
 			}
 		} else {
@@ -283,7 +284,7 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			var stats cleanup.CollectDirectoriesStats
-			if err := cleanup.CollectDirectory(log, getClient(), dirInfoCache, &stats, dirId); err != nil {
+			if err := cleanup.CollectDirectory(log, getClient(), dirInfoCache, &stats, dirId, *collectDirMinEdgeAge); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			log.Info("finished collecting %v, stats: %+v", dirId, stats)

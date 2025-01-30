@@ -2,6 +2,7 @@ package cleanup
 
 import (
 	"fmt"
+	"time"
 	"xtx/eggsfs/msgs"
 )
 
@@ -13,7 +14,7 @@ import (
 // It is assumed that every delete in the input will be be preceeded by a non-delete.
 //
 // If it returns N, edges[N:] will be well formed too in the sense above.
-func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.Edge) int {
+func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.Edge, minEdgeAge time.Duration) int {
 	if len(edges) == 0 {
 		return 0
 	}
@@ -65,7 +66,8 @@ func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsT
 			if edge.TargetId.Id() == msgs.NULL_INODE_ID {
 				continue
 			}
-			if versionNumber >= int(policy.DeleteAfterVersions.Versions()) {
+			creationTime := edge.CreationTime.Time()
+			if versionNumber >= int(policy.DeleteAfterVersions.Versions()) && now.Time().Sub(creationTime) > minEdgeAge {
 				firstGoodEdgeVersions++
 				break
 			}
@@ -80,7 +82,7 @@ func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsT
 				panic(fmt.Errorf("unexpected current edge: %v", edge))
 			}
 			creationTime := edge.CreationTime.Time()
-			if now.Time().Sub(creationTime) > policy.DeleteAfterTime.Time() {
+			if now.Time().Sub(creationTime) > max(policy.DeleteAfterTime.Time(),minEdgeAge) {
 				// We found an edge that was created before the time we want.
 				// However, this is not enough: consider the case where we
 				// create a file, then delete it after 3 months. The owning

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
@@ -31,11 +32,12 @@ func applyPolicy(
 	dirId msgs.InodeId,
 	policy *msgs.SnapshotPolicy,
 	edges []msgs.Edge,
+	minEdgeAge time.Duration,
 ) (bool, error) {
 	log.Debug("%v: about to apply policy %+v for name %s", dirId, policy, edges[0].Name)
 	atomic.AddUint64(&stats.VisitedEdges, uint64(len(edges)))
 	now := msgs.Now()
-	toCollect := edgesToRemove(dirId, policy, now, edges)
+	toCollect := edgesToRemove(dirId, policy, now, edges, minEdgeAge)
 	log.Debug("%v: will remove %d edges out of %d", dirId, toCollect, len(edges))
 	for _, edge := range edges[:toCollect] {
 		if edge.Current {
@@ -87,7 +89,7 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId) error {
+func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId, minEdgeAge time.Duration) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
@@ -124,7 +126,7 @@ func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.Di
 	}
 	hasEdges := false
 	for _, edges := range dirEdges {
-		allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges)
+		allRemoved, err := applyPolicy(log, c, stats, dirId, policy, edges, minEdgeAge)
 		if err != nil {
 			return err
 		}
@@ -163,6 +165,7 @@ func collectDirectoriesWorker(
 	shid msgs.ShardId,
 	workersChan chan msgs.InodeId,
 	terminateChan chan any,
+	minEdgeAge time.Duration,
 ) {
 	for {
 		if rateLimit != nil {
@@ -175,7 +178,7 @@ func collectDirectoriesWorker(
 		}
 		log.Debug("received worker request for shard %v len=%v cap=%v", shid, len(workersChan), cap(workersChan))
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
-		if err := CollectDirectory(log, c, dirInfoCache, &stats.Stats, dir); err != nil {
+		if err := CollectDirectory(log, c, dirInfoCache, &stats.Stats, dir, minEdgeAge); err != nil {
 			log.Info("could not destruct directory %v, terminating: %v", dir, err)
 			select {
 			case terminateChan <- err:
@@ -233,6 +236,7 @@ func CollectDirectories(
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
+	minEdgeAge time.Duration,
 ) error {
 	log.Info("starting to collect directories in shard %v", shid)
 
@@ -253,7 +257,7 @@ func CollectDirectories(
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			collectDirectoriesWorker(log, c, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan)
+			collectDirectoriesWorker(log, c, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan, minEdgeAge)
 			workersWg.Done()
 		}()
 	}
@@ -280,6 +284,7 @@ func CollectDirectoriesInAllShards(
 	rateLimit *lib.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
+	minEdgeAge time.Duration,
 ) error {
 	terminateChan := make(chan any, 1)
 
@@ -289,7 +294,7 @@ func CollectDirectoriesInAllShards(
 		shid := msgs.ShardId(i)
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			if err := CollectDirectories(log, c, dirInfoCache, rateLimit, opts, state, shid); err != nil {
+			if err := CollectDirectories(log, c, dirInfoCache, rateLimit, opts, state, shid, minEdgeAge); err != nil {
 				panic(err)
 			}
 			wg.Done()

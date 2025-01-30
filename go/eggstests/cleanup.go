@@ -64,7 +64,7 @@ func cleanupAfterTest(
 	dirInfoCache := client.NewDirInfoCache()
 	{
 		state := &cleanup.CollectDirectoriesState{}
-		if err := cleanup.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state); err != nil {
+		if err := cleanup.CollectDirectoriesInAllShards(log, c, dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state, 0); err != nil {
 			panic(err)
 		}
 	}

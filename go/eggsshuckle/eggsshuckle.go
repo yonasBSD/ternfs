@@ -639,10 +639,6 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 				WHERE`+
 			// we allow update if one of the new addresses matches old addresses
 			`
-					(
-						(ip1 = excluded.ip1 AND port1 = excluded.port1) OR (ip1 = excluded.ip2 AND port1 = excluded.port2) OR
-						(port2 <> 0 AND (ip2 = excluded.ip1 AND port2 = excluded.port1) OR ( ip2 = excluded.ip2 AND port2 = excluded.port2))
-					) AND
 					storage_class = excluded.storage_class AND
 					failure_domain = excluded.failure_domain AND
 					path = excluded.path AND

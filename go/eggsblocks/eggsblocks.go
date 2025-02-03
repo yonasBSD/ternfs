@@ -848,7 +848,9 @@ func handleRequestError(
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service
-	log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
+	if !errors.Is(err, syscall.ENOSPC) {
+		log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
+	}
 
 	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 		if err := writeBlocksResponseError(log, conn, eggsErr); err != nil {

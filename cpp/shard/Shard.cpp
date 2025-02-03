@@ -773,6 +773,7 @@ private:
 
     std::unordered_map<uint64_t, ShardLogEntry> _inFlightEntries; // used while primary leader to track in flight entries we produced
 
+    static constexpr Duration PROXIED_REUQEST_TIMEOUT = 100_ms;
     std::unordered_map<uint64_t, ProxyShardReq> _proxyShardRequests; // outstanding proxied shard requests
     std::unordered_map<uint64_t, std::pair<LogIdx, EggsTime>> _proxyCatchupRequests; // outstanding logsdb catchup requests to primary leader
     std::unordered_map<uint64_t, std::pair<ShardRespContainer, ProxyShardReq>> _proxiedResponses; // responses from primary location that we need to send back to client
@@ -854,7 +855,7 @@ public:
         // catchup requests first as progressing state is more important then sending new requests
         auto now = eggsNow();
         for(auto& req : _proxyCatchupRequests) {
-            if (now - req.second.second < 50_ms) {
+            if (now - req.second.second < PROXIED_REUQEST_TIMEOUT) {
                 continue;
             }
             req.second.second = now;
@@ -870,7 +871,7 @@ public:
             });
         }
         for(auto& req : _proxyShardRequests) {
-            if(now - req.second.lastSent < 50_ms) {
+            if(now - req.second.lastSent < PROXIED_REUQEST_TIMEOUT) {
                 continue;
             }
             req.second.lastSent = now;

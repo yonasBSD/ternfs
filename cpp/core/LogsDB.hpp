@@ -124,6 +124,8 @@ public:
 
     EggsError appendEntries(std::vector<LogsDBLogEntry>& entries);
 
+    // returns index of last entry available for read
+    LogIdx getLastContinuous() const;
     void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries = IN_FLIGHT_APPEND_WINDOW);
 
     // Takes a sorted vector of log inxices and returns the corresponding entries
@@ -133,6 +135,7 @@ public:
     Duration getNextTimeout() const;
 
     LogIdx getLastReleased() const;
+
 
     const LogsDBStats& getStats() const;
 

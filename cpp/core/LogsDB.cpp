@@ -1245,6 +1245,10 @@ public:
         _lastContinuousIdx(lastRead),
         _lastMissingIdx(lastRead) {}
 
+    LogIdx getLastContinuous() const {
+        return _lastContinuousIdx;
+    }
+
     void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {
         if (_lastRead == _lastContinuousIdx) {
             update_atomic_stat_ema(_stats.entriesRead, (uint64_t)0);
@@ -1755,6 +1759,10 @@ public:
         return _appender.appendEntries(entries);
     }
 
+    LogIdx getLastContinuous() const {
+        return _catchupReader.getLastContinuous();
+    }
+
     void readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {
         _catchupReader.readEntries(entries, maxEntries);
     }
@@ -1838,6 +1846,10 @@ bool LogsDB::isLeader() const {
 
 EggsError LogsDB::appendEntries(std::vector<LogsDBLogEntry>& entries) {
     return _impl->appendEntries(entries);
+}
+
+LogIdx LogsDB::getLastContinuous() const {
+    return _impl->getLastContinuous();
 }
 
 void LogsDB::readEntries(std::vector<LogsDBLogEntry>& entries, size_t maxEntries) {

@@ -1322,7 +1322,7 @@ func main() {
 	metrics := flag.Bool("metrics", false, "")
 	locationId := flag.Uint("location", 10000, "Location ID")
 	readWholeFile := flag.Bool("read-whole-file", false, "")
-	ioAlertPercent := flag.Uint("io-alert-percent", 80, "Threshold percent of I/O errors over which we alert")
+	ioAlertPercent := flag.Uint("io-alert-percent", 30, "Threshold percent of I/O errors over which we alert")
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {

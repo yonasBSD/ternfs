@@ -1185,7 +1185,9 @@ func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			ioErrors = bs.lastIoErrors - ioErrors
 			requests = bs.lastRequests - requests
 			if requests*uint64(env.ioAlertPercent) < ioErrors*100 {
-				log.RaiseAlert("block service %v had %v ioErrors from %v requests in the last 5 mintues which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
+				log.RaiseNC(&bs.ioErrorsAlert,"block service %v had %v ioErrors from %v requests in the last 5 minutes which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
+			} else {
+				log.ClearNC(&bs.ioErrorsAlert)
 			}
 		}
 		time.Sleep(5 * time.Minute)
@@ -1273,6 +1275,7 @@ type blockService struct {
 	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
 	couldNotUpdateInfoCapacity      bool
 	couldNotUpdateInfoCapacityAlert lib.XmonNCAlert
+	ioErrorsAlert					lib.XmonNCAlert
 	ioErrors                        uint64
 	requests                        uint64
 	lastIoErrors                    uint64
@@ -1322,7 +1325,7 @@ func main() {
 	metrics := flag.Bool("metrics", false, "")
 	locationId := flag.Uint("location", 10000, "Location ID")
 	readWholeFile := flag.Bool("read-whole-file", false, "")
-	ioAlertPercent := flag.Uint("io-alert-percent", 30, "Threshold percent of I/O errors over which we alert")
+	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {
@@ -1481,6 +1484,7 @@ func main() {
 			storageClass:                    storageClass,
 			couldNotUpdateInfoBlocksAlert:   *log.NewNCAlert(time.Second),
 			couldNotUpdateInfoCapacityAlert: *log.NewNCAlert(time.Second),
+			ioErrorsAlert: *log.NewNCAlert(time.Second),
 		}
 	}
 	for id, blockService := range blockServices {

@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,6 +75,11 @@ type cdcState struct {
 	lastSeen msgs.EggsTime
 }
 
+type locStorageClass struct {
+	locationId   msgs.Location
+	storageClass msgs.StorageClass
+}
+
 type state struct {
 	// we need the mutex since sqlite doesn't like concurrent writes
 	mutex     sync.Mutex
@@ -95,6 +101,9 @@ type state struct {
 	// periodically calculated evenly spread writable block services across all shards
 	currentShardBlockServices   map[msgs.ShardId][]msgs.BlockServiceInfoShort
 	currentShardBlockServicesMu sync.RWMutex
+	hotSpottingAlerts           map[locStorageClass]*lib.XmonNCAlert
+	highLoadAlerts              map[locStorageClass]*lib.XmonNCAlert
+	lowCapacityAlerts           map[locStorageClass]*lib.XmonNCAlert
 }
 
 func (s *state) selectCDC(locationId msgs.Location) (*cdcState, error) {
@@ -234,6 +243,9 @@ func newState(
 		decommedBlockServicesMu:     sync.RWMutex{},
 		currentShardBlockServices:   make(map[msgs.ShardId][]msgs.BlockServiceInfoShort),
 		currentShardBlockServicesMu: sync.RWMutex{},
+		hotSpottingAlerts:           make(map[locStorageClass]*lib.XmonNCAlert),
+		highLoadAlerts:              make(map[locStorageClass]*lib.XmonNCAlert),
+		lowCapacityAlerts:           make(map[locStorageClass]*lib.XmonNCAlert),
 	}
 
 	blockServices, err := st.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
@@ -294,18 +306,20 @@ type shardBlockServiceCount struct {
 }
 
 type currentBlockServicesStats struct {
-	blockServicesConsidered        int
-	maxBlockServicesPerShard       int
-	minBlockServicesPerShard       int
-	duplicateBlockServicesAssigned int
-	maxTimesBlockServicePicked     int
-	minTimesBlockServicePicked     int
+	blockServicesConsidered               int
+	maxBlockServicesPerShard              int
+	minBlockServicesPerShard              int
+	duplicateBlockServicesAssigned        int
+	maxTimesBlockServicePicked            int
+	minTimesBlockServicePicked            int
+	maxLowBlockCapacityBlockServicePicked int
+	minLowBlockCapacityBlockServicePicked int
 }
 
 type failureDomainInfo struct {
 	id            msgs.FailureDomain
 	bsIdx         int
-	blockServices []msgs.BlockServiceInfoShort
+	blockServices []BlockServiceInfoWithLocation
 	shuffleHash   uint64
 }
 
@@ -313,14 +327,22 @@ type failureDomainPQ []*failureDomainInfo
 
 func (pq failureDomainPQ) Len() int { return len(pq) }
 
+// We first try to minimize the number of times a block service ends up being picked (number of cycles)
+// Then we try to first assign block services with the most available bytes
+// Then we try to assign block services in a random order (shuffleHash) to avoid assigning the same block service to the same shards every time
 func (pq failureDomainPQ) Less(i, j int) bool {
-	if (pq[i].bsIdx / len(pq[i].blockServices)) == (pq[j].bsIdx / len(pq[j].blockServices)) {
-		if pq[i].bsIdx == pq[j].bsIdx {
-			return pq[i].shuffleHash < pq[j].shuffleHash
-		}
-		return pq[i].bsIdx < pq[j].bsIdx
+	pqIcyclesCompleted := pq[i].bsIdx / len(pq[i].blockServices)
+	pqJcyclesCompleted := pq[j].bsIdx / len(pq[j].blockServices)
+	if pqIcyclesCompleted != pqJcyclesCompleted {
+		return pqIcyclesCompleted < pqJcyclesCompleted
 	}
-	return (pq[i].bsIdx / len(pq[i].blockServices)) < (pq[j].bsIdx / len(pq[j].blockServices))
+
+	pqIbytesAvailable := pq[i].blockServices[pq[i].bsIdx%len(pq[i].blockServices)].AvailableBytes
+	pqJbytesAvailable := pq[j].blockServices[pq[j].bsIdx%len(pq[j].blockServices)].AvailableBytes
+	if pqIbytesAvailable != pqJbytesAvailable {
+		return pqJbytesAvailable < pqIbytesAvailable
+	}
+	return pq[i].shuffleHash < pq[j].shuffleHash
 }
 
 func (pq *failureDomainPQ) Swap(i, j int) {
@@ -377,8 +399,8 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 		currentShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceInfoShort{}
 
-		locations := func() []msgs.Location {
-			var res []msgs.Location
+		locations := func() []msgs.LocationInfo {
+			var res []msgs.LocationInfo
 			rows, err := s.db.Query("SELECT id, name FROM location")
 			if err != nil {
 				return nil
@@ -390,30 +412,32 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 				if err != nil {
 					return nil
 				}
-				res = append(res, loc.Id)
+				res = append(res, loc)
 			}
 			return res
 		}()
-		for _, locId := range locations {
+		for _, location := range locations {
 			for _, storageClass := range []msgs.StorageClass{msgs.FLASH_STORAGE, msgs.HDD_STORAGE} {
 				// divide them by failure domain
-				blockServicesByFailureDomain := make(map[msgs.FailureDomain][]msgs.BlockServiceInfoShort)
+				blockServicesByFailureDomain := make(map[msgs.FailureDomain][]BlockServiceInfoWithLocation)
 				failureDomains := []msgs.FailureDomain{}
 				stats := currentBlockServicesStats{
-					minBlockServicesPerShard:   len(blockServicesMap),
-					minTimesBlockServicePicked: 256,
-					maxTimesBlockServicePicked: 1,
+					minBlockServicesPerShard:              len(blockServicesMap),
+					minTimesBlockServicePicked:            256,
+					maxTimesBlockServicePicked:            1,
+					maxLowBlockCapacityBlockServicePicked: 0,
+					minLowBlockCapacityBlockServicePicked: len(blockServicesMap),
 				}
-				pq := &failureDomainPQ{}
+				pq := failureDomainPQ{}
 				for _, bs := range blockServicesMap {
-					if bs.StorageClass != storageClass || bs.LocationId != locId {
+					if bs.StorageClass != storageClass || bs.LocationId != location.Id {
 						continue
 					}
 					blockServices, ok := blockServicesByFailureDomain[bs.FailureDomain]
 					if !ok {
 						failureDomains = append(failureDomains, bs.FailureDomain)
 					}
-					blockServicesByFailureDomain[bs.FailureDomain] = append(blockServices, msgs.BlockServiceInfoShort{locId, bs.FailureDomain, bs.Id, storageClass})
+					blockServicesByFailureDomain[bs.FailureDomain] = append(blockServices, bs)
 					stats.blockServicesConsidered++
 				}
 
@@ -425,37 +449,51 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 				}
 
 				if len(blockServicesByFailureDomain) < 14 {
-					if locId == DEFAULT_LOCATION {
+					if location.Id == DEFAULT_LOCATION {
 						log.RaiseAlert("could not pick block services for storage class %v. there are only %d failure domains and we need at least 14", storageClass, len(blockServicesByFailureDomain))
 					} else {
-						log.Info("could not pick block services for location %v and storage class %v. there are only %d failure domains and we need at least 14", locId, storageClass, len(blockServicesByFailureDomain))
+						log.Info("could not pick block services for location %v and storage class %v. there are only %d failure domains and we need at least 14", location.Name, storageClass, len(blockServicesByFailureDomain))
 					}
 					continue
 				}
 
 				for _, failureDomain := range failureDomains {
 					blockServices := blockServicesByFailureDomain[failureDomain]
-					rand.Shuffle(len(blockServices), func(i, j int) {
-						blockServices[i], blockServices[j] = blockServices[j], blockServices[i]
+					// sort them by bytes available in descending order to prefer higher available capacity when assigning
+					slices.SortFunc[[]BlockServiceInfoWithLocation](blockServices, func(a, b BlockServiceInfoWithLocation) int {
+						return int(b.AvailableBytes) - int(a.AvailableBytes)
 					})
-					pq.Push(&failureDomainInfo{failureDomain, 0, blockServices, rand.Uint64()})
+					pq = failureDomainPQ(append([]*failureDomainInfo(pq), &failureDomainInfo{failureDomain, 0, blockServices, rand.Uint64()}))
 				}
-				heap.Init(pq)
+				heap.Init(&pq)
 				perStorageClassShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceInfoShort{}
 				shardFailureDomainSet := map[shardFailureDomain]struct{}{}
 				blockServiceSet := map[msgs.BlockServiceId]int{}
+				lowCapacityBlockServicePerShardCount := make([]int, 256)
 
-				// first populate all shards with minimum number of failure domains
-				for i := 0; i < 256; i++ {
-					currentBlockServices := []msgs.BlockServiceInfoShort{}
-					usedBlockServices := &failureDomainPQ{}
-					for j := 0; j < minFailureDomains; j++ {
-						failureDomain := heap.Pop(pq).(*failureDomainInfo)
+				// as we want to assign capacity fairly iterate over shards minFailureDomain times
+				for failureDomainCount := 0; failureDomainCount < minFailureDomains; failureDomainCount++ {
+					for idx := 0; idx < 256; idx++ {
+						var usedBlockServices []*failureDomainInfo
+						shardId := msgs.ShardId(idx)
+
+						failureDomain := heap.Pop(&pq).(*failureDomainInfo)
+						usedBlockServices = append(usedBlockServices, failureDomain)
+						// we might have used this failure domain, find one we have not
+						for _, ok := shardFailureDomainSet[shardFailureDomain{shardId, failureDomain.id}]; ok; _, ok = shardFailureDomainSet[shardFailureDomain{shardId, failureDomain.id}] {
+							failureDomain = heap.Pop(&pq).(*failureDomainInfo)
+							usedBlockServices = append(usedBlockServices, failureDomain)
+						}
+						shardFailureDomainSet[shardFailureDomain{shardId, failureDomain.id}] = struct{}{}
+
 						blockServiceInfo := failureDomain.blockServices[failureDomain.bsIdx%len(failureDomain.blockServices)]
 						failureDomain.bsIdx++
-						currentBlockServices = append(currentBlockServices, blockServiceInfo)
-						shardFailureDomainSet[shardFailureDomain{msgs.ShardId(i), failureDomain.id}] = struct{}{}
-						usedBlockServices.Push(failureDomain)
+						perStorageClassShardBlockServices[shardId] = append(perStorageClassShardBlockServices[shardId], msgs.BlockServiceInfoShort{blockServiceInfo.LocationId, blockServiceInfo.FailureDomain, blockServiceInfo.Id, blockServiceInfo.StorageClass})
+						// log distribution of services with lesss than 500GB available
+						if blockServiceInfo.AvailableBytes < 500000000000 {
+							lowCapacityBlockServicePerShardCount[shardId]++
+						}
+
 						if _, ok := blockServiceSet[blockServiceInfo.Id]; !ok {
 							blockServiceSet[blockServiceInfo.Id] = 1
 						} else {
@@ -463,14 +501,15 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 							stats.maxTimesBlockServicePicked = max(blockServiceSet[blockServiceInfo.Id], stats.maxTimesBlockServicePicked)
 							stats.duplicateBlockServicesAssigned++
 						}
+						if usedBlockServices != nil {
+							pq = failureDomainPQ(append([]*failureDomainInfo(pq), usedBlockServices...))
+							heap.Init(&pq)
+						}
 					}
-					perStorageClassShardBlockServices[msgs.ShardId(i)] = currentBlockServices
-					for usedBlockServices.Len() > 0 {
-						pq.Push(usedBlockServices.Pop())
-					}
-					heap.Init(pq)
 				}
-				for _, failureDomain := range *pq {
+
+				// assign any remaining block services
+				for _, failureDomain := range pq {
 					blockServices := failureDomain.blockServices
 					candidateBsIdx := failureDomain.bsIdx
 					if candidateBsIdx >= len(blockServices) {
@@ -494,7 +533,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 						} else {
 							panic(fmt.Sprintf("duplicate block service %s, this should not happen in this part of assigment", blockServiceInfo.Id))
 						}
-						perStorageClassShardBlockServices[shard.shard] = append(perStorageClassShardBlockServices[shard.shard], blockServices[candidateBsIdx])
+						perStorageClassShardBlockServices[shard.shard] = append(perStorageClassShardBlockServices[shard.shard], msgs.BlockServiceInfoShort{blockServiceInfo.LocationId, blockServiceInfo.FailureDomain, blockServiceInfo.Id, blockServiceInfo.StorageClass})
 						candidateBsIdx++
 						shardFailureDomainSet[shardFailureDomain{shard: shard.shard, domain: failureDomain.id}] = struct{}{}
 					}
@@ -512,15 +551,52 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 				for _, count := range blockServiceSet {
 					stats.minTimesBlockServicePicked = min(count, stats.minTimesBlockServicePicked)
 				}
+				for _, count := range lowCapacityBlockServicePerShardCount {
+					stats.maxLowBlockCapacityBlockServicePicked = max(count, stats.maxLowBlockCapacityBlockServicePicked)
+					stats.minLowBlockCapacityBlockServicePicked = min(count, stats.minLowBlockCapacityBlockServicePicked)
+				}
 				if stats.minTimesBlockServicePicked*5 < stats.maxTimesBlockServicePicked {
-					log.RaiseAlert("hot spotting block services in location %v, storage class %v. Min times picked: %d, max times picked: %d", locId, storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+					alert, ok := s.hotSpottingAlerts[locStorageClass{location.Id, storageClass}]
+					if !ok {
+						alert = log.NewNCAlert(0)
+						alert.SetAppType(lib.XMON_NEVER)
+						s.hotSpottingAlerts[locStorageClass{location.Id, storageClass}] = alert
+					}
+					log.RaiseNC(alert, "hot spotting block services in location %v, storage class %v. Min times picked: %d, max times picked: %d", location.Name, storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+				} else {
+					if alert, ok := s.hotSpottingAlerts[locStorageClass{location.Id, storageClass}]; ok {
+						log.ClearNC(alert)
+					}
 				}
 				if stats.minTimesBlockServicePicked > 10 {
-					log.RaiseAlert("high load on block services in location %v, storage class %v. Min times picked: %d", locId, storageClass, stats.minTimesBlockServicePicked)
+					alert, ok := s.highLoadAlerts[locStorageClass{location.Id, storageClass}]
+					if !ok {
+						alert = log.NewNCAlert(0)
+						alert.SetAppType(lib.XMON_NEVER)
+						s.highLoadAlerts[locStorageClass{location.Id, storageClass}] = alert
+					}
+					log.RaiseNC(alert, "high load on block services in location %v, storage class %v. Min times picked: %d", location.Name, storageClass, stats.minTimesBlockServicePicked)
+				} else {
+					if alert, ok := s.highLoadAlerts[locStorageClass{location.Id, storageClass}]; ok {
+						log.ClearNC(alert)
+					}
+				}
+				if stats.maxLowBlockCapacityBlockServicePicked > 3 {
+					alert, ok := s.lowCapacityAlerts[locStorageClass{location.Id, storageClass}]
+					if !ok {
+						alert = log.NewNCAlert(0)
+						alert.SetAppType(lib.XMON_NEVER)
+						s.lowCapacityAlerts[locStorageClass{location.Id, storageClass}] = alert
+					}
+					log.RaiseNC(alert, "high number of low capacity block services per shard in location %v, storage class %v. Max times picked: %d", location.Name, storageClass, stats.maxLowBlockCapacityBlockServicePicked)
+				} else {
+					if alert, ok := s.lowCapacityAlerts[locStorageClass{location.Id, storageClass}]; ok {
+						log.ClearNC(alert)
+					}
 				}
 
-				log.Info("finished calculating current block services for location %v, storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d}",
-					locId, storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+				log.Info("finished calculating current block services for location %v, storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d, minLowCpacityBlockService: %d, maxLowCapacityBlockService: %d}",
+					location.Name, storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked, stats.minLowBlockCapacityBlockServicePicked, stats.maxLowBlockCapacityBlockServicePicked)
 			}
 		}
 		s.currentShardBlockServicesMu.Lock()

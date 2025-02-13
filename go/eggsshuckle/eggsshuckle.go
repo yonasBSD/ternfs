@@ -217,6 +217,60 @@ func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockSer
 	return ret, nil
 }
 
+func (s *state) selectLocations() ([]msgs.LocationInfo, error) {
+	var res []msgs.LocationInfo
+	rows, err := s.db.Query("SELECT id, name FROM location")
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		loc := msgs.LocationInfo{}
+		err = rows.Scan(&loc.Id, &loc.Name)
+		if err != nil {
+			return nil, nil
+		}
+		res = append(res, loc)
+	}
+	return res, nil
+}
+
+func (s *state) selectNonReadableFailureDomains(locationId msgs.Location) ([]string, error) {
+
+	bs, err := s.selectBlockServices(&locationId, nil, 0, 0, msgs.Now(), false)
+	if err != nil {
+		return nil, err
+	}
+	ret := map[string]msgs.BlockServiceFlags{}
+	for _, v := range bs {
+		if !v.HasFiles {
+			continue
+		}
+		var flags msgs.BlockServiceFlags
+		switch {
+		case v.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED:
+			flags = msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED
+		case v.Flags&msgs.EGGSFS_BLOCK_SERVICE_NO_READ == msgs.EGGSFS_BLOCK_SERVICE_NO_READ:
+			flags = msgs.EGGSFS_BLOCK_SERVICE_NO_READ
+		case v.Flags&msgs.EGGSFS_BLOCK_SERVICE_STALE == msgs.EGGSFS_BLOCK_SERVICE_STALE:
+			flags = msgs.EGGSFS_BLOCK_SERVICE_STALE
+		}
+		if flags != 0 {
+			ret[string(v.FailureDomain.Name[:])] |= flags
+		}
+	}
+	var retList []string
+	for k, v := range ret {
+		retList = append(retList, fmt.Sprintf("%s:(%v)", strings.TrimSpace(k), v.String()))
+	}
+
+	if retList != nil {
+		sort.Strings(retList)
+	}
+
+	return retList, nil
+}
+
 type shuckleConfig struct {
 	addrs                             msgs.AddrsInfo
 	minAutoDecomInterval              time.Duration
@@ -399,23 +453,11 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 		currentShardBlockServices := map[msgs.ShardId][]msgs.BlockServiceInfoShort{}
 
-		locations := func() []msgs.LocationInfo {
-			var res []msgs.LocationInfo
-			rows, err := s.db.Query("SELECT id, name FROM location")
-			if err != nil {
-				return nil
-			}
-			defer rows.Close()
-			for rows.Next() {
-				loc := msgs.LocationInfo{}
-				err = rows.Scan(&loc.Id, &loc.Name)
-				if err != nil {
-					return nil
-				}
-				res = append(res, loc)
-			}
-			return res
-		}()
+		locations, err := s.selectLocations()
+		if err != nil {
+			log.RaiseAlert("failed to select locations: %v", err)
+			continue
+		}
 		for _, location := range locations {
 			for _, storageClass := range []msgs.StorageClass{msgs.FLASH_STORAGE, msgs.HDD_STORAGE} {
 				// divide them by failure domain
@@ -2666,10 +2708,12 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 			st.semaphore.Acquire(context.Background(), 1)
 			defer st.semaphore.Release(1)
 			rows, err := st.db.Query(
-				"SELECT id, failure_domain, last_seen FROM block_services WHERE last_seen < :thresh AND (flags & :flag) == 0",
+				"SELECT id, failure_domain, last_seen FROM block_services WHERE last_seen < :thresh AND (flags & :d_flag) == 0 AND NOT ((flags & :nr_nw_flags) == :nr_nw_flags)",
 				n("thresh", thresh),
 				// we already know that decommissioned block services are gone
-				n("flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
+				n("d_flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
+				// if it was manually marked as non read/non write it's most likely being worked on. no point to alert
+				n("nr_nw_flags", msgs.EGGSFS_BLOCK_SERVICE_NO_READ | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE),
 			)
 			if err != nil {
 				ll.RaiseAlert("error selecting blockServices: %s", err)
@@ -2776,6 +2820,9 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	replaceDecommedAlert.SetAppType(lib.XMON_NEVER)
 	migrateDecommedAlert := log.NewNCAlert(0)
 	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
+	nonReadableFailureDomainsAlert := log.NewNCAlert(0)
+	nonReadableFailureDomainsAlert.SetAppType(lib.XMON_NEVER)
+
 	for {
 		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
 		if err != nil {
@@ -2843,6 +2890,37 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			sort.Strings(bss)
 			log.RaiseNC(migrateDecommedAlert, "decommissioned block services still have files (including transient): %s", strings.Join(bss, " "))
 		}
+
+		locations, err := s.selectLocations()
+		if err != nil {
+			nonReadableFailureDomainsAlert.SetAppType(lib.XMON_CRITICAL)
+			log.RaiseNC(nonReadableFailureDomainsAlert, "error reading locations when trying to detect non readable failure domains: %s", err)
+
+		} else {
+			nonReadableFailureDomainAlertText := ""
+			appType := lib.XMON_NEVER
+			for _, loc := range locations {
+				nonReadableFailureDomains, err := s.selectNonReadableFailureDomains(loc.Id)
+				if err != nil {
+					appType = lib.XMON_CRITICAL
+					nonReadableFailureDomainAlertText += fmt.Sprintf("\nerror reading non readable failure domains for location %s: %s", loc.Name, err)
+					continue
+				}
+				if len(nonReadableFailureDomains) > 0 {
+					if len(nonReadableFailureDomains) > 3 {
+						appType = lib.XMON_CRITICAL
+					}
+					nonReadableFailureDomainAlertText += fmt.Sprintf("\nlocation %s : non-readable failure domains %v", loc.Name, nonReadableFailureDomains)
+				}
+			}
+			if nonReadableFailureDomainAlertText != "" {
+				nonReadableFailureDomainsAlert.SetAppType(appType)
+				log.RaiseNC(nonReadableFailureDomainsAlert, "detected non readable failure domains:%s", nonReadableFailureDomainAlertText)
+			} else {
+				log.ClearNC(nonReadableFailureDomainsAlert)
+			}
+		}
+
 		log.Info("checked block services, sleeping for a minute")
 		time.Sleep(time.Minute)
 	}

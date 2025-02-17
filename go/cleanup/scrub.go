@@ -46,7 +46,7 @@ func scrubFileInternal(
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := c.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
 		if badBlockError(err) {
-			log.RaiseAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
+			log.ErrorNoAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
 		}
 		return false, err

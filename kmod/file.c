@@ -862,7 +862,6 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     inode_lock(&enode->inode);
 
     int err = 0;
-    bool flush_semaphore_acquired = false;
 
     // Not writing, there's nothing to do, there's nothing to do, files are immutable
     if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
@@ -875,6 +874,8 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
         eggsfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
         goto out_early;
     }
+
+    bool file_is_alive_and_flushing = false;
 
     // if we've errored out already, just exit
     err = atomic_read(&enode->file.transient_err);
@@ -896,7 +897,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     if (err < 0) { goto out; }
 
     down(&enode->file.flushing_span_sema);
-    flush_semaphore_acquired = true;
+    file_is_alive_and_flushing = true;
 
     // the requests might have failed
     err = atomic_read(&enode->file.transient_err);
@@ -933,16 +934,24 @@ out:
     if (err) {
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-    if (!flush_semaphore_acquired) {
-        // we didn't try flushing but we still need to wait for any in progress flush
+    if (!file_is_alive_and_flushing) {
+        // The file is dead, we want to make sure that any in-flight flushings
+        // are gone. We might enter this function multiple times with a dead
+        // file: imagine for instance a process dying with many threads having
+        // the reference to the same file. This is why we also release the
+        // semaphore afterwards, so that after the first one that cleans up
+        // the others will not get stuck. So this section acts as a flushing
+        // barrier of sorts. Since the file is dead this should not cause problems
+        // (e.g. we should not get genuine flushes due to writes which then conflict
+        // with this logic).
         down(&enode->file.flushing_span_sema);
+        up(&enode->file.flushing_span_sema);
     }
     // There are cases where we decide not to flush, we still need to free the writing span
     if (enode->file.writing_span != NULL) {
         put_transient_span(enode->file.writing_span);
         enode->file.writing_span = NULL;
     }
-
 
     // unlock
     inode_unlock(&enode->inode);

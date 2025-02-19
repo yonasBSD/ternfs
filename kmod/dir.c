@@ -541,11 +541,16 @@ out_err:
     return offset;
 }
 
+int eggsfs_dir_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
+    return 0;
+}
+
 struct file_operations eggsfs_dir_operations = {
     .open = eggsfs_dir_open,
     .iterate = eggsfs_dir_read,
     .release = eggsfs_dir_close,
     .llseek = eggsfs_dir_seek,
+    .fsync = eggsfs_dir_fsync,
 };
 
 int __init eggsfs_dir_init(void) {

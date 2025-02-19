@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	mrand "math/rand"
 	"net"
 	"os"
@@ -644,7 +645,7 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 	return nil
 }
 
-func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size int64) (*lib.Buf, error) {
+func writeToBuf(log *lib.Logger, env *env, reader io.Reader, size int64) (*lib.Buf, error) {
 	readBufPtr := env.bufPool.Get(1 << 20)
 	defer env.bufPool.Put(readBufPtr)
 	readBuffer := readBufPtr.Bytes()
@@ -708,16 +709,17 @@ func convertBlockInternal(log *lib.Logger, env *env, reader io.Reader, size int6
 	return writeButPtr, nil
 }
 
-func writeBlock(
+func writeBlockInternal(
 	log *lib.Logger,
 	env *env,
-	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
-	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
-) error {
-	filePath := path.Join(basePath, blockId.Path())
-	log.Debug("writing block %v at path %v", blockId, basePath)
+	reader io.LimitedReader,
+	blockServiceId msgs.BlockServiceId,
+	expectedCrc msgs.Crc,
+	blockId msgs.BlockId,
+	filePath string,
+	) error {
 	// We don't check CRC here, we fully check tmpFile after it has been written and synced
-	bufPtr, err := convertBlockInternal(log, env, conn, int64(size))
+	bufPtr, err := writeToBuf(log, env, reader.R, reader.N)
 	if err != nil {
 		return err
 	}
@@ -740,6 +742,22 @@ func writeBlock(
 		log.ErrorNoAlert("failed writing block %v in blockservice %v with error : %v", blockId, blockServiceId, err)
 		return err
 	}
+	return nil
+}
+
+func writeBlock(
+	log *lib.Logger,
+	env *env,
+	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
+	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
+) error {
+	filePath := path.Join(basePath, blockId.Path())
+	log.Debug("writing block %v at path %v", blockId, basePath)
+
+	err := writeBlockInternal(log, env, io.LimitedReader{R: conn, N: int64(size)}, blockServiceId, expectedCrc, blockId, filePath)
+	if err != nil {
+		return err
+	}
 
 	log.Debug("writing proof")
 	if err := writeBlocksResponse(log, conn, &msgs.WriteBlockResp{Proof: BlockWriteProof(blockServiceId, blockId, cipher)}); err != nil {
@@ -752,17 +770,13 @@ func writeBlock(
 func testWrite(
 	log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, size uint64, conn *net.TCPConn,
 ) error {
-	bufPtr, err := convertBlockInternal(log, env, conn, int64(size))
+	filePath := path.Join(basePath, fmt.Sprintf("tmp.test-write%d", rand.Int63()))
+	defer os.Remove(filePath)
+	err := writeBlockInternal(log, env, io.LimitedReader{R: conn, N: int64(size)}, blockServiceId, 0, msgs.BlockId(0), filePath)
 	if err != nil {
 		return err
 	}
-	defer env.bufPool.Put(bufPtr)
 
-	tmpFile, err := writeBufToTemp(&env.stats[blockServiceId].bytesWritten, basePath, bufPtr.Bytes())
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmpFile)
 	if err := writeBlocksResponse(log, conn, &msgs.TestWriteResp{}); err != nil {
 		return err
 	}

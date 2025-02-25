@@ -159,6 +159,7 @@ type shuckReq struct {
 type ShuckleConn struct {
 	log            *lib.Logger
 	timeout        *lib.ReqTimeouts
+	connTimeout    time.Duration
 	shuckleAddress string
 	reqChan        chan shuckReq
 	numHandlers    uint
@@ -173,7 +174,7 @@ func MakeShuckleConn(
 	if timeout == nil {
 		timeout = &DefaultShuckleTimeout
 	}
-	shuckConn := ShuckleConn{log, timeout, shuckleAddress, make(chan shuckReq), 0}
+	shuckConn := ShuckleConn{log, timeout, 5 * time.Second, shuckleAddress, make(chan shuckReq), 0}
 	shuckConn.IncreaseNumHandlersTo(numHandlers)
 	return &shuckConn
 }
@@ -248,7 +249,7 @@ Reconnect:
 	time.Sleep(delay)
 
 ReconnectBegin:
-	conn, err = net.Dial("tcp", c.shuckleAddress)
+	conn, err = net.DialTimeout("tcp", c.shuckleAddress, c.connTimeout)
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {

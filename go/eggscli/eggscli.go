@@ -772,9 +772,11 @@ func main() {
 			}
 			mask = uint8(flagMask)
 		}
+		conn := client.MakeShuckleConn(log, nil, *shuckleAddress, 1)
+		defer conn.Close()	
 		for _, bsId := range blockServiceIds {
 			log.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
-			_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.SetBlockServiceFlagsReq{
+			_, err := conn.Request(&msgs.SetBlockServiceFlagsReq{
 				Id:        bsId,
 				Flags:     flag,
 				FlagsMask: mask,

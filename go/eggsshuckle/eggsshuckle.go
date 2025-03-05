@@ -2821,7 +2821,9 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	migrateDecommedAlert := log.NewNCAlert(0)
 	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
 	nonReadableFailureDomainsAlert := log.NewNCAlert(0)
-	nonReadableFailureDomainsAlert.SetAppType(lib.XMON_NEVER)
+	appType := lib.XMON_NEVER
+	nonReadableFailureDomainsAlert.SetAppType(appType)
+
 
 	for {
 		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
@@ -2898,26 +2900,33 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 
 		} else {
 			nonReadableFailureDomainAlertText := ""
-			appType := lib.XMON_NEVER
+			newAppType := lib.XMON_NEVER
+
 			for _, loc := range locations {
 				nonReadableFailureDomains, err := s.selectNonReadableFailureDomains(loc.Id)
 				if err != nil {
-					appType = lib.XMON_CRITICAL
+					newAppType = lib.XMON_DAYTIME
 					nonReadableFailureDomainAlertText += fmt.Sprintf("\nerror reading non readable failure domains for location %s: %s", loc.Name, err)
 					continue
 				}
 				if len(nonReadableFailureDomains) > 0 {
 					if len(nonReadableFailureDomains) > 3 {
-						appType = lib.XMON_CRITICAL
+						newAppType = lib.XMON_CRITICAL
 					}
 					nonReadableFailureDomainAlertText += fmt.Sprintf("\nlocation %s : non-readable failure domains %v", loc.Name, nonReadableFailureDomains)
 				}
 			}
 			if nonReadableFailureDomainAlertText != "" {
-				nonReadableFailureDomainsAlert.SetAppType(appType)
+				if (appType != newAppType) {
+					log.ClearNC(nonReadableFailureDomainsAlert)
+					appType = newAppType
+					nonReadableFailureDomainsAlert.SetAppType(appType)
+				}
 				log.RaiseNC(nonReadableFailureDomainsAlert, "detected non readable failure domains:%s", nonReadableFailureDomainAlertText)
 			} else {
 				log.ClearNC(nonReadableFailureDomainsAlert)
+				appType = newAppType
+				nonReadableFailureDomainsAlert.SetAppType(appType)
 			}
 		}
 

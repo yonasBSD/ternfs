@@ -276,6 +276,10 @@ func (c *ShuckleConn) Request(req msgs.ShuckleRequest) (msgs.ShuckleResponse, er
 	return resp.resp, resp.err
 }
 
+func (c *ShuckleConn) ShuckleAddress() string{
+	return c.shuckleAddress
+}
+
 func (c *ShuckleConn) Close() {
 	close(c.reqChan)
 }

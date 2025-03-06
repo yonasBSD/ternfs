@@ -117,12 +117,13 @@ type blockServiceStats struct {
 	blockConversionDiscarded uint64
 }
 type env struct {
-	bufPool       *lib.BufPool
-	stats         map[msgs.BlockServiceId]*blockServiceStats
-	counters      map[msgs.BlocksMessageKind]*lib.Timings
-	eraseLocks    map[msgs.BlockServiceId]*sync.Mutex
-	failureDomain string
-	readWholeFile bool
+	bufPool        *lib.BufPool
+	stats          map[msgs.BlockServiceId]*blockServiceStats
+	counters       map[msgs.BlocksMessageKind]*lib.Timings
+	eraseLocks     map[msgs.BlockServiceId]*sync.Mutex
+	shuckleConn    *client.ShuckleConn
+	failureDomain  string
+	readWholeFile  bool
 	ioAlertPercent uint8
 }
 
@@ -256,7 +257,7 @@ var maximumRegisterInterval time.Duration = time.Second * 30
 func registerPeriodically(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
-	shuckleAddress string,
+	env *env,
 ) {
 	req := msgs.RegisterBlockServicesReq{}
 	alert := log.NewNCAlert(10 * time.Second)
@@ -269,15 +270,15 @@ func registerPeriodically(
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
 		}
 		log.Trace("registering with %+v", req)
-		_, err := client.ShuckleRequest(log, nil, shuckleAddress, &req)
+		_, err := env.shuckleConn.Request(&req)
 		if err != nil {
-			log.RaiseNC(alert, "could not register block services with %+v: %v", shuckleAddress, err)
+			log.RaiseNC(alert, "could not register block services with %+v: %v", env.shuckleConn.ShuckleAddress(), err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		log.ClearNC(alert)
 		waitFor := time.Duration(mrand.Uint64() % uint64(maximumRegisterInterval.Nanoseconds()))
-		log.Info("registered with %v (%v alive), waiting %v", shuckleAddress, len(blockServices), waitFor)
+		log.Info("registered with %v (%v alive), waiting %v", env.shuckleConn.ShuckleAddress(), len(blockServices), waitFor)
 		time.Sleep(waitFor)
 	}
 }
@@ -287,7 +288,6 @@ func updateBlockServiceInfoBlocksForever(
 	blockServices map[msgs.BlockServiceId]*blockService,
 ) {
 	for {
-
 		for _, bs := range blockServices {
 			if err := updateBlockServiceInfoBlocks(log, bs); err != nil {
 				bs.couldNotUpdateInfoBlocks = true
@@ -717,7 +717,7 @@ func writeBlockInternal(
 	expectedCrc msgs.Crc,
 	blockId msgs.BlockId,
 	filePath string,
-	) error {
+) error {
 	// We don't check CRC here, we fully check tmpFile after it has been written and synced
 	bufPtr, err := writeToBuf(log, env, reader.R, reader.N)
 	if err != nil {
@@ -1199,7 +1199,9 @@ func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			ioErrors = bs.lastIoErrors - ioErrors
 			requests = bs.lastRequests - requests
 			if requests*uint64(env.ioAlertPercent) < ioErrors*100 {
-				log.RaiseNC(&bs.ioErrorsAlert,"block service %v had %v ioErrors from %v requests in the last 5 minutes which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
+				log.RaiseNC(&bs.ioErrorsAlert, "block service %v had %v ioErrors from %v requests in the last 5 minutes which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
+				log.Info("decommissioning block service %v", bs.cachedInfo.Id)
+				env.shuckleConn.Request(&msgs.DecommissionBlockServiceReq{Id:bs.cachedInfo.Id})
 			} else {
 				log.ClearNC(&bs.ioErrorsAlert)
 			}
@@ -1289,7 +1291,7 @@ type blockService struct {
 	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
 	couldNotUpdateInfoCapacity      bool
 	couldNotUpdateInfoCapacityAlert lib.XmonNCAlert
-	ioErrorsAlert					lib.XmonNCAlert
+	ioErrorsAlert                   lib.XmonNCAlert
 	ioErrors                        uint64
 	requests                        uint64
 	lastIoErrors                    uint64
@@ -1340,6 +1342,7 @@ func main() {
 	locationId := flag.Uint("location", 10000, "Location ID")
 	readWholeFile := flag.Bool("read-whole-file", false, "")
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
+	shuckleConnectionTimeout := flag.Duration("shuckle-connection-timeout", 10*time.Second, "")
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {
@@ -1466,6 +1469,18 @@ func main() {
 	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
 	log.Info("  connectionTimeout = %v", *connectionTimeout)
 	log.Info("  reservedStorage = %v", *reservedStorage)
+	log.Info("  shuckleConnectionTimeout = %v", *shuckleConnectionTimeout)
+
+	bufPool := lib.NewBufPool()
+	env := &env{
+		bufPool:        bufPool,
+		stats:          make(map[msgs.BlockServiceId]*blockServiceStats),
+		eraseLocks:     make(map[msgs.BlockServiceId]*sync.Mutex),
+		readWholeFile:  *readWholeFile,
+		failureDomain:  *failureDomainStr,
+		ioAlertPercent: uint8(*ioAlertPercent),
+		shuckleConn:    client.MakeShuckleConn(log, nil, *shuckleAddress, 1),
+	}
 
 	mountsInfo, err := getMountsInfo(log, "/proc/self/mountinfo")
 	if err != nil {
@@ -1498,7 +1513,7 @@ func main() {
 			storageClass:                    storageClass,
 			couldNotUpdateInfoBlocksAlert:   *log.NewNCAlert(time.Second),
 			couldNotUpdateInfoCapacityAlert: *log.NewNCAlert(time.Second),
-			ioErrorsAlert: *log.NewNCAlert(time.Second),
+			ioErrorsAlert:                   *log.NewNCAlert(time.Second),
 		}
 	}
 	for id, blockService := range blockServices {
@@ -1517,8 +1532,8 @@ func main() {
 		{
 			alert := log.NewNCAlert(0)
 			log.RaiseNC(alert, "fetching block services")
-			timeouts := lib.NewReqTimeouts(client.DefaultShuckleTimeout.Initial, client.DefaultShuckleTimeout.Max, 0, client.DefaultShuckleTimeout.Growth, client.DefaultShuckleTimeout.Jitter)
-			resp, err := client.ShuckleRequest(log, timeouts, *shuckleAddress, &msgs.AllBlockServicesReq{})
+
+			resp, err := env.shuckleConn.Request(&msgs.AllBlockServicesReq{})
 			if err != nil {
 				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
 			}
@@ -1589,17 +1604,6 @@ func main() {
 
 	terminateChan := make(chan any)
 
-	bufPool := lib.NewBufPool()
-
-	env := &env{
-		bufPool:       bufPool,
-		stats:         make(map[msgs.BlockServiceId]*blockServiceStats),
-		eraseLocks:    make(map[msgs.BlockServiceId]*sync.Mutex),
-		readWholeFile: *readWholeFile,
-		failureDomain: *failureDomainStr,
-		ioAlertPercent: uint8(*ioAlertPercent),
-	}
-
 	for bsId := range blockServices {
 		env.stats[bsId] = &blockServiceStats{}
 		env.eraseLocks[bsId] = &sync.Mutex{}
@@ -1615,7 +1619,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		registerPeriodically(log, blockServices, *shuckleAddress)
+		registerPeriodically(log, blockServices, env)
 	}()
 
 	go func() {
@@ -1637,7 +1641,7 @@ func main() {
 
 	go func() {
 		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		raiseAlerts(log,env,blockServices)
+		raiseAlerts(log, env, blockServices)
 	}()
 
 	go func() {

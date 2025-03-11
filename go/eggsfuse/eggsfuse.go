@@ -692,6 +692,7 @@ func main() {
 	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
 	initialCDCTimeout := flag.Duration("initial-cdc-timeout", 0, "")
 	useRandomFetchApi := flag.Bool("use-random-fetch-api", false, "if set randomly uses api with or without crc when fetching from block service")
+	mtu := flag.Uint64("mtu", msgs.DEFAULT_UDP_MTU, "mtu used talking to shards and cdc")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -705,6 +706,8 @@ func main() {
 		os.Exit(2)
 	}
 	mountPoint := flag.Args()[0]
+
+	client.SetMTU(*mtu)
 
 	if mountPoint == "" {
 		fmt.Fprintf(os.Stderr, "Please specify mountpoint with -mountpoint\n")

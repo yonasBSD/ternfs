@@ -774,6 +774,7 @@ func main() {
 	fuseOptions := &fs.Options{
 		Logger: log.New(os.Stderr, "fuse", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
 	}
+	fuseOptions.MountOptions.Options = append(fuseOptions.MountOptions.Options, "allow_other")
 	// fuseOptions.Debug = *trace
 	server, err := fs.Mount(mountPoint, &root, fuseOptions)
 	if err != nil {

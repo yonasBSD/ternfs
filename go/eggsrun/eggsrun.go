@@ -41,7 +41,6 @@ func main() {
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	multiLocation := flag.Bool("multi-location", false, "Run 2 sets of shards/shuckle/cdc/storages to simulate multi data centre setup")
-	useRandomFetchApi := flag.Bool("use-random-fetch-api", false, "if set randomly uses api with or without crc when fetching from block service")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -316,7 +315,6 @@ func main() {
 				Wait:              true,
 				ShuckleAddress:    shuckleAddressToUse,
 				Profile:           *profile,
-				UseRandomFetchApi: *useRandomFetchApi,
 			})
 
 			fmt.Printf("operational, mounted at %v\n", fuseMountPoint)

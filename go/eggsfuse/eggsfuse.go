@@ -135,14 +135,14 @@ type eggsNode struct {
 	id msgs.InodeId
 }
 
-func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno {
-	logger.Debug("getattr inode=%v", id)
+func (n *eggsNode)getattr(allowTransient bool, out *fuse.Attr) syscall.Errno {
+	logger.Debug("getattr inode=%v", n.id)
 
-	out.Ino = uint64(id)
-	out.Mode = inodeTypeToMode(id.Type())
-	if id.Type() == msgs.DIRECTORY {
-		resp := msgs.StatDirectoryResp{}
-		if err := shardRequest(id.Shard(), &msgs.StatDirectoryReq{Id: id}, &resp); err != 0 {
+	out.Ino = uint64(n.id)
+	out.Mode = inodeTypeToMode(n.id.Type())
+	if n.id.Type() == msgs.DIRECTORY {
+		var resp msgs.StatDirectoryResp
+		if err := shardRequest(n.id.Shard(), &msgs.StatDirectoryReq{Id: n.id}, &resp); err != 0 {
 			return err
 		}
 		mtime := uint64(resp.Mtime)
@@ -151,13 +151,13 @@ func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno
 		out.Mtime = mtimesec
 		out.Mtimensec = mtimens
 	} else {
-		resp := msgs.StatFileResp{}
-		err := c.ShardRequest(logger, id.Shard(), &msgs.StatFileReq{Id: id}, &resp)
+		var resp msgs.StatFileResp
+		err := c.ShardRequest(logger, n.id.Shard(), &msgs.StatFileReq{Id: n.id}, &resp)
 
 		// if we tolerate transient files, try that
 		if eggsErr, ok := err.(msgs.EggsError); ok && eggsErr == msgs.FILE_NOT_FOUND && allowTransient {
 			resp := msgs.StatTransientFileResp{}
-			if newErr := c.ShardRequest(logger, id.Shard(), &msgs.StatTransientFileReq{Id: id}, &resp); newErr != nil {
+			if newErr := c.ShardRequest(logger, n.id.Shard(), &msgs.StatTransientFileReq{Id: n.id}, &resp); newErr != nil {
 				logger.Debug("ignoring transient stat error %v", newErr)
 				return eggsErrToErrno(err) // use original error
 			}
@@ -175,7 +175,6 @@ func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno
 		if err != nil {
 			return eggsErrToErrno(err)
 		}
-
 		out.Size = resp.Size
 		mtime := uint64(resp.Mtime)
 		mtimesec := mtime / 1000000000
@@ -192,7 +191,7 @@ func getattr(id msgs.InodeId, allowTransient bool, out *fuse.Attr) syscall.Errno
 }
 
 func (n *eggsNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	return getattr(n.id, true, &out.Attr)
+	return n.getattr(true, &out.Attr)
 }
 
 func (n *eggsNode) Lookup(
@@ -214,10 +213,11 @@ func (n *eggsNode) Lookup(
 	default:
 		panic(fmt.Errorf("bad type %v", resp.TargetId.Type()))
 	}
-	if err := getattr(resp.TargetId, false, &out.Attr); err != 0 {
+	newNode := &eggsNode{id: resp.TargetId}
+	if err := newNode.getattr(false, &out.Attr); err != 0 {
 		return nil, err
 	}
-	return n.NewInode(ctx, &eggsNode{id: resp.TargetId}, fs.StableAttr{Ino: uint64(resp.TargetId), Mode: mode}), 0
+	return n.NewInode(ctx, newNode, fs.StableAttr{Ino: uint64(resp.TargetId), Mode: mode}), 0
 }
 
 type dirStream struct {
@@ -522,33 +522,27 @@ func (n *eggsNode) Rename(ctx context.Context, oldName string, newParent0 fs.Ino
 
 type openFile struct {
 	data *[]byte
+	err error
+	wg sync.WaitGroup
+
 }
 
 func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	logger.Debug("open file=%v flags=%08x", n.id, flags)
 
-	var err error
-	data := &[]byte{}
-	defer func() {
+	of := openFile{}
+
+	of.wg.Add(1)
+	go func() {
+		defer of.wg.Done()
+		buf, err := c.FetchFile(logger, bufPool, n.id)
 		if err != nil {
-			bufPool.Put(lib.NewBuf(data))
+			of.err = err
+			return
 		}
+		bufData := buf.Bytes()
+		of.data = &bufData
 	}()
-
-	buf := bytes.NewBuffer(*data)
-
-	var r io.ReadCloser
-	r, err = c.ReadFile(logger, bufPool, n.id)
-	if err != nil {
-		return 0, 0, eggsErrToErrno(err)
-	}
-	defer r.Close()
-
-	if _, err = io.Copy(buf, r); err != nil {
-		return 0, 0, eggsErrToErrno(err)
-	}
-	bufData := buf.Bytes()
-	data = &bufData
 
 	if flags|syscall.O_NOATIME != 0 {
 		c.ShardRequestDontWait(logger, n.id.Shard(), &msgs.SetTimeReq{
@@ -557,16 +551,20 @@ func (n *eggsNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 		})
 	}
 
-	of := openFile{data: data}
-	return &of, 0, 0
+
+	return &of, fuse.FOPEN_CACHE_DIR | fuse.FOPEN_KEEP_CACHE, 0
 }
 
 func (of *openFile) Flush(ctx context.Context) syscall.Errno {
-	bufPool.Put(lib.NewBuf(of.data))
 	return 0
 }
 
 func (of *openFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	of.wg.Wait()
+	if of.err != nil {
+		logger.ErrorNoAlert("read error: %v", of.err)
+		return fuse.ReadResultData([]byte{}), syscall.EIO
+	}
 	logger.Debug("read off=%v, count=%v", off, len(dest))
 	data := *of.data
 
@@ -689,10 +687,12 @@ func main() {
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
+	allowOther := flag.Bool("allow-other", false, "")
 	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
 	initialCDCTimeout := flag.Duration("initial-cdc-timeout", 0, "")
-	useRandomFetchApi := flag.Bool("use-random-fetch-api", false, "if set randomly uses api with or without crc when fetching from block service")
 	mtu := flag.Uint64("mtu", msgs.DEFAULT_UDP_MTU, "mtu used talking to shards and cdc")
+	fileAttrCacheTimeFlag := flag.Duration("file-attr-cache-time", time.Millisecond*250, "time to cache file attributes for read-only files before rechecking with the server. Set to 0 to disable caching. (default: 250ms)")
+	dirAttrCacheTimeFlag := flag.Duration("dir-attr-cache-time", time.Millisecond*250, "time to cache directory attributes before rechecking with the server. Set to 0 to disable caching. (default: 250ms)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -751,8 +751,6 @@ func main() {
 	}
 	c.SetCounters(counters)
 
-	c.SetUseRandomFetchApi(*useRandomFetchApi)
-
 	shardTimeouts := client.DefaultShardTimeout
 	if *initialShardTimeout != 0 {
 		shardTimeouts.Initial = *initialShardTimeout
@@ -773,8 +771,19 @@ func main() {
 	}
 	fuseOptions := &fs.Options{
 		Logger: log.New(os.Stderr, "fuse", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
+		AttrTimeout: fileAttrCacheTimeFlag,
+		EntryTimeout: dirAttrCacheTimeFlag,
+		MountOptions: fuse.MountOptions{
+			FsName: "eggsfs",
+			Name:   "eggsfuse" + mountPoint,
+			MaxWrite: 1<<20,
+			MaxReadAhead: 1<<20,
+			DisableXAttrs: true,
+		},
 	}
-	fuseOptions.MountOptions.Options = append(fuseOptions.MountOptions.Options, "allow_other")
+	if *allowOther {
+		fuseOptions.MountOptions.Options = append(fuseOptions.MountOptions.Options, "allow_other")
+	}
 	// fuseOptions.Debug = *trace
 	server, err := fs.Mount(mountPoint, &root, fuseOptions)
 	if err != nil {

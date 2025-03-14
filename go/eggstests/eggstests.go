@@ -256,7 +256,6 @@ func (r *RunTests) run(
 		panic(err)
 	}
 	c.SetFetchBlockServices()
-	c.SetUseRandomFetchApi(true)
 	defer c.Close()
 	updateTimeouts(c)
 
@@ -1221,7 +1220,6 @@ func main() {
 		Profile:             *profile,
 		InitialShardTimeout: client.DefaultShardTimeout.Initial,
 		InitialCDCTimeout:   client.DefaultCDCTimeout.Initial,
-		UseRandomFetchApi:   true,
 	})
 
 	var mountPoint string

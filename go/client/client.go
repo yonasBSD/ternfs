@@ -794,22 +794,6 @@ func (proc *blocksProcessor) processResponses(log *lib.Logger) {
 			resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
 			continue
 		}
-		if resp.resp.resp.BlocksResponseKind() == msgs.FETCH_BLOCK {
-			req := resp.resp.req.(*msgs.FetchBlockReq)
-			lr := &io.LimitedReader{
-				R: connr,
-				N: int64(req.Count),
-			}
-			log.Debug("reading block body from %v->%v", connr.LocalAddr(), connr.RemoteAddr())
-			readBytes, err := resp.resp.additionalBodyWriter.ReadFrom(lr)
-			if err != nil || readBytes < int64(req.Count) {
-				if err == nil {
-					err = io.EOF
-				}
-				resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
-				continue
-			}
-		}
 		if resp.resp.resp.BlocksResponseKind() == msgs.FETCH_BLOCK_WITH_CRC {
 			req := resp.resp.req.(*msgs.FetchBlockWithCrcReq)
 			pageCount := (req.Count / msgs.EGGS_PAGE_SIZE)
@@ -967,7 +951,6 @@ type Client struct {
 	addrsRefreshTicker   *time.Ticker
 	addrsRefreshClose    chan (struct{})
 	shuckleConn          *ShuckleConn
-	useRandomFetchApi    int32
 
 	fetchBlockServices	        bool
 	blockServicesLock           *sync.RWMutex
@@ -1099,14 +1082,6 @@ func (c *Client) SetCDCTimeouts(t *lib.ReqTimeouts) {
 // This is only safe to use during initialization.
 func (c *Client) SetBlockTimeout(t *lib.ReqTimeouts) {
 	c.blockTimeout = t
-}
-
-func (c *Client) SetUseRandomFetchApi(useRandom bool) {
-	val := int32(0)
-	if useRandom {
-		val = 1
-	}
-	atomic.StoreInt32((&c.useRandomFetchApi), val)
 }
 
 func (c *Client) IncreaseNumShuckleHandlersTo(numHandlers uint) {
@@ -1435,41 +1410,26 @@ func (c *Client) WriteBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, block *m
 	return resp.(*msgs.WriteBlockResp).Proof, nil
 }
 
-func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, withCrc bool, crc msgs.Crc) *sendArgs {
-	if withCrc {
-		return &sendArgs{
-			blockService.Id,
-			blockService.Addrs,
-			&msgs.FetchBlockWithCrcReq{
-				BlockId:  blockId,
-				BlockCrc: crc,
-				Offset:   offset,
-				Count:    count,
-			},
-			nil,
-			&msgs.FetchBlockWithCrcResp{},
-			w,
-			extra,
-		}
-	}
+func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, crc msgs.Crc) *sendArgs {
 	return &sendArgs{
 		blockService.Id,
 		blockService.Addrs,
-		&msgs.FetchBlockReq{
-			BlockId: blockId,
-			Offset:  offset,
-			Count:   count,
+		&msgs.FetchBlockWithCrcReq{
+			BlockId:  blockId,
+			BlockCrc: crc,
+			Offset:   offset,
+			Count:    count,
 		},
 		nil,
-		&msgs.FetchBlockResp{},
+		&msgs.FetchBlockWithCrcResp{},
 		w,
 		extra,
 	}
 }
 
 // An asynchronous version of [FetchBlock] that is currently unused.
-func (c *Client) StartFetchBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion, withCrc bool, crc msgs.Crc) error {
-	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra, withCrc, crc), completion)
+func (c *Client) StartFetchBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion, crc msgs.Crc) error {
+	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra, crc), completion)
 }
 
 // Return a buffer that was provided by [FetchBlock] to the internal pool.
@@ -1488,11 +1448,8 @@ func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 func (c *Client) FetchBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, crc msgs.Crc) (body *bytes.Buffer, err error) {
 	buf := c.fetchBlockBufs.Get().(*bytes.Buffer)
 	buf.Reset()
-	withCrc := true
-	if atomic.LoadInt32(&c.useRandomFetchApi) == 1 {
-		withCrc = rand.Int()&1 != 0
-	}
-	_, err = c.singleBlockReq(log, timeouts, &c.fetchBlockProcessors, fetchBlockSendArgs(blockService, blockId, offset, count, buf, nil, withCrc, crc))
+
+	_, err = c.singleBlockReq(log, timeouts, &c.fetchBlockProcessors, fetchBlockSendArgs(blockService, blockId, offset, count, buf, nil, crc))
 	if err != nil {
 		return nil, err
 	}

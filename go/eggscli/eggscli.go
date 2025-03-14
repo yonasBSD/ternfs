@@ -604,11 +604,11 @@ func main() {
 			panic(err)
 		}
 		bufPool := lib.NewBufPool()
-		r, err := getClient().ReadFile(log, bufPool, id)
+		r, err := getClient().FetchFile(log, bufPool, id)
 		if err != nil {
 			panic(err)
 		}
-		if _, err := out.ReadFrom(r); err != nil {
+		if _, err := out.Write(r.Bytes()); err != nil {
 			panic(err)
 		}
 	}
@@ -773,7 +773,7 @@ func main() {
 			mask = uint8(flagMask)
 		}
 		conn := client.MakeShuckleConn(log, nil, *shuckleAddress, 1)
-		defer conn.Close()	
+		defer conn.Close()
 		for _, bsId := range blockServiceIds {
 			log.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
 			_, err := conn.Request(&msgs.SetBlockServiceFlagsReq{

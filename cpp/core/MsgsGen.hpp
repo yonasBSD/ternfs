@@ -221,6 +221,7 @@ enum class ShardMessageKind : uint8_t {
     SHARD_SNAPSHOT = 18,
     FILE_SPANS = 20,
     ADD_SPAN_LOCATION = 21,
+    SCRAP_TRANSIENT_FILE = 22,
     SET_DIRECTORY_INFO = 13,
     VISIT_DIRECTORIES = 112,
     VISIT_FILES = 113,
@@ -268,6 +269,7 @@ const std::vector<ShardMessageKind> allShardMessageKind {
     ShardMessageKind::SHARD_SNAPSHOT,
     ShardMessageKind::FILE_SPANS,
     ShardMessageKind::ADD_SPAN_LOCATION,
+    ShardMessageKind::SCRAP_TRANSIENT_FILE,
     ShardMessageKind::SET_DIRECTORY_INFO,
     ShardMessageKind::VISIT_DIRECTORIES,
     ShardMessageKind::VISIT_FILES,
@@ -2348,6 +2350,44 @@ struct AddSpanLocationResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const AddSpanLocationResp& x);
+
+struct ScrapTransientFileReq {
+    InodeId id;
+    BincodeFixedBytes<8> cookie;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // id + cookie
+
+    ScrapTransientFileReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // id
+        _size += BincodeFixedBytes<8>::STATIC_SIZE; // cookie
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ScrapTransientFileReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ScrapTransientFileReq& x);
+
+struct ScrapTransientFileResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    ScrapTransientFileResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ScrapTransientFileResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ScrapTransientFileResp& x);
 
 struct SetDirectoryInfoReq {
     InodeId id;
@@ -5127,9 +5167,9 @@ std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x);
 
 struct ShardReqContainer {
 private:
-    static constexpr std::array<size_t,43> _staticSizes = {LookupReq::STATIC_SIZE, StatFileReq::STATIC_SIZE, StatDirectoryReq::STATIC_SIZE, ReadDirReq::STATIC_SIZE, ConstructFileReq::STATIC_SIZE, AddSpanInitiateReq::STATIC_SIZE, AddSpanCertifyReq::STATIC_SIZE, LinkFileReq::STATIC_SIZE, SoftUnlinkFileReq::STATIC_SIZE, LocalFileSpansReq::STATIC_SIZE, SameDirectoryRenameReq::STATIC_SIZE, AddInlineSpanReq::STATIC_SIZE, SetTimeReq::STATIC_SIZE, FullReadDirReq::STATIC_SIZE, MoveSpanReq::STATIC_SIZE, RemoveNonOwnedEdgeReq::STATIC_SIZE, SameShardHardFileUnlinkReq::STATIC_SIZE, StatTransientFileReq::STATIC_SIZE, ShardSnapshotReq::STATIC_SIZE, FileSpansReq::STATIC_SIZE, AddSpanLocationReq::STATIC_SIZE, SetDirectoryInfoReq::STATIC_SIZE, VisitDirectoriesReq::STATIC_SIZE, VisitFilesReq::STATIC_SIZE, VisitTransientFilesReq::STATIC_SIZE, RemoveSpanInitiateReq::STATIC_SIZE, RemoveSpanCertifyReq::STATIC_SIZE, SwapBlocksReq::STATIC_SIZE, BlockServiceFilesReq::STATIC_SIZE, RemoveInodeReq::STATIC_SIZE, AddSpanInitiateWithReferenceReq::STATIC_SIZE, RemoveZeroBlockServiceFilesReq::STATIC_SIZE, SwapSpansReq::STATIC_SIZE, SameDirectoryRenameSnapshotReq::STATIC_SIZE, AddSpanAtLocationInitiateReq::STATIC_SIZE, CreateDirectoryInodeReq::STATIC_SIZE, SetDirectoryOwnerReq::STATIC_SIZE, RemoveDirectoryOwnerReq::STATIC_SIZE, CreateLockedCurrentEdgeReq::STATIC_SIZE, LockCurrentEdgeReq::STATIC_SIZE, UnlockCurrentEdgeReq::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeReq::STATIC_SIZE, MakeFileTransientReq::STATIC_SIZE};
+    static constexpr std::array<size_t,44> _staticSizes = {LookupReq::STATIC_SIZE, StatFileReq::STATIC_SIZE, StatDirectoryReq::STATIC_SIZE, ReadDirReq::STATIC_SIZE, ConstructFileReq::STATIC_SIZE, AddSpanInitiateReq::STATIC_SIZE, AddSpanCertifyReq::STATIC_SIZE, LinkFileReq::STATIC_SIZE, SoftUnlinkFileReq::STATIC_SIZE, LocalFileSpansReq::STATIC_SIZE, SameDirectoryRenameReq::STATIC_SIZE, AddInlineSpanReq::STATIC_SIZE, SetTimeReq::STATIC_SIZE, FullReadDirReq::STATIC_SIZE, MoveSpanReq::STATIC_SIZE, RemoveNonOwnedEdgeReq::STATIC_SIZE, SameShardHardFileUnlinkReq::STATIC_SIZE, StatTransientFileReq::STATIC_SIZE, ShardSnapshotReq::STATIC_SIZE, FileSpansReq::STATIC_SIZE, AddSpanLocationReq::STATIC_SIZE, ScrapTransientFileReq::STATIC_SIZE, SetDirectoryInfoReq::STATIC_SIZE, VisitDirectoriesReq::STATIC_SIZE, VisitFilesReq::STATIC_SIZE, VisitTransientFilesReq::STATIC_SIZE, RemoveSpanInitiateReq::STATIC_SIZE, RemoveSpanCertifyReq::STATIC_SIZE, SwapBlocksReq::STATIC_SIZE, BlockServiceFilesReq::STATIC_SIZE, RemoveInodeReq::STATIC_SIZE, AddSpanInitiateWithReferenceReq::STATIC_SIZE, RemoveZeroBlockServiceFilesReq::STATIC_SIZE, SwapSpansReq::STATIC_SIZE, SameDirectoryRenameSnapshotReq::STATIC_SIZE, AddSpanAtLocationInitiateReq::STATIC_SIZE, CreateDirectoryInodeReq::STATIC_SIZE, SetDirectoryOwnerReq::STATIC_SIZE, RemoveDirectoryOwnerReq::STATIC_SIZE, CreateLockedCurrentEdgeReq::STATIC_SIZE, LockCurrentEdgeReq::STATIC_SIZE, UnlockCurrentEdgeReq::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeReq::STATIC_SIZE, MakeFileTransientReq::STATIC_SIZE};
     ShardMessageKind _kind = ShardMessageKind::EMPTY;
-    std::variant<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, LocalFileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, ShardSnapshotReq, FileSpansReq, AddSpanLocationReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, AddSpanInitiateWithReferenceReq, RemoveZeroBlockServiceFilesReq, SwapSpansReq, SameDirectoryRenameSnapshotReq, AddSpanAtLocationInitiateReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
+    std::variant<LookupReq, StatFileReq, StatDirectoryReq, ReadDirReq, ConstructFileReq, AddSpanInitiateReq, AddSpanCertifyReq, LinkFileReq, SoftUnlinkFileReq, LocalFileSpansReq, SameDirectoryRenameReq, AddInlineSpanReq, SetTimeReq, FullReadDirReq, MoveSpanReq, RemoveNonOwnedEdgeReq, SameShardHardFileUnlinkReq, StatTransientFileReq, ShardSnapshotReq, FileSpansReq, AddSpanLocationReq, ScrapTransientFileReq, SetDirectoryInfoReq, VisitDirectoriesReq, VisitFilesReq, VisitTransientFilesReq, RemoveSpanInitiateReq, RemoveSpanCertifyReq, SwapBlocksReq, BlockServiceFilesReq, RemoveInodeReq, AddSpanInitiateWithReferenceReq, RemoveZeroBlockServiceFilesReq, SwapSpansReq, SameDirectoryRenameSnapshotReq, AddSpanAtLocationInitiateReq, CreateDirectoryInodeReq, SetDirectoryOwnerReq, RemoveDirectoryOwnerReq, CreateLockedCurrentEdgeReq, LockCurrentEdgeReq, UnlockCurrentEdgeReq, RemoveOwnedSnapshotFileEdgeReq, MakeFileTransientReq> _data;
 public:
     ShardReqContainer();
     ShardReqContainer(const ShardReqContainer& other);
@@ -5181,6 +5221,8 @@ public:
     FileSpansReq& setFileSpans();
     const AddSpanLocationReq& getAddSpanLocation() const;
     AddSpanLocationReq& setAddSpanLocation();
+    const ScrapTransientFileReq& getScrapTransientFile() const;
+    ScrapTransientFileReq& setScrapTransientFile();
     const SetDirectoryInfoReq& getSetDirectoryInfo() const;
     SetDirectoryInfoReq& setSetDirectoryInfo();
     const VisitDirectoriesReq& getVisitDirectories() const;
@@ -5239,9 +5281,9 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 
 struct ShardRespContainer {
 private:
-    static constexpr std::array<size_t,44> _staticSizes = {sizeof(EggsError), LookupResp::STATIC_SIZE, StatFileResp::STATIC_SIZE, StatDirectoryResp::STATIC_SIZE, ReadDirResp::STATIC_SIZE, ConstructFileResp::STATIC_SIZE, AddSpanInitiateResp::STATIC_SIZE, AddSpanCertifyResp::STATIC_SIZE, LinkFileResp::STATIC_SIZE, SoftUnlinkFileResp::STATIC_SIZE, LocalFileSpansResp::STATIC_SIZE, SameDirectoryRenameResp::STATIC_SIZE, AddInlineSpanResp::STATIC_SIZE, SetTimeResp::STATIC_SIZE, FullReadDirResp::STATIC_SIZE, MoveSpanResp::STATIC_SIZE, RemoveNonOwnedEdgeResp::STATIC_SIZE, SameShardHardFileUnlinkResp::STATIC_SIZE, StatTransientFileResp::STATIC_SIZE, ShardSnapshotResp::STATIC_SIZE, FileSpansResp::STATIC_SIZE, AddSpanLocationResp::STATIC_SIZE, SetDirectoryInfoResp::STATIC_SIZE, VisitDirectoriesResp::STATIC_SIZE, VisitFilesResp::STATIC_SIZE, VisitTransientFilesResp::STATIC_SIZE, RemoveSpanInitiateResp::STATIC_SIZE, RemoveSpanCertifyResp::STATIC_SIZE, SwapBlocksResp::STATIC_SIZE, BlockServiceFilesResp::STATIC_SIZE, RemoveInodeResp::STATIC_SIZE, AddSpanInitiateWithReferenceResp::STATIC_SIZE, RemoveZeroBlockServiceFilesResp::STATIC_SIZE, SwapSpansResp::STATIC_SIZE, SameDirectoryRenameSnapshotResp::STATIC_SIZE, AddSpanAtLocationInitiateResp::STATIC_SIZE, CreateDirectoryInodeResp::STATIC_SIZE, SetDirectoryOwnerResp::STATIC_SIZE, RemoveDirectoryOwnerResp::STATIC_SIZE, CreateLockedCurrentEdgeResp::STATIC_SIZE, LockCurrentEdgeResp::STATIC_SIZE, UnlockCurrentEdgeResp::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeResp::STATIC_SIZE, MakeFileTransientResp::STATIC_SIZE};
+    static constexpr std::array<size_t,45> _staticSizes = {sizeof(EggsError), LookupResp::STATIC_SIZE, StatFileResp::STATIC_SIZE, StatDirectoryResp::STATIC_SIZE, ReadDirResp::STATIC_SIZE, ConstructFileResp::STATIC_SIZE, AddSpanInitiateResp::STATIC_SIZE, AddSpanCertifyResp::STATIC_SIZE, LinkFileResp::STATIC_SIZE, SoftUnlinkFileResp::STATIC_SIZE, LocalFileSpansResp::STATIC_SIZE, SameDirectoryRenameResp::STATIC_SIZE, AddInlineSpanResp::STATIC_SIZE, SetTimeResp::STATIC_SIZE, FullReadDirResp::STATIC_SIZE, MoveSpanResp::STATIC_SIZE, RemoveNonOwnedEdgeResp::STATIC_SIZE, SameShardHardFileUnlinkResp::STATIC_SIZE, StatTransientFileResp::STATIC_SIZE, ShardSnapshotResp::STATIC_SIZE, FileSpansResp::STATIC_SIZE, AddSpanLocationResp::STATIC_SIZE, ScrapTransientFileResp::STATIC_SIZE, SetDirectoryInfoResp::STATIC_SIZE, VisitDirectoriesResp::STATIC_SIZE, VisitFilesResp::STATIC_SIZE, VisitTransientFilesResp::STATIC_SIZE, RemoveSpanInitiateResp::STATIC_SIZE, RemoveSpanCertifyResp::STATIC_SIZE, SwapBlocksResp::STATIC_SIZE, BlockServiceFilesResp::STATIC_SIZE, RemoveInodeResp::STATIC_SIZE, AddSpanInitiateWithReferenceResp::STATIC_SIZE, RemoveZeroBlockServiceFilesResp::STATIC_SIZE, SwapSpansResp::STATIC_SIZE, SameDirectoryRenameSnapshotResp::STATIC_SIZE, AddSpanAtLocationInitiateResp::STATIC_SIZE, CreateDirectoryInodeResp::STATIC_SIZE, SetDirectoryOwnerResp::STATIC_SIZE, RemoveDirectoryOwnerResp::STATIC_SIZE, CreateLockedCurrentEdgeResp::STATIC_SIZE, LockCurrentEdgeResp::STATIC_SIZE, UnlockCurrentEdgeResp::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeResp::STATIC_SIZE, MakeFileTransientResp::STATIC_SIZE};
     ShardMessageKind _kind = ShardMessageKind::EMPTY;
-    std::variant<EggsError, LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, LocalFileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, ShardSnapshotResp, FileSpansResp, AddSpanLocationResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, AddSpanInitiateWithReferenceResp, RemoveZeroBlockServiceFilesResp, SwapSpansResp, SameDirectoryRenameSnapshotResp, AddSpanAtLocationInitiateResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::variant<EggsError, LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, LocalFileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, ShardSnapshotResp, FileSpansResp, AddSpanLocationResp, ScrapTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, AddSpanInitiateWithReferenceResp, RemoveZeroBlockServiceFilesResp, SwapSpansResp, SameDirectoryRenameSnapshotResp, AddSpanAtLocationInitiateResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardRespContainer();
     ShardRespContainer(const ShardRespContainer& other);
@@ -5295,6 +5337,8 @@ public:
     FileSpansResp& setFileSpans();
     const AddSpanLocationResp& getAddSpanLocation() const;
     AddSpanLocationResp& setAddSpanLocation();
+    const ScrapTransientFileResp& getScrapTransientFile() const;
+    ScrapTransientFileResp& setScrapTransientFile();
     const SetDirectoryInfoResp& getSetDirectoryInfo() const;
     SetDirectoryInfoResp& setSetDirectoryInfo();
     const VisitDirectoriesResp& getVisitDirectories() const;
@@ -5691,7 +5735,7 @@ enum class ShardLogEntryKind : uint16_t {
     SET_DIRECTORY_OWNER = 11,
     SET_DIRECTORY_INFO = 12,
     REMOVE_NON_OWNED_EDGE = 13,
-    SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED = 14,
+    SCRAP_TRANSIENT_FILE = 14,
     REMOVE_SPAN_INITIATE = 15,
     ADD_SPAN_INITIATE = 16,
     ADD_SPAN_CERTIFY = 17,
@@ -6019,30 +6063,26 @@ struct RemoveNonOwnedEdgeEntry {
 
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x);
 
-struct SameShardHardFileUnlinkDEPRECATEDEntry {
-    InodeId ownerId;
-    InodeId targetId;
-    BincodeBytes name;
-    EggsTime creationTime;
+struct ScrapTransientFileEntry {
+    InodeId id;
+    EggsTime deadlineTime;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
+    static constexpr uint16_t STATIC_SIZE = 8 + 8; // id + deadlineTime
 
-    SameShardHardFileUnlinkDEPRECATEDEntry() { clear(); }
+    ScrapTransientFileEntry() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += 8; // ownerId
-        _size += 8; // targetId
-        _size += name.packedSize(); // name
-        _size += 8; // creationTime
+        _size += 8; // id
+        _size += 8; // deadlineTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const SameShardHardFileUnlinkDEPRECATEDEntry&rhs) const;
+    bool operator==(const ScrapTransientFileEntry&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkDEPRECATEDEntry& x);
+std::ostream& operator<<(std::ostream& out, const ScrapTransientFileEntry& x);
 
 struct RemoveSpanInitiateEntry {
     InodeId fileId;
@@ -6503,9 +6543,9 @@ std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x);
 
 struct ShardLogEntryContainer {
 private:
-    static constexpr std::array<size_t,31> _staticSizes = {ConstructFileEntry::STATIC_SIZE, LinkFileEntry::STATIC_SIZE, SameDirectoryRenameEntry::STATIC_SIZE, SoftUnlinkFileEntry::STATIC_SIZE, CreateDirectoryInodeEntry::STATIC_SIZE, CreateLockedCurrentEdgeEntry::STATIC_SIZE, UnlockCurrentEdgeEntry::STATIC_SIZE, LockCurrentEdgeEntry::STATIC_SIZE, RemoveDirectoryOwnerEntry::STATIC_SIZE, RemoveInodeEntry::STATIC_SIZE, SetDirectoryOwnerEntry::STATIC_SIZE, SetDirectoryInfoEntry::STATIC_SIZE, RemoveNonOwnedEdgeEntry::STATIC_SIZE, SameShardHardFileUnlinkDEPRECATEDEntry::STATIC_SIZE, RemoveSpanInitiateEntry::STATIC_SIZE, AddSpanInitiateEntry::STATIC_SIZE, AddSpanCertifyEntry::STATIC_SIZE, AddInlineSpanEntry::STATIC_SIZE, MakeFileTransientDEPRECATEDEntry::STATIC_SIZE, RemoveSpanCertifyEntry::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeEntry::STATIC_SIZE, SwapBlocksEntry::STATIC_SIZE, MoveSpanEntry::STATIC_SIZE, SetTimeEntry::STATIC_SIZE, RemoveZeroBlockServiceFilesEntry::STATIC_SIZE, SwapSpansEntry::STATIC_SIZE, SameDirectoryRenameSnapshotEntry::STATIC_SIZE, AddSpanAtLocationInitiateEntry::STATIC_SIZE, AddSpanLocationEntry::STATIC_SIZE, SameShardHardFileUnlinkEntry::STATIC_SIZE, MakeFileTransientEntry::STATIC_SIZE};
+    static constexpr std::array<size_t,31> _staticSizes = {ConstructFileEntry::STATIC_SIZE, LinkFileEntry::STATIC_SIZE, SameDirectoryRenameEntry::STATIC_SIZE, SoftUnlinkFileEntry::STATIC_SIZE, CreateDirectoryInodeEntry::STATIC_SIZE, CreateLockedCurrentEdgeEntry::STATIC_SIZE, UnlockCurrentEdgeEntry::STATIC_SIZE, LockCurrentEdgeEntry::STATIC_SIZE, RemoveDirectoryOwnerEntry::STATIC_SIZE, RemoveInodeEntry::STATIC_SIZE, SetDirectoryOwnerEntry::STATIC_SIZE, SetDirectoryInfoEntry::STATIC_SIZE, RemoveNonOwnedEdgeEntry::STATIC_SIZE, ScrapTransientFileEntry::STATIC_SIZE, RemoveSpanInitiateEntry::STATIC_SIZE, AddSpanInitiateEntry::STATIC_SIZE, AddSpanCertifyEntry::STATIC_SIZE, AddInlineSpanEntry::STATIC_SIZE, MakeFileTransientDEPRECATEDEntry::STATIC_SIZE, RemoveSpanCertifyEntry::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeEntry::STATIC_SIZE, SwapBlocksEntry::STATIC_SIZE, MoveSpanEntry::STATIC_SIZE, SetTimeEntry::STATIC_SIZE, RemoveZeroBlockServiceFilesEntry::STATIC_SIZE, SwapSpansEntry::STATIC_SIZE, SameDirectoryRenameSnapshotEntry::STATIC_SIZE, AddSpanAtLocationInitiateEntry::STATIC_SIZE, AddSpanLocationEntry::STATIC_SIZE, SameShardHardFileUnlinkEntry::STATIC_SIZE, MakeFileTransientEntry::STATIC_SIZE};
     ShardLogEntryKind _kind = ShardLogEntryKind::EMPTY;
-    std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkDEPRECATEDEntry, RemoveSpanInitiateEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientDEPRECATEDEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry, SwapSpansEntry, SameDirectoryRenameSnapshotEntry, AddSpanAtLocationInitiateEntry, AddSpanLocationEntry, SameShardHardFileUnlinkEntry, MakeFileTransientEntry> _data;
+    std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, ScrapTransientFileEntry, RemoveSpanInitiateEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientDEPRECATEDEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry, SwapSpansEntry, SameDirectoryRenameSnapshotEntry, AddSpanAtLocationInitiateEntry, AddSpanLocationEntry, SameShardHardFileUnlinkEntry, MakeFileTransientEntry> _data;
 public:
     ShardLogEntryContainer();
     ShardLogEntryContainer(const ShardLogEntryContainer& other);
@@ -6541,8 +6581,8 @@ public:
     SetDirectoryInfoEntry& setSetDirectoryInfo();
     const RemoveNonOwnedEdgeEntry& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeEntry& setRemoveNonOwnedEdge();
-    const SameShardHardFileUnlinkDEPRECATEDEntry& getSameShardHardFileUnlinkDEPRECATED() const;
-    SameShardHardFileUnlinkDEPRECATEDEntry& setSameShardHardFileUnlinkDEPRECATED();
+    const ScrapTransientFileEntry& getScrapTransientFile() const;
+    ScrapTransientFileEntry& setScrapTransientFile();
     const RemoveSpanInitiateEntry& getRemoveSpanInitiate() const;
     RemoveSpanInitiateEntry& setRemoveSpanInitiate();
     const AddSpanInitiateEntry& getAddSpanInitiate() const;

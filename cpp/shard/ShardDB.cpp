@@ -1639,6 +1639,22 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
+    EggsError _prepareScrapTransientFile(EggsTime time, const ScrapTransientFileReq& req, ScrapTransientFileEntry& entry) {
+        if (req.id.type() != InodeType::FILE) {
+            return EggsError::FILE_IS_NOT_TRANSIENT;
+        }
+        if (req.id.shard() != _shid) {
+            return EggsError::BAD_SHARD;
+        }
+        EggsError err = _checkTransientFileCookie(req.id, req.cookie.data);
+        if (err != EggsError::NO_ERROR) {
+            return err;
+        }
+        entry.id = req.id;
+        entry.deadlineTime = time;
+        return EggsError::NO_ERROR;
+    }
+
     EggsError _prepareRemoveSpanCertify(EggsTime time, const RemoveSpanCertifyReq& req, RemoveSpanCertifyEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
@@ -1859,6 +1875,9 @@ struct ShardDBImpl {
             break;
         case ShardMessageKind::MAKE_FILE_TRANSIENT:
             err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), logEntryBody.setMakeFileTransient());
+            break;
+        case ShardMessageKind::SCRAP_TRANSIENT_FILE:
+            err = _prepareScrapTransientFile(time, req.getScrapTransientFile(), logEntryBody.setScrapTransientFile());
             break;
         case ShardMessageKind::REMOVE_SPAN_CERTIFY:
             err = _prepareRemoveSpanCertify(time, req.getRemoveSpanCertify(), logEntryBody.setRemoveSpanCertify());
@@ -3333,6 +3352,22 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
+    EggsError _applyScrapTransientFile(EggsTime time, rocksdb::WriteBatch& batch, const ScrapTransientFileEntry& entry, ScrapTransientFileResp& resp) {
+        std::string transientValue;
+        ExternalValue<TransientFileBody> transientBody;
+        EggsError err = _getTransientFile({}, time, true, entry.id, transientValue, transientBody);
+        if (err != EggsError::NO_ERROR) {
+            return err;
+        }
+
+        transientBody().setDeadline(entry.deadlineTime);
+        {
+            auto k = InodeIdKey::Static(entry.id);
+            ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientBody.toSlice()));
+        }
+        return EggsError::NO_ERROR;
+    }
+
     EggsError _applyRemoveSpanCertify(EggsTime time, rocksdb::WriteBatch& batch, const RemoveSpanCertifyEntry& entry, RemoveSpanCertifyResp& resp) {
         std::string fileValue;
         ExternalValue<TransientFileBody> file;
@@ -3852,18 +3887,6 @@ struct ShardDBImpl {
         case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
             err = _applyRemoveNonOwnedEdge(time, batch, logEntryBody.getRemoveNonOwnedEdge(), resp.setRemoveNonOwnedEdge());
             break;
-        case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
-            {
-                const auto& entryDEPRECATED = logEntryBody.getSameShardHardFileUnlinkDEPRECATED();
-                SameShardHardFileUnlinkEntry entry;
-                entry.ownerId = entryDEPRECATED.ownerId;
-                entry.targetId = entryDEPRECATED.targetId;
-                entry.creationTime = entryDEPRECATED.creationTime;
-                entry.name = entryDEPRECATED.name;
-                entry.deadlineTime = time + _transientDeadlineInterval;
-                err = _applySameShardHardFileUnlink(time, batch, entry, resp.setSameShardHardFileUnlink());
-                break;
-            }
         case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
             err = _applySameShardHardFileUnlink(time, batch, logEntryBody.getSameShardHardFileUnlink(), resp.setSameShardHardFileUnlink());
             break;
@@ -3919,6 +3942,9 @@ struct ShardDBImpl {
             }
         case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
             err = _applyMakeFileTransient(time, batch, logEntryBody.getMakeFileTransient(), resp.setMakeFileTransient());
+            break;
+        case ShardLogEntryKind::SCRAP_TRANSIENT_FILE:
+            err = _applyScrapTransientFile(time, batch, logEntryBody.getScrapTransientFile(), resp.setScrapTransientFile());
             break;
         case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
             err = _applyRemoveSpanCertify(time, batch, logEntryBody.getRemoveSpanCertify(), resp.setRemoveSpanCertify());
@@ -4181,6 +4207,7 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::SHARD_SNAPSHOT:
     case ShardMessageKind::ADD_SPAN_LOCATION:
     case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE:
+    case ShardMessageKind::SCRAP_TRANSIENT_FILE:
         return false;
     case ShardMessageKind::ERROR:
         throw EGGS_EXCEPTION("unexpected ERROR shard message kind");

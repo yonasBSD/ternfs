@@ -811,8 +811,8 @@ type AddSpanInitiateReq struct {
 // Same as above but used internally to create span at specific location.
 // Spans can not be created at multiple locations but can be merged to contain multiple locations.
 type AddSpanAtLocationInitiateReq struct {
-	LocationId     Location
-	Req AddSpanInitiateWithReferenceReq
+	LocationId Location
+	Req        AddSpanInitiateWithReferenceReq
 }
 
 type AddSpanInitiateBlockInfo struct {
@@ -1009,20 +1009,20 @@ type FileSpansReq struct {
 }
 
 type FetchedSpanHeaderFull struct {
-	ByteOffset   uint64
-	Size         uint32
-	Crc          Crc
-	IsInline     bool
+	ByteOffset uint64
+	Size       uint32
+	Crc        Crc
+	IsInline   bool
 }
 
 type FetchedBlockServices struct {
-	LocationId Location
+	LocationId   Location
 	StorageClass StorageClass
-	Parity     rs.Parity
-	Stripes    uint8 // [0, 16)
-	CellSize   uint32
-	Blocks     []FetchedBlock
-	StripesCrc []Crc
+	Parity       rs.Parity
+	Stripes      uint8 // [0, 16)
+	CellSize     uint32
+	Blocks       []FetchedBlock
+	StripesCrc   []Crc
 }
 
 type FetchedLocations struct {
@@ -1041,7 +1041,6 @@ type FileSpansResp struct {
 	BlockServices []BlockService
 	Spans         []FetchedFullSpan
 }
-
 
 type SameDirectoryRenameReq struct {
 	TargetId InodeId
@@ -1329,6 +1328,14 @@ type MakeFileTransientReq struct {
 
 type MakeFileTransientResp struct{}
 
+// Sets transient file deadling to now, allowing it to be garbage collected
+type ScrapTransientFileReq struct {
+	Id     InodeId
+	Cookie Cookie
+}
+
+type ScrapTransientFileResp struct{}
+
 type SetDirectoryInfoReq struct {
 	Id   InodeId
 	Info DirectoryInfo
@@ -1367,7 +1374,6 @@ type SwapSpansReq struct {
 }
 
 type SwapSpansResp struct{}
-
 
 // Adds a span location from transient file to non transient file used for
 // replicating to multiple locations
@@ -1902,7 +1908,6 @@ type AddSpanAtLocationInitiateEntry struct {
 	BodyStripes   []Crc // the CRCs
 }
 
-
 type AddSpanInitiateEntry struct {
 	WithReference bool
 	FileId        InodeId
@@ -1929,9 +1934,14 @@ type MakeFileTransientDEPRECATEDEntry struct {
 }
 
 type MakeFileTransientEntry struct {
-	Id   InodeId
+	Id           InodeId
 	DeadlineTime EggsTime
-	Note string
+	Note         string
+}
+
+type ScrapTransientFileEntry struct {
+	Id           InodeId
+	DeadlineTime EggsTime
 }
 
 type RemoveSpanCertifyEntry struct {
@@ -2138,10 +2148,10 @@ type ShardBlockServicesReq struct {
 }
 
 type BlockServiceInfoShort struct {
-	LocationId Location
+	LocationId    Location
 	FailureDomain FailureDomain
-	Id   BlockServiceId
-	StorageClass StorageClass
+	Id            BlockServiceId
+	StorageClass  StorageClass
 }
 
 type ShardBlockServicesResp struct {

@@ -486,6 +486,8 @@ func (k ShardMessageKind) String() string {
 		return "FILE_SPANS"
 	case 21:
 		return "ADD_SPAN_LOCATION"
+	case 22:
+		return "SCRAP_TRANSIENT_FILE"
 	case 13:
 		return "SET_DIRECTORY_INFO"
 	case 112:
@@ -558,6 +560,7 @@ const (
 	SHARD_SNAPSHOT ShardMessageKind = 0x12
 	FILE_SPANS ShardMessageKind = 0x14
 	ADD_SPAN_LOCATION ShardMessageKind = 0x15
+	SCRAP_TRANSIENT_FILE ShardMessageKind = 0x16
 	SET_DIRECTORY_INFO ShardMessageKind = 0xD
 	VISIT_DIRECTORIES ShardMessageKind = 0x70
 	VISIT_FILES ShardMessageKind = 0x71
@@ -604,6 +607,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	SHARD_SNAPSHOT,
 	FILE_SPANS,
 	ADD_SPAN_LOCATION,
+	SCRAP_TRANSIENT_FILE,
 	SET_DIRECTORY_INFO,
 	VISIT_DIRECTORIES,
 	VISIT_FILES,
@@ -674,6 +678,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &FileSpansReq{}, &FileSpansResp{}, nil
 	case k == "ADD_SPAN_LOCATION":
 		return &AddSpanLocationReq{}, &AddSpanLocationResp{}, nil
+	case k == "SCRAP_TRANSIENT_FILE":
+		return &ScrapTransientFileReq{}, &ScrapTransientFileResp{}, nil
 	case k == "SET_DIRECTORY_INFO":
 		return &SetDirectoryInfoReq{}, &SetDirectoryInfoResp{}, nil
 	case k == "VISIT_DIRECTORIES":
@@ -2401,6 +2407,42 @@ func (v *AddSpanLocationResp) Pack(w io.Writer) error {
 }
 
 func (v *AddSpanLocationResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ScrapTransientFileReq) ShardRequestKind() ShardMessageKind {
+	return SCRAP_TRANSIENT_FILE
+}
+
+func (v *ScrapTransientFileReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.Cookie[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ScrapTransientFileReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.Cookie[:]); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ScrapTransientFileResp) ShardResponseKind() ShardMessageKind {
+	return SCRAP_TRANSIENT_FILE
+}
+
+func (v *ScrapTransientFileResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *ScrapTransientFileResp) Unpack(r io.Reader) error {
 	return nil
 }
 

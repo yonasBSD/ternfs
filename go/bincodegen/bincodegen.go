@@ -1393,7 +1393,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SetDirectoryOwnerEntry{}),
 			reflect.TypeOf(msgs.SetDirectoryInfoEntry{}),
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeEntry{}),
-			reflect.TypeOf(msgs.SameShardHardFileUnlinkDEPRECATEDEntry{}),
+			reflect.TypeOf(msgs.ScrapTransientFileEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanCertifyEntry{}),
@@ -1656,6 +1656,11 @@ func main() {
 			0x15,
 			reflect.TypeOf(msgs.AddSpanLocationReq{}),
 			reflect.TypeOf(msgs.AddSpanLocationResp{}),
+		},
+		{
+			0x16,
+			reflect.TypeOf(msgs.ScrapTransientFileReq{}),
+			reflect.TypeOf(msgs.ScrapTransientFileResp{}),
 		},
 		{
 			0x0D,

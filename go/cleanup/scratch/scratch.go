@@ -51,6 +51,20 @@ func (f *lockedScratchFile) Unlock() {
 	f.locked = false
 	if f.clearOnUnlock {
 		f.log.Info("closing scratch file %v, reason: %s", f.id, f.clearReason)
+		resp := msgs.ScrapTransientFileResp{}
+		err := f.c.ShardRequest(
+			f.log,
+			f.shard,
+			&msgs.ScrapTransientFileReq{
+				Id:     f.id,
+				Cookie: f.cookie,
+			},
+			&resp,
+		)
+		if err != nil {
+			f.log.Info("failed to scrap transient file: %v", err)
+		}
+
 		f.clearOnUnlock = false
 		f.clearReason = ""
 		f.id = msgs.NULL_INODE_ID

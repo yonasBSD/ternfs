@@ -1266,7 +1266,7 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
-    EggsError _prepareSameShardHardFileUnlink(EggsTime time, const SameShardHardFileUnlinkReq& req, SameShardHardFileUnlinkEntry& entry) {
+    EggsError _prepareSameShardHardFileUnlink(EggsTime time, const SameShardHardFileUnlinkReq& req, SameShardHardFileUnlinkDEPRECATEDEntry& entry) {
         if (req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1625,7 +1625,7 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
-    EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, MakeFileTransientEntry& entry) {
+    EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, MakeFileTransientDEPRECATEDEntry& entry) {
         if (req.id.type() != InodeType::FILE && req.id.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1824,7 +1824,7 @@ struct ShardDBImpl {
             err = _prepareRemoveNonOwnedEdge(time, req.getRemoveNonOwnedEdge(), logEntryBody.setRemoveNonOwnedEdge());
             break;
         case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
-            err = _prepareSameShardHardFileUnlink(time, req.getSameShardHardFileUnlink(), logEntryBody.setSameShardHardFileUnlink());
+            err = _prepareSameShardHardFileUnlink(time, req.getSameShardHardFileUnlink(), logEntryBody.setSameShardHardFileUnlinkDEPRECATED());
             break;
         case ShardMessageKind::REMOVE_SPAN_INITIATE:
             err = _prepareRemoveSpanInitiate(time, req.getRemoveSpanInitiate(), logEntryBody.setRemoveSpanInitiate());
@@ -1856,7 +1856,7 @@ struct ShardDBImpl {
             err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());
             break;
         case ShardMessageKind::MAKE_FILE_TRANSIENT:
-            err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), logEntryBody.setMakeFileTransient());
+            err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), logEntryBody.setMakeFileTransientDEPRECATED());
             break;
         case ShardMessageKind::REMOVE_SPAN_CERTIFY:
             err = _prepareRemoveSpanCertify(time, req.getRemoveSpanCertify(), logEntryBody.setRemoveSpanCertify());
@@ -2749,7 +2749,7 @@ struct ShardDBImpl {
             v().setVersion(0);
             v().setFileSize(file().fileSize());
             v().setMtime(time);
-            v().setDeadline(time + _transientDeadlineInterval);
+            v().setDeadline(entry.deadlineTime);
             v().setLastSpanState(SpanState::CLEAN);
             v().setNoteDangerous(entry.name.ref());
             ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), v.toSlice()));
@@ -3323,7 +3323,7 @@ struct ShardDBImpl {
         transientFile().setVersion(0);
         transientFile().setFileSize(file().fileSize());
         transientFile().setMtime(time);
-        transientFile().setDeadline(time + _transientDeadlineInterval);
+        transientFile().setDeadline(entry.deadlineTime);
         transientFile().setLastSpanState(SpanState::CLEAN);
         transientFile().setNoteDangerous(entry.note.ref());
         ROCKS_DB_CHECKED(batch.Put(_transientCf, k.toSlice(), transientFile.toSlice()));
@@ -3850,6 +3850,18 @@ struct ShardDBImpl {
         case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
             err = _applyRemoveNonOwnedEdge(time, batch, logEntryBody.getRemoveNonOwnedEdge(), resp.setRemoveNonOwnedEdge());
             break;
+        case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
+            {
+                const auto& entryDEPRECATED = logEntryBody.getSameShardHardFileUnlinkDEPRECATED();
+                SameShardHardFileUnlinkEntry entry;
+                entry.ownerId = entryDEPRECATED.ownerId;
+                entry.targetId = entryDEPRECATED.targetId;
+                entry.creationTime = entryDEPRECATED.creationTime;
+                entry.name = entryDEPRECATED.name;
+                entry.deadlineTime = time + _transientDeadlineInterval;
+                err = _applySameShardHardFileUnlink(time, batch, entry, resp.setSameShardHardFileUnlink());
+                break;
+            }
         case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
             err = _applySameShardHardFileUnlink(time, batch, logEntryBody.getSameShardHardFileUnlink(), resp.setSameShardHardFileUnlink());
             break;
@@ -3893,6 +3905,16 @@ struct ShardDBImpl {
         case ShardLogEntryKind::ADD_SPAN_LOCATION:
             err = _applyAddSpanLocation(time, batch, logEntryBody.getAddSpanLocation(), resp.setAddSpanLocation());
             break;
+        case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
+            {
+                const auto& entryDEPRECATED = logEntryBody.getMakeFileTransientDEPRECATED();
+                MakeFileTransientEntry entry;
+                entry.id = entryDEPRECATED.id;
+                entry.note = entryDEPRECATED.note;
+                entry.deadlineTime = time + _transientDeadlineInterval;
+                err = _applyMakeFileTransient(time, batch, entry, resp.setMakeFileTransient());
+                break;
+            }
         case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
             err = _applyMakeFileTransient(time, batch, logEntryBody.getMakeFileTransient(), resp.setMakeFileTransient());
             break;

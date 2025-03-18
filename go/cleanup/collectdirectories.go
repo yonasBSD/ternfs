@@ -69,6 +69,7 @@ func applyPolicy(
 					CreationTime: edge.CreationTime,
 				}
 				err = c.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
+
 			}
 		} else {
 			// non-owned edge, we can just kill it without worrying about much.
@@ -81,7 +82,7 @@ func applyPolicy(
 			}
 			err = c.ShardRequest(log, dirId.Shard(), &req, &msgs.RemoveNonOwnedEdgeResp{})
 		}
-		if err != nil {
+		if err != nil && err != msgs.FILE_NOT_FOUND {
 			return false, fmt.Errorf("error while collecting edge %+v in directory %v: %w", edge, dirId, err)
 		}
 		atomic.AddUint64(&stats.CollectedEdges, 1)

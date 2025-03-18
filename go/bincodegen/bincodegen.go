@@ -1393,12 +1393,12 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SetDirectoryOwnerEntry{}),
 			reflect.TypeOf(msgs.SetDirectoryInfoEntry{}),
 			reflect.TypeOf(msgs.RemoveNonOwnedEdgeEntry{}),
-			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkDEPRECATEDEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanCertifyEntry{}),
 			reflect.TypeOf(msgs.AddInlineSpanEntry{}),
-			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
+			reflect.TypeOf(msgs.MakeFileTransientDEPRECATEDEntry{}),
 			reflect.TypeOf(msgs.RemoveSpanCertifyEntry{}),
 			reflect.TypeOf(msgs.RemoveOwnedSnapshotFileEdgeEntry{}),
 			reflect.TypeOf(msgs.SwapBlocksEntry{}),
@@ -1409,6 +1409,8 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SameDirectoryRenameSnapshotEntry{}),
 			reflect.TypeOf(msgs.AddSpanAtLocationInitiateEntry{}),
 			reflect.TypeOf(msgs.AddSpanLocationEntry{}),
+			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
+			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
 		},
 	)
 

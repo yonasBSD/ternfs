@@ -1838,11 +1838,19 @@ type RemoveNonOwnedEdgeEntry struct {
 	CreationTime EggsTime
 }
 
+type SameShardHardFileUnlinkDEPRECATEDEntry struct {
+	OwnerId      InodeId
+	TargetId     InodeId
+	Name         string
+	CreationTime EggsTime
+}
+
 type SameShardHardFileUnlinkEntry struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
 	CreationTime EggsTime
+	DeadlineTime EggsTime // Deadline for transient file
 }
 
 type RemoveSpanInitiateEntry struct {
@@ -1915,8 +1923,14 @@ type AddSpanCertifyEntry struct {
 	Proofs     []BlockProof
 }
 
+type MakeFileTransientDEPRECATEDEntry struct {
+	Id   InodeId
+	Note string
+}
+
 type MakeFileTransientEntry struct {
 	Id   InodeId
+	DeadlineTime EggsTime
 	Note string
 }
 

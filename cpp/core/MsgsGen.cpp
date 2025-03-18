@@ -10290,8 +10290,8 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         out << "REMOVE_NON_OWNED_EDGE";
         break;
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
-        out << "SAME_SHARD_HARD_FILE_UNLINK";
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
+        out << "SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED";
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         out << "REMOVE_SPAN_INITIATE";
@@ -10305,8 +10305,8 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         out << "ADD_INLINE_SPAN";
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
-        out << "MAKE_FILE_TRANSIENT";
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
+        out << "MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED";
         break;
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         out << "REMOVE_SPAN_CERTIFY";
@@ -10337,6 +10337,12 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err) {
         break;
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         out << "ADD_SPAN_LOCATION";
+        break;
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        out << "SAME_SHARD_HARD_FILE_UNLINK";
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        out << "MAKE_FILE_TRANSIENT";
         break;
     case ShardLogEntryKind::EMPTY:
         out << "EMPTY";
@@ -10698,33 +10704,33 @@ std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x) {
     return out;
 }
 
-void SameShardHardFileUnlinkEntry::pack(BincodeBuf& buf) const {
+void SameShardHardFileUnlinkDEPRECATEDEntry::pack(BincodeBuf& buf) const {
     ownerId.pack(buf);
     targetId.pack(buf);
     buf.packBytes(name);
     creationTime.pack(buf);
 }
-void SameShardHardFileUnlinkEntry::unpack(BincodeBuf& buf) {
+void SameShardHardFileUnlinkDEPRECATEDEntry::unpack(BincodeBuf& buf) {
     ownerId.unpack(buf);
     targetId.unpack(buf);
     buf.unpackBytes(name);
     creationTime.unpack(buf);
 }
-void SameShardHardFileUnlinkEntry::clear() {
+void SameShardHardFileUnlinkDEPRECATEDEntry::clear() {
     ownerId = InodeId();
     targetId = InodeId();
     name.clear();
     creationTime = EggsTime();
 }
-bool SameShardHardFileUnlinkEntry::operator==(const SameShardHardFileUnlinkEntry& rhs) const {
+bool SameShardHardFileUnlinkDEPRECATEDEntry::operator==(const SameShardHardFileUnlinkDEPRECATEDEntry& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
     if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x) {
-    out << "SameShardHardFileUnlinkEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkDEPRECATEDEntry& x) {
+    out << "SameShardHardFileUnlinkDEPRECATEDEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ")";
     return out;
 }
 
@@ -10868,25 +10874,25 @@ std::ostream& operator<<(std::ostream& out, const AddInlineSpanEntry& x) {
     return out;
 }
 
-void MakeFileTransientEntry::pack(BincodeBuf& buf) const {
+void MakeFileTransientDEPRECATEDEntry::pack(BincodeBuf& buf) const {
     id.pack(buf);
     buf.packBytes(note);
 }
-void MakeFileTransientEntry::unpack(BincodeBuf& buf) {
+void MakeFileTransientDEPRECATEDEntry::unpack(BincodeBuf& buf) {
     id.unpack(buf);
     buf.unpackBytes(note);
 }
-void MakeFileTransientEntry::clear() {
+void MakeFileTransientDEPRECATEDEntry::clear() {
     id = InodeId();
     note.clear();
 }
-bool MakeFileTransientEntry::operator==(const MakeFileTransientEntry& rhs) const {
+bool MakeFileTransientDEPRECATEDEntry::operator==(const MakeFileTransientDEPRECATEDEntry& rhs) const {
     if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
     if (note != rhs.note) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x) {
-    out << "MakeFileTransientEntry(" << "Id=" << x.id << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
+std::ostream& operator<<(std::ostream& out, const MakeFileTransientDEPRECATEDEntry& x) {
+    out << "MakeFileTransientDEPRECATEDEntry(" << "Id=" << x.id << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
     return out;
 }
 
@@ -11242,6 +11248,66 @@ std::ostream& operator<<(std::ostream& out, const AddSpanLocationEntry& x) {
     return out;
 }
 
+void SameShardHardFileUnlinkEntry::pack(BincodeBuf& buf) const {
+    ownerId.pack(buf);
+    targetId.pack(buf);
+    buf.packBytes(name);
+    creationTime.pack(buf);
+    deadlineTime.pack(buf);
+}
+void SameShardHardFileUnlinkEntry::unpack(BincodeBuf& buf) {
+    ownerId.unpack(buf);
+    targetId.unpack(buf);
+    buf.unpackBytes(name);
+    creationTime.unpack(buf);
+    deadlineTime.unpack(buf);
+}
+void SameShardHardFileUnlinkEntry::clear() {
+    ownerId = InodeId();
+    targetId = InodeId();
+    name.clear();
+    creationTime = EggsTime();
+    deadlineTime = EggsTime();
+}
+bool SameShardHardFileUnlinkEntry::operator==(const SameShardHardFileUnlinkEntry& rhs) const {
+    if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
+    if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
+    if (name != rhs.name) { return false; };
+    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x) {
+    out << "SameShardHardFileUnlinkEntry(" << "OwnerId=" << x.ownerId << ", " << "TargetId=" << x.targetId << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ", " << "CreationTime=" << x.creationTime << ", " << "DeadlineTime=" << x.deadlineTime << ")";
+    return out;
+}
+
+void MakeFileTransientEntry::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    deadlineTime.pack(buf);
+    buf.packBytes(note);
+}
+void MakeFileTransientEntry::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    deadlineTime.unpack(buf);
+    buf.unpackBytes(note);
+}
+void MakeFileTransientEntry::clear() {
+    id = InodeId();
+    deadlineTime = EggsTime();
+    note.clear();
+}
+bool MakeFileTransientEntry::operator==(const MakeFileTransientEntry& rhs) const {
+    if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
+    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    if (note != rhs.note) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x) {
+    out << "MakeFileTransientEntry(" << "Id=" << x.id << ", " << "DeadlineTime=" << x.deadlineTime << ", " << "Note=" << GoLangQuotedStringFmt(x.note.data(), x.note.size()) << ")";
+    return out;
+}
+
 const ConstructFileEntry& ShardLogEntryContainer::getConstructFile() const {
     ALWAYS_ASSERT(_kind == ShardLogEntryKind::CONSTRUCT_FILE, "%s != %s", _kind, ShardLogEntryKind::CONSTRUCT_FILE);
     return std::get<0>(_data);
@@ -11359,12 +11425,12 @@ RemoveNonOwnedEdgeEntry& ShardLogEntryContainer::setRemoveNonOwnedEdge() {
     auto& x = _data.emplace<12>();
     return x;
 }
-const SameShardHardFileUnlinkEntry& ShardLogEntryContainer::getSameShardHardFileUnlink() const {
-    ALWAYS_ASSERT(_kind == ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK, "%s != %s", _kind, ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK);
+const SameShardHardFileUnlinkDEPRECATEDEntry& ShardLogEntryContainer::getSameShardHardFileUnlinkDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED, "%s != %s", _kind, ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED);
     return std::get<13>(_data);
 }
-SameShardHardFileUnlinkEntry& ShardLogEntryContainer::setSameShardHardFileUnlink() {
-    _kind = ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK;
+SameShardHardFileUnlinkDEPRECATEDEntry& ShardLogEntryContainer::setSameShardHardFileUnlinkDEPRECATED() {
+    _kind = ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<13>();
     return x;
 }
@@ -11404,12 +11470,12 @@ AddInlineSpanEntry& ShardLogEntryContainer::setAddInlineSpan() {
     auto& x = _data.emplace<17>();
     return x;
 }
-const MakeFileTransientEntry& ShardLogEntryContainer::getMakeFileTransient() const {
-    ALWAYS_ASSERT(_kind == ShardLogEntryKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardLogEntryKind::MAKE_FILE_TRANSIENT);
+const MakeFileTransientDEPRECATEDEntry& ShardLogEntryContainer::getMakeFileTransientDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED, "%s != %s", _kind, ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED);
     return std::get<18>(_data);
 }
-MakeFileTransientEntry& ShardLogEntryContainer::setMakeFileTransient() {
-    _kind = ShardLogEntryKind::MAKE_FILE_TRANSIENT;
+MakeFileTransientDEPRECATEDEntry& ShardLogEntryContainer::setMakeFileTransientDEPRECATED() {
+    _kind = ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<18>();
     return x;
 }
@@ -11503,6 +11569,24 @@ AddSpanLocationEntry& ShardLogEntryContainer::setAddSpanLocation() {
     auto& x = _data.emplace<28>();
     return x;
 }
+const SameShardHardFileUnlinkEntry& ShardLogEntryContainer::getSameShardHardFileUnlink() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK, "%s != %s", _kind, ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK);
+    return std::get<29>(_data);
+}
+SameShardHardFileUnlinkEntry& ShardLogEntryContainer::setSameShardHardFileUnlink() {
+    _kind = ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK;
+    auto& x = _data.emplace<29>();
+    return x;
+}
+const MakeFileTransientEntry& ShardLogEntryContainer::getMakeFileTransient() const {
+    ALWAYS_ASSERT(_kind == ShardLogEntryKind::MAKE_FILE_TRANSIENT, "%s != %s", _kind, ShardLogEntryKind::MAKE_FILE_TRANSIENT);
+    return std::get<30>(_data);
+}
+MakeFileTransientEntry& ShardLogEntryContainer::setMakeFileTransient() {
+    _kind = ShardLogEntryKind::MAKE_FILE_TRANSIENT;
+    auto& x = _data.emplace<30>();
+    return x;
+}
 ShardLogEntryContainer::ShardLogEntryContainer() {
     clear();
 }
@@ -11559,8 +11643,8 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         setRemoveNonOwnedEdge() = other.getRemoveNonOwnedEdge();
         break;
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
-        setSameShardHardFileUnlink() = other.getSameShardHardFileUnlink();
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
+        setSameShardHardFileUnlinkDEPRECATED() = other.getSameShardHardFileUnlinkDEPRECATED();
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         setRemoveSpanInitiate() = other.getRemoveSpanInitiate();
@@ -11574,8 +11658,8 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         setAddInlineSpan() = other.getAddInlineSpan();
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
-        setMakeFileTransient() = other.getMakeFileTransient();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
+        setMakeFileTransientDEPRECATED() = other.getMakeFileTransientDEPRECATED();
         break;
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         setRemoveSpanCertify() = other.getRemoveSpanCertify();
@@ -11606,6 +11690,12 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
         break;
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         setAddSpanLocation() = other.getAddSpanLocation();
+        break;
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        setSameShardHardFileUnlink() = other.getSameShardHardFileUnlink();
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        setMakeFileTransient() = other.getMakeFileTransient();
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", other.kind());
@@ -11646,7 +11736,7 @@ size_t ShardLogEntryContainer::packedSize() const {
         return sizeof(ShardLogEntryKind) + std::get<11>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         return sizeof(ShardLogEntryKind) + std::get<12>(_data).packedSize();
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
         return sizeof(ShardLogEntryKind) + std::get<13>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         return sizeof(ShardLogEntryKind) + std::get<14>(_data).packedSize();
@@ -11656,7 +11746,7 @@ size_t ShardLogEntryContainer::packedSize() const {
         return sizeof(ShardLogEntryKind) + std::get<16>(_data).packedSize();
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         return sizeof(ShardLogEntryKind) + std::get<17>(_data).packedSize();
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
         return sizeof(ShardLogEntryKind) + std::get<18>(_data).packedSize();
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         return sizeof(ShardLogEntryKind) + std::get<19>(_data).packedSize();
@@ -11678,6 +11768,10 @@ size_t ShardLogEntryContainer::packedSize() const {
         return sizeof(ShardLogEntryKind) + std::get<27>(_data).packedSize();
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         return sizeof(ShardLogEntryKind) + std::get<28>(_data).packedSize();
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        return sizeof(ShardLogEntryKind) + std::get<29>(_data).packedSize();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        return sizeof(ShardLogEntryKind) + std::get<30>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -11725,7 +11819,7 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         std::get<12>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
         std::get<13>(_data).pack(buf);
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
@@ -11740,7 +11834,7 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         std::get<17>(_data).pack(buf);
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
         std::get<18>(_data).pack(buf);
         break;
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
@@ -11772,6 +11866,12 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
         break;
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         std::get<28>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        std::get<29>(_data).pack(buf);
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        std::get<30>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -11820,7 +11920,7 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf) {
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         _data.emplace<12>().unpack(buf);
         break;
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
         _data.emplace<13>().unpack(buf);
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
@@ -11835,7 +11935,7 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf) {
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
         _data.emplace<18>().unpack(buf);
         break;
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
@@ -11867,6 +11967,12 @@ void ShardLogEntryContainer::unpack(BincodeBuf& buf) {
         break;
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         _data.emplace<28>().unpack(buf);
+        break;
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        _data.emplace<29>().unpack(buf);
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        _data.emplace<30>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
@@ -11903,8 +12009,8 @@ bool ShardLogEntryContainer::operator==(const ShardLogEntryContainer& other) con
         return getSetDirectoryInfo() == other.getSetDirectoryInfo();
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         return getRemoveNonOwnedEdge() == other.getRemoveNonOwnedEdge();
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
-        return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
+        return getSameShardHardFileUnlinkDEPRECATED() == other.getSameShardHardFileUnlinkDEPRECATED();
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         return getRemoveSpanInitiate() == other.getRemoveSpanInitiate();
     case ShardLogEntryKind::ADD_SPAN_INITIATE:
@@ -11913,8 +12019,8 @@ bool ShardLogEntryContainer::operator==(const ShardLogEntryContainer& other) con
         return getAddSpanCertify() == other.getAddSpanCertify();
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         return getAddInlineSpan() == other.getAddInlineSpan();
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
-        return getMakeFileTransient() == other.getMakeFileTransient();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
+        return getMakeFileTransientDEPRECATED() == other.getMakeFileTransientDEPRECATED();
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         return getRemoveSpanCertify() == other.getRemoveSpanCertify();
     case ShardLogEntryKind::REMOVE_OWNED_SNAPSHOT_FILE_EDGE:
@@ -11935,6 +12041,10 @@ bool ShardLogEntryContainer::operator==(const ShardLogEntryContainer& other) con
         return getAddSpanAtLocationInitiate() == other.getAddSpanAtLocationInitiate();
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         return getAddSpanLocation() == other.getAddSpanLocation();
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        return getSameShardHardFileUnlink() == other.getSameShardHardFileUnlink();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        return getMakeFileTransient() == other.getMakeFileTransient();
     default:
         throw BINCODE_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
@@ -11981,8 +12091,8 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
     case ShardLogEntryKind::REMOVE_NON_OWNED_EDGE:
         out << x.getRemoveNonOwnedEdge();
         break;
-    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
-        out << x.getSameShardHardFileUnlink();
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED:
+        out << x.getSameShardHardFileUnlinkDEPRECATED();
         break;
     case ShardLogEntryKind::REMOVE_SPAN_INITIATE:
         out << x.getRemoveSpanInitiate();
@@ -11996,8 +12106,8 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
     case ShardLogEntryKind::ADD_INLINE_SPAN:
         out << x.getAddInlineSpan();
         break;
-    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
-        out << x.getMakeFileTransient();
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED:
+        out << x.getMakeFileTransientDEPRECATED();
         break;
     case ShardLogEntryKind::REMOVE_SPAN_CERTIFY:
         out << x.getRemoveSpanCertify();
@@ -12028,6 +12138,12 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         break;
     case ShardLogEntryKind::ADD_SPAN_LOCATION:
         out << x.getAddSpanLocation();
+        break;
+    case ShardLogEntryKind::SAME_SHARD_HARD_FILE_UNLINK:
+        out << x.getSameShardHardFileUnlink();
+        break;
+    case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
+        out << x.getMakeFileTransient();
         break;
     case ShardLogEntryKind::EMPTY:
         out << "EMPTY";

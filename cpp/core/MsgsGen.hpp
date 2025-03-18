@@ -5691,12 +5691,12 @@ enum class ShardLogEntryKind : uint16_t {
     SET_DIRECTORY_OWNER = 11,
     SET_DIRECTORY_INFO = 12,
     REMOVE_NON_OWNED_EDGE = 13,
-    SAME_SHARD_HARD_FILE_UNLINK = 14,
+    SAME_SHARD_HARD_FILE_UNLINK_DE_PR_EC_AT_ED = 14,
     REMOVE_SPAN_INITIATE = 15,
     ADD_SPAN_INITIATE = 16,
     ADD_SPAN_CERTIFY = 17,
     ADD_INLINE_SPAN = 18,
-    MAKE_FILE_TRANSIENT = 19,
+    MAKE_FILE_TRANSIENT_DE_PR_EC_AT_ED = 19,
     REMOVE_SPAN_CERTIFY = 20,
     REMOVE_OWNED_SNAPSHOT_FILE_EDGE = 21,
     SWAP_BLOCKS = 22,
@@ -5707,6 +5707,8 @@ enum class ShardLogEntryKind : uint16_t {
     SAME_DIRECTORY_RENAME_SNAPSHOT = 27,
     ADD_SPAN_AT_LOCATION_INITIATE = 28,
     ADD_SPAN_LOCATION = 29,
+    SAME_SHARD_HARD_FILE_UNLINK = 30,
+    MAKE_FILE_TRANSIENT = 31,
     EMPTY = 255,
 };
 
@@ -6017,7 +6019,7 @@ struct RemoveNonOwnedEdgeEntry {
 
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x);
 
-struct SameShardHardFileUnlinkEntry {
+struct SameShardHardFileUnlinkDEPRECATEDEntry {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
@@ -6025,7 +6027,7 @@ struct SameShardHardFileUnlinkEntry {
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
-    SameShardHardFileUnlinkEntry() { clear(); }
+    SameShardHardFileUnlinkDEPRECATEDEntry() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -6037,10 +6039,10 @@ struct SameShardHardFileUnlinkEntry {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const SameShardHardFileUnlinkEntry&rhs) const;
+    bool operator==(const SameShardHardFileUnlinkDEPRECATEDEntry&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x);
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkDEPRECATEDEntry& x);
 
 struct RemoveSpanInitiateEntry {
     InodeId fileId;
@@ -6152,13 +6154,13 @@ struct AddInlineSpanEntry {
 
 std::ostream& operator<<(std::ostream& out, const AddInlineSpanEntry& x);
 
-struct MakeFileTransientEntry {
+struct MakeFileTransientDEPRECATEDEntry {
     InodeId id;
     BincodeBytes note;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + note
 
-    MakeFileTransientEntry() { clear(); }
+    MakeFileTransientDEPRECATEDEntry() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -6168,10 +6170,10 @@ struct MakeFileTransientEntry {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const MakeFileTransientEntry&rhs) const;
+    bool operator==(const MakeFileTransientDEPRECATEDEntry&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x);
+std::ostream& operator<<(std::ostream& out, const MakeFileTransientDEPRECATEDEntry& x);
 
 struct RemoveSpanCertifyEntry {
     InodeId fileId;
@@ -6449,11 +6451,61 @@ struct AddSpanLocationEntry {
 
 std::ostream& operator<<(std::ostream& out, const AddSpanLocationEntry& x);
 
+struct SameShardHardFileUnlinkEntry {
+    InodeId ownerId;
+    InodeId targetId;
+    BincodeBytes name;
+    EggsTime creationTime;
+    EggsTime deadlineTime;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // ownerId + targetId + name + creationTime + deadlineTime
+
+    SameShardHardFileUnlinkEntry() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // ownerId
+        _size += 8; // targetId
+        _size += name.packedSize(); // name
+        _size += 8; // creationTime
+        _size += 8; // deadlineTime
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SameShardHardFileUnlinkEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x);
+
+struct MakeFileTransientEntry {
+    InodeId id;
+    EggsTime deadlineTime;
+    BincodeBytes note;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // id + deadlineTime + note
+
+    MakeFileTransientEntry() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // id
+        _size += 8; // deadlineTime
+        _size += note.packedSize(); // note
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const MakeFileTransientEntry&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const MakeFileTransientEntry& x);
+
 struct ShardLogEntryContainer {
 private:
-    static constexpr std::array<size_t,29> _staticSizes = {ConstructFileEntry::STATIC_SIZE, LinkFileEntry::STATIC_SIZE, SameDirectoryRenameEntry::STATIC_SIZE, SoftUnlinkFileEntry::STATIC_SIZE, CreateDirectoryInodeEntry::STATIC_SIZE, CreateLockedCurrentEdgeEntry::STATIC_SIZE, UnlockCurrentEdgeEntry::STATIC_SIZE, LockCurrentEdgeEntry::STATIC_SIZE, RemoveDirectoryOwnerEntry::STATIC_SIZE, RemoveInodeEntry::STATIC_SIZE, SetDirectoryOwnerEntry::STATIC_SIZE, SetDirectoryInfoEntry::STATIC_SIZE, RemoveNonOwnedEdgeEntry::STATIC_SIZE, SameShardHardFileUnlinkEntry::STATIC_SIZE, RemoveSpanInitiateEntry::STATIC_SIZE, AddSpanInitiateEntry::STATIC_SIZE, AddSpanCertifyEntry::STATIC_SIZE, AddInlineSpanEntry::STATIC_SIZE, MakeFileTransientEntry::STATIC_SIZE, RemoveSpanCertifyEntry::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeEntry::STATIC_SIZE, SwapBlocksEntry::STATIC_SIZE, MoveSpanEntry::STATIC_SIZE, SetTimeEntry::STATIC_SIZE, RemoveZeroBlockServiceFilesEntry::STATIC_SIZE, SwapSpansEntry::STATIC_SIZE, SameDirectoryRenameSnapshotEntry::STATIC_SIZE, AddSpanAtLocationInitiateEntry::STATIC_SIZE, AddSpanLocationEntry::STATIC_SIZE};
+    static constexpr std::array<size_t,31> _staticSizes = {ConstructFileEntry::STATIC_SIZE, LinkFileEntry::STATIC_SIZE, SameDirectoryRenameEntry::STATIC_SIZE, SoftUnlinkFileEntry::STATIC_SIZE, CreateDirectoryInodeEntry::STATIC_SIZE, CreateLockedCurrentEdgeEntry::STATIC_SIZE, UnlockCurrentEdgeEntry::STATIC_SIZE, LockCurrentEdgeEntry::STATIC_SIZE, RemoveDirectoryOwnerEntry::STATIC_SIZE, RemoveInodeEntry::STATIC_SIZE, SetDirectoryOwnerEntry::STATIC_SIZE, SetDirectoryInfoEntry::STATIC_SIZE, RemoveNonOwnedEdgeEntry::STATIC_SIZE, SameShardHardFileUnlinkDEPRECATEDEntry::STATIC_SIZE, RemoveSpanInitiateEntry::STATIC_SIZE, AddSpanInitiateEntry::STATIC_SIZE, AddSpanCertifyEntry::STATIC_SIZE, AddInlineSpanEntry::STATIC_SIZE, MakeFileTransientDEPRECATEDEntry::STATIC_SIZE, RemoveSpanCertifyEntry::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeEntry::STATIC_SIZE, SwapBlocksEntry::STATIC_SIZE, MoveSpanEntry::STATIC_SIZE, SetTimeEntry::STATIC_SIZE, RemoveZeroBlockServiceFilesEntry::STATIC_SIZE, SwapSpansEntry::STATIC_SIZE, SameDirectoryRenameSnapshotEntry::STATIC_SIZE, AddSpanAtLocationInitiateEntry::STATIC_SIZE, AddSpanLocationEntry::STATIC_SIZE, SameShardHardFileUnlinkEntry::STATIC_SIZE, MakeFileTransientEntry::STATIC_SIZE};
     ShardLogEntryKind _kind = ShardLogEntryKind::EMPTY;
-    std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkEntry, RemoveSpanInitiateEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry, SwapSpansEntry, SameDirectoryRenameSnapshotEntry, AddSpanAtLocationInitiateEntry, AddSpanLocationEntry> _data;
+    std::variant<ConstructFileEntry, LinkFileEntry, SameDirectoryRenameEntry, SoftUnlinkFileEntry, CreateDirectoryInodeEntry, CreateLockedCurrentEdgeEntry, UnlockCurrentEdgeEntry, LockCurrentEdgeEntry, RemoveDirectoryOwnerEntry, RemoveInodeEntry, SetDirectoryOwnerEntry, SetDirectoryInfoEntry, RemoveNonOwnedEdgeEntry, SameShardHardFileUnlinkDEPRECATEDEntry, RemoveSpanInitiateEntry, AddSpanInitiateEntry, AddSpanCertifyEntry, AddInlineSpanEntry, MakeFileTransientDEPRECATEDEntry, RemoveSpanCertifyEntry, RemoveOwnedSnapshotFileEdgeEntry, SwapBlocksEntry, MoveSpanEntry, SetTimeEntry, RemoveZeroBlockServiceFilesEntry, SwapSpansEntry, SameDirectoryRenameSnapshotEntry, AddSpanAtLocationInitiateEntry, AddSpanLocationEntry, SameShardHardFileUnlinkEntry, MakeFileTransientEntry> _data;
 public:
     ShardLogEntryContainer();
     ShardLogEntryContainer(const ShardLogEntryContainer& other);
@@ -6489,8 +6541,8 @@ public:
     SetDirectoryInfoEntry& setSetDirectoryInfo();
     const RemoveNonOwnedEdgeEntry& getRemoveNonOwnedEdge() const;
     RemoveNonOwnedEdgeEntry& setRemoveNonOwnedEdge();
-    const SameShardHardFileUnlinkEntry& getSameShardHardFileUnlink() const;
-    SameShardHardFileUnlinkEntry& setSameShardHardFileUnlink();
+    const SameShardHardFileUnlinkDEPRECATEDEntry& getSameShardHardFileUnlinkDEPRECATED() const;
+    SameShardHardFileUnlinkDEPRECATEDEntry& setSameShardHardFileUnlinkDEPRECATED();
     const RemoveSpanInitiateEntry& getRemoveSpanInitiate() const;
     RemoveSpanInitiateEntry& setRemoveSpanInitiate();
     const AddSpanInitiateEntry& getAddSpanInitiate() const;
@@ -6499,8 +6551,8 @@ public:
     AddSpanCertifyEntry& setAddSpanCertify();
     const AddInlineSpanEntry& getAddInlineSpan() const;
     AddInlineSpanEntry& setAddInlineSpan();
-    const MakeFileTransientEntry& getMakeFileTransient() const;
-    MakeFileTransientEntry& setMakeFileTransient();
+    const MakeFileTransientDEPRECATEDEntry& getMakeFileTransientDEPRECATED() const;
+    MakeFileTransientDEPRECATEDEntry& setMakeFileTransientDEPRECATED();
     const RemoveSpanCertifyEntry& getRemoveSpanCertify() const;
     RemoveSpanCertifyEntry& setRemoveSpanCertify();
     const RemoveOwnedSnapshotFileEdgeEntry& getRemoveOwnedSnapshotFileEdge() const;
@@ -6521,6 +6573,10 @@ public:
     AddSpanAtLocationInitiateEntry& setAddSpanAtLocationInitiate();
     const AddSpanLocationEntry& getAddSpanLocation() const;
     AddSpanLocationEntry& setAddSpanLocation();
+    const SameShardHardFileUnlinkEntry& getSameShardHardFileUnlink() const;
+    SameShardHardFileUnlinkEntry& setSameShardHardFileUnlink();
+    const MakeFileTransientEntry& getMakeFileTransient() const;
+    MakeFileTransientEntry& setMakeFileTransient();
 
     void clear() { _kind = ShardLogEntryKind::EMPTY; };
 

@@ -1300,7 +1300,7 @@ struct CrossShardHardUnlinkFileStateMachine {
         if (err == EggsError::TIMEOUT) {
             makeTransient(true);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::FILE_NOT_FOUND);
             env.finish().setCrossShardHardUnlinkFile();
         }
     }

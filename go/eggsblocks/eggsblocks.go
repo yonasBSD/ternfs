@@ -785,6 +785,7 @@ func testWrite(
 
 const PAST_CUTOFF time.Duration = 22 * time.Hour
 const DEFAULT_FUTURE_CUTOFF time.Duration = 1 * time.Hour
+const WRITE_FUTURE_CUTOFF time.Duration = 5 * time.Minute
 
 const MAX_OBJECT_SIZE uint32 = 100 << 20
 
@@ -1017,7 +1018,7 @@ func handleSingleRequest(
 		}
 	case *msgs.WriteBlockReq:
 		pastCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
-		futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(futureCutoff)
+		futureCutoffTime := msgs.EggsTime(uint64(whichReq.BlockId)).Time().Add(WRITE_FUTURE_CUTOFF)
 		now := time.Now()
 		if now.Before(pastCutoffTime) {
 			panic(fmt.Errorf("block %v is in the future! (now=%v, pastCutoffTime=%v)", whichReq.BlockId, now, pastCutoffTime))
@@ -1201,7 +1202,7 @@ func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			if requests*uint64(env.ioAlertPercent) < ioErrors*100 {
 				log.RaiseNC(&bs.ioErrorsAlert, "block service %v had %v ioErrors from %v requests in the last 5 minutes which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
 				log.Info("decommissioning block service %v", bs.cachedInfo.Id)
-				env.shuckleConn.Request(&msgs.DecommissionBlockServiceReq{Id:bs.cachedInfo.Id})
+				env.shuckleConn.Request(&msgs.DecommissionBlockServiceReq{Id: bs.cachedInfo.Id})
 			} else {
 				log.ClearNC(&bs.ioErrorsAlert)
 			}

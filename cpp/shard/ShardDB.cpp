@@ -1266,7 +1266,7 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
-    EggsError _prepareSameShardHardFileUnlink(EggsTime time, const SameShardHardFileUnlinkReq& req, SameShardHardFileUnlinkDEPRECATEDEntry& entry) {
+    EggsError _prepareSameShardHardFileUnlink(EggsTime time, const SameShardHardFileUnlinkReq& req, SameShardHardFileUnlinkEntry& entry) {
         if (req.ownerId.type() != InodeType::DIRECTORY) {
             return EggsError::TYPE_IS_NOT_DIRECTORY;
         }
@@ -1280,6 +1280,7 @@ struct ShardDBImpl {
         entry.targetId = req.targetId;
         entry.name = req.name;
         entry.creationTime = req.creationTime;
+        entry.deadlineTime = time;
         return EggsError::NO_ERROR;
     }
 
@@ -1625,7 +1626,7 @@ struct ShardDBImpl {
         return EggsError::NO_ERROR;
     }
 
-    EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, MakeFileTransientDEPRECATEDEntry& entry) {
+    EggsError _prepareMakeFileTransient(EggsTime time, const MakeFileTransientReq& req, MakeFileTransientEntry& entry) {
         if (req.id.type() != InodeType::FILE && req.id.type() != InodeType::SYMLINK) {
             return EggsError::TYPE_IS_DIRECTORY;
         }
@@ -1634,6 +1635,7 @@ struct ShardDBImpl {
         }
         entry.id = req.id;
         entry.note = req.note;
+        entry.deadlineTime = time;
         return EggsError::NO_ERROR;
     }
 
@@ -1824,7 +1826,7 @@ struct ShardDBImpl {
             err = _prepareRemoveNonOwnedEdge(time, req.getRemoveNonOwnedEdge(), logEntryBody.setRemoveNonOwnedEdge());
             break;
         case ShardMessageKind::SAME_SHARD_HARD_FILE_UNLINK:
-            err = _prepareSameShardHardFileUnlink(time, req.getSameShardHardFileUnlink(), logEntryBody.setSameShardHardFileUnlinkDEPRECATED());
+            err = _prepareSameShardHardFileUnlink(time, req.getSameShardHardFileUnlink(), logEntryBody.setSameShardHardFileUnlink());
             break;
         case ShardMessageKind::REMOVE_SPAN_INITIATE:
             err = _prepareRemoveSpanInitiate(time, req.getRemoveSpanInitiate(), logEntryBody.setRemoveSpanInitiate());
@@ -1856,7 +1858,7 @@ struct ShardDBImpl {
             err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());
             break;
         case ShardMessageKind::MAKE_FILE_TRANSIENT:
-            err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), logEntryBody.setMakeFileTransientDEPRECATED());
+            err = _prepareMakeFileTransient(time, req.getMakeFileTransient(), logEntryBody.setMakeFileTransient());
             break;
         case ShardMessageKind::REMOVE_SPAN_CERTIFY:
             err = _prepareRemoveSpanCertify(time, req.getRemoveSpanCertify(), logEntryBody.setRemoveSpanCertify());

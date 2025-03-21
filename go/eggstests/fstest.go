@@ -290,6 +290,7 @@ func (c *posixFsTestHarness) createFile(
 func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) (files []string, dirs []string) {
 	log.LogStack(1, lib.DEBUG, "posix readdir for %v", dirFullPath)
 	fileInfo, err := os.ReadDir(dirFullPath)
+	log.LogStack(1, lib.DEBUG, "posix readdir for %v finished", dirFullPath)
 	if err != nil {
 		panic(err)
 	}
@@ -304,7 +305,7 @@ func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) 
 }
 
 func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string, size uint64, dataSeed uint64) {
-	log.Debug("checking data for file %v", fullFilePath)
+	log.Debug("checking data for file %v tid(%d)", fullFilePath, syscall.Gettid())
 	fullSize := int(size)
 	expectedData := c.bufPool.Get(fullSize)
 	defer c.bufPool.Put(expectedData)
@@ -860,10 +861,11 @@ func fsTestInternal[Id comparable](
 	// finally, check that our view of the world is the real view of the world
 	log.Info("checking directories/files")
 	errsChans := make([](chan any), opts.checkThreads)
-	for i := 0; i < opts.checkThreads; i++ {
+	for i := range opts.checkThreads {
 		errChan := make(chan any)
 		errsChans[i] = errChan
-		go func() {
+		go func(idx int, c chan any) {
+			log.Debug("starting checking thread %d", idx)
 			defer func() {
 				err := recover()
 				if err != nil {
@@ -872,13 +874,13 @@ func fsTestInternal[Id comparable](
 						log.Info(line)
 					}
 				}
-				errChan <- err
-
+				c <- err
 			}()
 			state.rootDir.check(log, harness)
-		}()
+			log.Debug("finished checking thread %d", idx)
+		}(i, errChan)
 	}
-	for i := 0; i < opts.checkThreads; i++ {
+	for i := range opts.checkThreads {
 		err := <-errsChans[i]
 		if err != nil {
 			panic(fmt.Errorf("checking thread %v failed: %v", i, err))

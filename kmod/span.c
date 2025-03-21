@@ -677,12 +677,16 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         struct eggsfs_block_service bs;
         eggsfs_get_block_service(block->bs, &bs);
         // Fetches a single cell from the block
-        int block_err = eggsfs_fetch_block_pages(
+
+        struct list_head pages;
+        INIT_LIST_HEAD(&pages);
+        int block_err = eggsfs_fetch_block_pages_with_crc(
             &block_done,
             (void*)st,
-            &bs, block->id, block_offset, span->cell_size
+            &bs, &pages, span->span.ino, block->id, block->crc, block_offset, span->cell_size
         );
         if (block_err) {
+            put_pages_list(&pages);
             atomic_set(&st->last_block_err, block_err);
             put_fetch_stripe(st);
             eggsfs_debug("loading block failed %d " LOG_STR, i, LOG_ARGS);
@@ -693,6 +697,7 @@ static int fetch_blocks(struct fetch_stripe_state* st) {
         } else {
             eggsfs_debug("loading block %d " LOG_STR, i, LOG_ARGS);
         }
+        BUG_ON(!list_empty(&pages));
     }
 
 #undef LOG_STR
@@ -935,7 +940,7 @@ static void init_fetch_span_pages(void* p) {
     }
 }
 
-struct fetch_span_pages_state *new_fetch_span_pages_state(struct eggsfs_block_span *block_span) {
+static struct fetch_span_pages_state* new_fetch_span_pages_state(struct eggsfs_block_span *block_span) {
     struct fetch_span_pages_state* st = (struct fetch_span_pages_state*)kmem_cache_alloc(eggsfs_fetch_span_pages_cachep, GFP_KERNEL);
     if (!st) { return st; }
 

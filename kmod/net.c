@@ -120,32 +120,45 @@ static void sock_readable(struct sock* sk) {
         }
         struct eggsfs_metadata_request* req;
         s16 shard;
-        spin_lock_bh(&s->lock); {
-            req = get_metadata_request(s, request_id);
-            if (req) {
-                BUG_ON(req->skb);
-                shard = req->shard; // We save this here because I think `req` might be gone by the time we trace below.
-                req->skb = skb;     // We could trace while holding the spinlock but I figured it's a bit better to not
-                skb = NULL;         // do that.
-                rb_erase(&req->node, &s->requests);
-                if (req->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR) {
-                    struct eggsfs_inode* getattr_enode = container_of(req, struct eggsfs_inode, getattr_async_req);
-                    bool was_pending = cancel_delayed_work_sync(&getattr_enode->getattr_async_work);
-                    if (was_pending) {
-                        schedule_work(&getattr_enode->getattr_async_work.work);
-                    }
-                } else {
-                    struct eggsfs_metadata_sync_request* sreq = container_of(req, struct eggsfs_metadata_sync_request, req);
-                    complete(&sreq->comp);
-                }
+
+        // We want to remove the request quickly and not call completions while holding the lock
+        // Completions functions also remove from the rb_tree but in a safe maner using eggsfs_metadata_remove_request
+        spin_lock_bh(&s->lock);
+        req = get_metadata_request(s, request_id);
+        struct eggsfs_inode* getattr_enode = NULL;
+        if (req) {
+            BUG_ON(req->skb);
+            shard = req->shard; // We save this here because I think `req` might be gone by the time we trace below.
+            req->skb = skb;     // We could trace while holding the spinlock but I figured it's a bit better to not
+            skb = NULL;         // do that.
+            rb_erase(&req->node, &s->requests);
+            if (req->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR) {
+                getattr_enode = container_of(req, struct eggsfs_inode, getattr_async_req);
+                // we must ihold it as it could timeout and be freed before we get to it.
+                ihold(&getattr_enode->inode);
             }
-        } spin_unlock_bh(&s->lock);
-        if (!req) {
-            eggsfs_debug("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
-        } else {
+        }
+        spin_unlock_bh(&s->lock);
+        if (req) {
+            if (getattr_enode) {
+                // We try to cancel the timeout. If we succeed we immediately need to schedule completion.
+                // If we failed we timed out anyway. In this case skb will not leak as it's protected
+                // in completion function by removing the request from the rb_tree
+                bool was_pending = cancel_delayed_work_sync(&getattr_enode->getattr_async_work);
+                if (was_pending) {
+                    schedule_work(&getattr_enode->getattr_async_work.work);
+                }
+                iput(&getattr_enode->inode);
+            } else {
+                struct eggsfs_metadata_sync_request* sreq = container_of(req, struct eggsfs_metadata_sync_request, req);
+                complete(&sreq->comp);
+            }
             struct sockaddr_in addr = {0};
             trace_eggsfs_metadata_request(&addr, request_id, 0, shard, kind, 0, resp_len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
+        } else {
+            eggsfs_debug("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
         }
+
         if (skb) {
 drop_skb:
             kfree_skb(skb);
@@ -317,9 +330,15 @@ out_err_no_latency:
         trace_eggsfs_metadata_request(&addr, req->request_id, 0, -2, kind, 0, 0, EGGSFS_METADATA_REQUEST_DONE, err);
     }
 out_err_no_trace:
-    spin_lock_bh(&sock->lock);
-    rb_erase(&req->node, &sock->requests);
-    spin_unlock_bh(&sock->lock);
+    // it is very important we search and remove request rather than just remove from the tree by node
+    // this could be called after timeout and we might race with removal happening from socket callback
+    eggsfs_metadata_remove_request(sock, req->request_id);
+    // Free the skb if it's set. It is possible request got completed and skb set between we gave up on completion and
+    // came here to remove the request.
+    if (req->skb) {
+        kfree_skb(req->skb);
+        req->skb = NULL;
+    }
     return err;
 }
 

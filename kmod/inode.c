@@ -172,6 +172,10 @@ static void getattr_async_complete(struct work_struct* work) {
     }
     // we might as well release it now, we are holding getattr_update_latch
     eggsfs_latch_release(&enode->getattr_update_init_latch, seqno);
+
+    // we need to remove the request first before checking if we have buffer or not otherwise buffer could be set after we check and we would leak buffer
+    eggsfs_metadata_remove_request(&((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info)->sock, enode->getattr_async_req.request_id);
+
     // if we have a buffer, we're done, otherwise it's a timeout
     if (enode->getattr_async_req.skb) {
         int err;
@@ -231,7 +235,7 @@ static void getattr_async_complete(struct work_struct* work) {
             smp_store_release(&enode->getattr_expiry, expiry);
         }
     }
-    eggsfs_metadata_remove_request(&((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info)->sock, enode->getattr_async_req.request_id);
+
     // And put inode, release latch ordering is not important in this case but it's good practice to release references/locks in reverse order of acquisition
     iput(&enode->inode);
     eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);

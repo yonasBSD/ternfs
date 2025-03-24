@@ -341,6 +341,12 @@ out_err_no_trace:
     // Free the skb if it's set. It is possible request got completed and skb set between we gave up on completion and
     // came here to remove the request.
     if (req->skb) {
+        // if the skb is set then completion is either set or will be set prompty. we need to wait for it or we risk
+        // use after free for completion
+        // we should not hit this code path for async requests. they dont retry the same way
+        BUG_ON(req->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR);
+        struct eggsfs_metadata_sync_request* sreq = container_of(req, struct eggsfs_metadata_sync_request, req);
+        wait_for_completion(&sreq->comp);
         kfree_skb(req->skb);
         req->skb = NULL;
     }

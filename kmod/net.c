@@ -187,6 +187,11 @@ int eggsfs_init_shard_socket(struct eggsfs_metadata_socket* s) {
     err = sock_create_kern(&init_net, PF_INET, SOCK_DGRAM, IPPROTO_UDP, &s->sock);
     if (err) { goto out_err; }
 
+    int new_rcvbuf_size = 1024 * 1024;
+    int optlen = sizeof(new_rcvbuf_size);
+    err = kernel_setsockopt(s->sock, SOL_SOCKET, SO_RCVBUF, (char *)&new_rcvbuf_size, optlen);
+    if (err) { goto out_socket; }
+
     write_lock_bh(&s->sock->sk->sk_callback_lock);
     BUG_ON(s->sock->sk->sk_user_data);
     s->sock->sk->sk_user_data = s;

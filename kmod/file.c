@@ -25,8 +25,6 @@ unsigned eggsfs_file_io_timeout_sec = 86400;
 
 unsigned eggsfs_max_write_span_attempts = 5;
 
-unsigned eggsfs_page_level_reads = 1;
-
 static struct kmem_cache* eggsfs_transient_span_cachep;
 
 struct eggsfs_transient_span {
@@ -984,8 +982,6 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     struct file* file = iocb->ki_filp;
     struct inode* inode = file->f_inode;
     struct eggsfs_inode* enode = EGGSFS_I(inode);
-    loff_t *ppos = &iocb->ki_pos;
-    ssize_t written = 0;
 
     if (unlikely(iocb->ki_flags & IOCB_DIRECT)) { return -ENOSYS; }
 
@@ -993,157 +989,7 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return err; }
 
-    if(eggsfs_page_level_reads == 1) {
-        struct eggsfs_span* span;
-        span = eggsfs_get_span(enode, *ppos);
-        if (span != NULL && span->storage_class != EGGSFS_INLINE_STORAGE) {
-            return generic_file_read_iter(iocb, to);
-        }
-    }
-    // Three-level loop:
-    // 1. Fetch spans
-    // 2. Fetch stripes
-    // 3. Fetch pages
-    eggsfs_debug("start of read loop, *ppos=%llu", *ppos);
-    int span_read_attempts = 0;
-
-    // Go through matching spans falling in the requested range
-    while (*ppos < inode->i_size && iov_iter_count(to)) {
-        struct eggsfs_span* span;
-    retry:
-        span = eggsfs_get_span(enode, *ppos);
-        if (IS_ERR(span)) {
-            written = PTR_ERR(span);
-            goto out_span;
-        }
-        if (span == NULL) { goto out_span; }
-        if (span->start%PAGE_SIZE != 0) {
-            eggsfs_warn("span start is not a multiple of page size %llu", span->start);
-            written = -EIO;
-            goto out_span;
-        }
-
-        eggsfs_debug("span start=%llu end=%llu", span->start, span->end);
-
-        u64 span_offset = *ppos - span->start;
-        u64 span_size = span->end - span->start;
-
-        if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-            struct eggsfs_inline_span* inline_span = EGGSFS_INLINE_SPAN(span);
-            size_t to_copy = span_size - span_offset;
-            eggsfs_debug("(inline) copying %lu, have %lu remaining", to_copy, iov_iter_count(to));
-            size_t copied =
-                copy_to_iter(inline_span->body + span_offset, inline_span->len - span_offset, to) +
-                iov_iter_zero(span_size - inline_span->len, to); // trailing zeros
-            if (copied < to_copy && iov_iter_count(to)) { written = -EFAULT; goto out_span; }
-            written += copied;
-            *ppos += copied;
-        } else {
-            struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-            if (block_span->cell_size%PAGE_SIZE != 0) {
-                eggsfs_warn("cell size not multiple of page size %u", block_span->cell_size);
-                written = -EIO;
-                goto out_span;
-            }
-            u32 stripe_size = eggsfs_stripe_size(block_span);
-            u32 num_stripe_pages = stripe_size/PAGE_SIZE;
-            struct eggsfs_stripe* stripe = NULL;
-            u64 span_data_end = min(
-                span->end,
-                span->start + (u64)stripe_size*block_span->num_stripes
-            );
-            eggsfs_debug("start: %llu, end: %llu, span_data_end: %llu", span->start, span->end, span_data_end);
-            bool stripe_read = false;
-
-            // Go through matching stripes in the span
-            while (*ppos < span_data_end && iov_iter_count(to)) {
-                if (stripe != NULL) { eggsfs_put_stripe(stripe, stripe_read); }
-                stripe_read = false;
-                stripe = eggsfs_get_stripe(block_span, span_offset);
-                BUG_ON(stripe == NULL); // We know we're within bounds
-                eggsfs_debug("got stripe %d at span_offset %llu", stripe->stripe_ix, span_offset);
-                if (IS_ERR(stripe)) {
-                    written = PTR_ERR(stripe);
-                    goto out_stripe;
-                }
-
-                u32 page_ix = (span_offset - stripe->stripe_ix*stripe_size)/PAGE_SIZE;
-                eggsfs_debug("page_ix %u of %u", page_ix, num_stripe_pages);
-                BUG_ON(page_ix >= num_stripe_pages);
-
-                // Go through matching blocks in the stripe
-                for (; page_ix < num_stripe_pages && (*ppos < span_data_end) && iov_iter_count(to); page_ix++) {
-                    struct page* page = eggsfs_get_stripe_page(stripe, page_ix);
-                    if (IS_ERR(page)) {
-                        if (span_read_attempts == 0) {
-                            // The idea behind this is that span structure changes extremely rarely: currently only
-                            // when we "defrag" files into a new span structure (note that span boundary never changes).
-                            // That's only needed when we change the block storage (e.g. HDD to FLASH) or when we tune
-                            // the parity/block sizes/etc.
-                            // A "proper" solution to this would probably to store a revision number or mtime for the
-                            // span itself. If this coarse solution ever becomes problematic we can change to that, which
-                            // requires a fairly annoying schema change.
-                            eggsfs_warn("reading stripe %lld in file %016lx failed with error %ld, retrying since it's the first attempt, and the span structure might have changed in the meantime", *ppos, enode->inode.i_ino, PTR_ERR(stripe));
-                            eggsfs_put_stripe(stripe, stripe_read);
-                            eggsfs_unlink_span(enode, span);
-                            goto retry;
-                        }
-                        written = PTR_ERR(page);
-                        goto out_stripe;
-                    }
-                    stripe_read = true;
-
-                    size_t to_copy = min((u64)PAGE_SIZE - (*ppos % PAGE_SIZE), span_data_end - *ppos);
-                    if (to_copy == 0) {
-                        eggsfs_warn("got 0 bytes to copy at pos %llu, span_data_end %llu", *ppos, span_data_end);
-                        BUG();
-                    }
-                    eggsfs_debug("(block) copying %lu, have %lu remaining", to_copy, iov_iter_count(to));
-                    size_t copied;
-                    // copy_page_to_iter below ends up calling copy_page_to_iter_pipe for spliced reads
-                    // which takes a reference to the our page using `get_page()` and also associates
-                    // `page_cache_pipe_buf_ops()` to manage the page (https://elixir.bootlin.com/linux/v5.4.249/source/lib/iov_iter.c#L400).
-                    // Later `splice_direct_to_actor()` trips over on https://elixir.bootlin.com/linux/v5.4.249/source/fs/splice.c#L977,
-                    // goes through all the pipe buffers (which contain references to our pages) and drops
-                    // references to the pages by calling https://elixir.bootlin.com/linux/v5.4.249/source/fs/splice.c#L92.
-                    // As a result nfs spliced reads return zero pages.
-                    if (unlikely(iov_iter_is_pipe(to))) {
-                        char* from_ptr = kmap_atomic(page);
-                        copied = copy_to_iter(from_ptr + *ppos % PAGE_SIZE, to_copy, to);
-                        kunmap_atomic(from_ptr);
-                    } else {
-                        copied = copy_page_to_iter(page, *ppos % PAGE_SIZE, to_copy, to);
-                    }
-                    eggsfs_debug("copied=%lu, remaining %lu", copied, iov_iter_count(to));
-                    if (copied < to_copy && iov_iter_count(to)) { written = -EFAULT; goto out_stripe; }
-                    written += copied;
-                    *ppos += copied;
-                    span_offset += copied;
-                }
-            }
-out_stripe:
-            if (stripe != NULL) { eggsfs_put_stripe(stripe, stripe_read); }
-            if (unlikely(written < 0)) { goto out_span; }
-
-            // trailing zeros
-            if (iov_iter_count(to)) {
-                size_t to_copy = span->end - span_data_end;
-                size_t copied = iov_iter_zero(to_copy, to);
-                eggsfs_debug("(block zeroes) copying %lu, have %lu remaining", to_copy, iov_iter_count(to));
-                if (copied < to_copy && iov_iter_count(to)) { written = -EFAULT; goto out_span; }
-                written += copied;
-                *ppos += copied;
-            }
-        }
-        span_read_attempts = 0;
-        eggsfs_debug("before loop end, remaining %lu", iov_iter_count(to));
-    }
-out_span:
-    eggsfs_debug("out of the loop, written=%ld", written);
-    if (unlikely(written < 0)) {
-        eggsfs_debug("reading failed, err=%ld", written);
-    }
-    return written;
+    return generic_file_read_iter(iocb, to);
 }
 
 void eggsfs_link_destructor(void* buf) {
@@ -1181,40 +1027,23 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
     } else {
         struct page* page;
         struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
-        if (eggsfs_page_level_reads == 1) {
-            LIST_HEAD(pages);
-            page = alloc_page(GFP_KERNEL);
-            if(IS_ERR(page)) {
-                err = PTR_ERR(page);
-                goto out_err;
-            }
-            page->index = 0;
-            list_add_tail(&page->lru, &pages);
-            LIST_HEAD(extra_pages);
-            err = eggsfs_span_get_pages(block_span, enode->inode.i_mapping, &pages, 1, &extra_pages);
-            if (err) goto out_err;
-            list_del(&page->lru);
-            put_pages_list(&pages);
-            put_pages_list(&extra_pages);
-            char* page_buf = kmap(page);
-            memcpy(buf, page_buf, size);
-            kunmap(page);
-        } else {
-            struct eggsfs_stripe* stripe = eggsfs_get_stripe(block_span, 0);
-            BUG_ON(stripe == NULL); // We know we're within bounds
-
-            struct page* page = eggsfs_get_stripe_page(stripe, 0);
-            BUG_ON(page == NULL);
-            if (IS_ERR(page)) {
-                err = PTR_ERR(page);
-                eggsfs_put_stripe(stripe, false);
-                goto out_err;
-            }
-            char* page_buf = kmap(page);
-            memcpy(buf, page_buf, size);
-            kunmap(page);
-            eggsfs_put_stripe(stripe, true);
+        LIST_HEAD(pages);
+        page = alloc_page(GFP_KERNEL);
+        if(IS_ERR(page)) {
+            err = PTR_ERR(page);
+            goto out_err;
         }
+        page->index = 0;
+        list_add_tail(&page->lru, &pages);
+        LIST_HEAD(extra_pages);
+        err = eggsfs_span_get_pages(block_span, enode->inode.i_mapping, &pages, 1, &extra_pages);
+        if (err) goto out_err;
+        list_del(&page->lru);
+        put_pages_list(&pages);
+        put_pages_list(&extra_pages);
+        char* page_buf = kmap(page);
+        memcpy(buf, page_buf, size);
+        kunmap(page);
     }
     buf[size] = '\0';
 
@@ -1281,7 +1110,7 @@ out_err:
 }
 
 // Files are not visible until they're fully persisted, so fsync is unnecessary.
-int file_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
+static int file_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
     return 0;
 }
 
@@ -1297,7 +1126,7 @@ const struct file_operations eggsfs_file_operations = {
     .fsync = file_fsync,
 };
 
-void process_file_pages(struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {
+static void process_file_pages(struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {
     struct page* page;
     int err;
     for(;;) {
@@ -1325,11 +1154,6 @@ void process_file_pages(struct address_space *mapping, struct list_head *pages, 
 static int file_readpages(struct file *filp, struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {
     int err = 0;
 
-    if (eggsfs_page_level_reads != 1) {
-        err = -ENOTSUPP;
-        goto out_err;
-    }
-
     struct inode* inode = file_inode(filp);
     struct eggsfs_inode* enode = EGGSFS_I(inode);
     loff_t off = page_offset(lru_to_page(pages));
@@ -1354,9 +1178,23 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         goto out_err;
     }
 
+    LIST_HEAD(extra_pages);
     if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-        err = -ENOTSUPP;
-        goto out_err;
+        struct eggsfs_inline_span* inline_span = EGGSFS_INLINE_SPAN(span);
+        struct page *page = lru_to_page(pages);
+        if (page == NULL) {
+            err = -EIO;
+            goto out_err;
+        }
+        list_del(&page->lru);
+        // rest is past end of file, just drop it
+        put_pages_list(pages);
+        // return page back
+        list_add_tail(&page->lru, pages);
+        BUG_ON(page_offset(page) != span->start);
+        char* dst = kmap_atomic(page);
+        memcpy(dst, inline_span->body, inline_span->len);
+        kunmap_atomic(dst);
     } else {
         struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
         if (block_span->cell_size%PAGE_SIZE != 0) {
@@ -1364,17 +1202,15 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
             err = -EIO;
             goto out_err;
         }
-
-        LIST_HEAD(extra_pages);
         err = eggsfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
         if (err) {
             eggsfs_warn("readahead of %d pages at off=%lld in file %016lx failed with error %d", nr_pages, off, enode->inode.i_ino, err);
             put_pages_list(&extra_pages);
             goto out_err;
         }
-        process_file_pages(mapping, pages, nr_pages);
-        process_file_pages(mapping, &extra_pages, 0);
     }
+    process_file_pages(mapping, pages, nr_pages);
+    process_file_pages(mapping, &extra_pages, 0);
     return 0;
 
 out_err:
@@ -1389,7 +1225,6 @@ static int file_readpage(struct file* filp, struct page* page) {
     int err = 0;
 
     struct eggsfs_span* span = NULL;
-    struct eggsfs_stripe* stripe = NULL;
     int span_read_attempts = 0;
 
     struct timespec64 start_ts = ns_to_timespec64(ktime_get_real_ns());
@@ -1431,55 +1266,34 @@ retry:
 
         struct page* stripe_page = NULL;
 
-        if (eggsfs_page_level_reads == 1) {
-            LIST_HEAD(pages);
-            stripe_page = alloc_page(GFP_KERNEL);
-            if(!stripe_page) {
-                err = -ENOMEM;
-                goto out;
-            }
-            stripe_page->index = page->index;
-            list_add_tail(&stripe_page->lru, &pages);
-            LIST_HEAD(extra_pages);
-            err = eggsfs_span_get_pages(block_span, filp->f_mapping, &pages, 1, &extra_pages);
-            process_file_pages(filp->f_mapping, &extra_pages, 0);
-            if (err) {
-                put_pages_list(&pages);
-                if (span_read_attempts == 0) {
-                    // see comment in read_file_iter for rationale here
-                    eggsfs_warn("reading page %lld in file %016lx failed with error %d, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, err);
-                    eggsfs_unlink_span(enode, span);
-                    span_read_attempts++;
-                    goto retry;
-                }
-                struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
-                if ((end_ts.tv_sec - start_ts.tv_sec) < eggsfs_file_io_timeout_sec) {
-                    goto retry;
-                }
-                eggsfs_warn("reading page at off=%lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
-                goto out;
-            }
-            list_del(&stripe_page->lru);
-        } else {
-            stripe = eggsfs_get_stripe(block_span, span_offset);
-            BUG_ON(stripe == NULL);
-            u64 stripe_offset = (span_offset - stripe->stripe_ix*eggsfs_stripe_size(block_span));
-            u32 page_ix = stripe_offset/PAGE_SIZE;
-            stripe_page = eggsfs_get_stripe_page(stripe, page_ix);
-            if (IS_ERR(stripe_page)) {
-                err = PTR_ERR(stripe_page);
-                if (span_read_attempts == 0) {
-                    // see comment in read_file_iter for rationale here
-                    eggsfs_warn("reading page %lld in file %016lx failed with error %d, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, err);
-                    eggsfs_put_stripe(stripe, true);
-                    eggsfs_unlink_span(enode, span);
-                    span_read_attempts++;
-                    goto retry;
-                }
-                eggsfs_warn("reading page %lld in file %016lx failed with error %d, retries exceeded, failing request.", off, enode->inode.i_ino, err);
-                goto out;
-            }
+        LIST_HEAD(pages);
+        stripe_page = alloc_page(GFP_KERNEL);
+        if(!stripe_page) {
+            err = -ENOMEM;
+            goto out;
         }
+        stripe_page->index = page->index;
+        list_add_tail(&stripe_page->lru, &pages);
+        LIST_HEAD(extra_pages);
+        err = eggsfs_span_get_pages(block_span, filp->f_mapping, &pages, 1, &extra_pages);
+        process_file_pages(filp->f_mapping, &extra_pages, 0);
+        if (err) {
+            put_pages_list(&pages);
+            if (span_read_attempts == 0) {
+                // see comment in read_file_iter for rationale here
+                eggsfs_warn("reading page %lld in file %016lx failed with error %d, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, err);
+                eggsfs_unlink_span(enode, span);
+                span_read_attempts++;
+                goto retry;
+            }
+            struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
+            if ((end_ts.tv_sec - start_ts.tv_sec) < eggsfs_file_io_timeout_sec) {
+                goto retry;
+            }
+            eggsfs_warn("reading page at off=%lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
+            goto out;
+        }
+        list_del(&stripe_page->lru);
 
         char* to_ptr = kmap_atomic(page);
         char* from_ptr = kmap_atomic(stripe_page);
@@ -1495,9 +1309,6 @@ out:
         SetPageError(page);
     } else {
         SetPageUptodate(page);
-    }
-    if (stripe) {
-        eggsfs_put_stripe(stripe, true);
     }
 
     unlock_page(page);

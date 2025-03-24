@@ -864,7 +864,6 @@ func main() {
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	kmod := flag.Bool("kmod", false, "Whether to mount with the kernel module, rather than FUSE. Note that the tests will not attempt to run the kernel module and load it, they'll just mount with 'mount -t eggsfs'.")
-	dropCachedSpansEvery := flag.Duration("drop-cached-spans-every", 0, "If set, will repeatedly drop the cached spans using 'sysctl fs.eggsfs.drop_cached_spans=1'")
 	dropFetchBlockSocketsEvery := flag.Duration("drop-fetch-block-sockets-every", 0, "")
 	dirRefreshTime := flag.Duration("dir-refresh-time", 0, "If set, it will set the kmod /proc/sys/fs/eggsfs/dir_refresh_time_ms")
 	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
@@ -1009,30 +1008,10 @@ func main() {
 		sysctl("fs.eggsfs.file_getattr_refresh_time_ms", "100")
 	}
 
-	// Start cached spans dropper
-	if *dropCachedSpansEvery != time.Duration(0) {
-		if !*kmod {
-			panic(fmt.Errorf("you provided -drop-cached-spans-every but you did't provide -kmod"))
-		}
-		fmt.Printf("will drop cached spans every %v\n", *dropCachedSpansEvery)
-		go func() {
-			for {
-				cmd := exec.Command("sudo", "/usr/sbin/sysctl", "fs.eggsfs.drop_cached_stripes=1")
-				cmd.Stdout = io.Discard
-				cmd.Stderr = io.Discard
-				if err := cmd.Run(); err != nil {
-					terminateChan <- err
-					return
-				}
-				time.Sleep(*dropCachedSpansEvery)
-			}
-		}()
-	}
-
 	// Start fetch block socket dropper
 	if *dropFetchBlockSocketsEvery != time.Duration(0) {
 		if !*kmod {
-			panic(fmt.Errorf("you provided -drop-cached-spans-every but you did't provide -kmod"))
+			panic(fmt.Errorf("you provided -drop-fetch-block-sockets-every but you did't provide -kmod"))
 		}
 		fmt.Printf("will drop fetch block sockets every %v\n", *dropFetchBlockSocketsEvery)
 		go func() {

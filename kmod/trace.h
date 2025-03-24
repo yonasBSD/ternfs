@@ -436,45 +436,6 @@ TRACE_EVENT(eggsfs_span_add,
     TP_printk("file_id=%016llx offset=%llu", __entry->file_id, __entry->offset)
 );
 
-#define EGGSFS_DROP_STRIPES_START 0
-#define EGGSFS_DROP_STRIPES_END 1
-
-TRACE_EVENT(eggsfs_drop_stripes,
-    TP_PROTO(const char* type, long mem_available, u64 cached_pages, u64 cached_stripes, u8 event, u64 examined_stripes, u64 dropped_pages, int err),
-    TP_ARGS(             type,      mem_available,     cached_pages,     cached_stripes,    event,     examined_stripes,     dropped_pages,     err),
-
-    TP_STRUCT__entry(
-        __field(const char*, type)
-        __field(long, mem_available)
-        __field(u64, cached_pages)
-        __field(u64, cached_stripes)
-        __field(u64, dropped_pages)
-        __field(u64, examined_stripes)
-        __field(int, err)
-        __field(u8, event)
-    ),
-    TP_fast_assign(
-        __entry->type = type;
-        __entry->mem_available = mem_available;
-        __entry->cached_pages = cached_pages;
-        __entry->cached_stripes = cached_stripes;
-        __entry->dropped_pages = dropped_pages;
-        __entry->examined_stripes = examined_stripes;
-        __entry->err = err;
-        __entry->event = event;
-    ),
-    TP_printk(
-        "type=%s mem_available=%ld cached_pages=%llu cached_stripes=%llu event=%s examined_stripes=%llu dropped_pages=%llu err=%d",
-        __entry->type, __entry->mem_available, __entry->cached_pages, __entry->cached_stripes,
-        __print_symbolic(
-            __entry->event,
-            { EGGSFS_DROP_STRIPES_START, "start" },
-            { EGGSFS_DROP_STRIPES_END, "end" }
-        ),
-        __entry->examined_stripes, __entry->dropped_pages,  __entry->err
-    )
-);
-
 TRACE_EVENT(eggsfs_get_span_enter,
     TP_PROTO(u64 file_id, u64 offset),
     TP_ARGS(     file_id,     offset),
@@ -504,87 +465,6 @@ TRACE_EVENT(eggsfs_get_span_exit,
         __entry->offset = offset;
     ),
     TP_printk("file_id=%016llx offset=%llu, err=%d", __entry->file_id, __entry->offset, __entry->err)
-);
-
-TRACE_EVENT(eggsfs_get_stripe_page_enter,
-    TP_PROTO(u64 file_id, u64 stripe_offset, u32 page_offset),
-    TP_ARGS(     file_id,     stripe_offset,     page_offset),
-
-    TP_STRUCT__entry(
-        __field(u64, file_id)
-        __field(u64, stripe_offset)
-        __field(u32, page_offset)
-    ),
-    TP_fast_assign(
-        __entry->file_id = file_id;
-        __entry->stripe_offset = stripe_offset;
-        __entry->page_offset = page_offset;
-    ),
-    TP_printk("file_id=%016llx stripe_offset=%llu page_offset=%u", __entry->file_id, __entry->stripe_offset, __entry->page_offset)
-);
-
-TRACE_EVENT(eggsfs_get_stripe_page_exit,
-    TP_PROTO(u64 file_id, u64 stripe_offset, u32 page_offset, int err),
-    TP_ARGS(     file_id,     stripe_offset,     page_offset,     err),
-
-    TP_STRUCT__entry(
-        __field(u64, file_id)
-        __field(u64, stripe_offset)
-        __field(u32, page_offset)
-        __field(int, err)
-    ),
-    TP_fast_assign(
-        __entry->file_id = file_id;
-        __entry->stripe_offset = stripe_offset;
-        __entry->page_offset = page_offset;
-        __entry->err = err;
-    ),
-    TP_printk("file_id=%016llx stripe_offset=%llu page_offset=%u err=%d", __entry->file_id, __entry->stripe_offset, __entry->page_offset, __entry->err)
-);
-
-#define EGGSFS_FETCH_STRIPE_START 0
-#define EGGSFS_FETCH_STRIPE_BLOCK_START 1
-#define EGGSFS_FETCH_STRIPE_BLOCK_DONE 2
-#define EGGSFS_FETCH_STRIPE_END 3
-#define EGGSFS_FETCH_STRIPE_FREE 4
-
-TRACE_EVENT(eggsfs_fetch_stripe,
-    TP_PROTO(u64 file_id, u64 span_offset, u8 stripe, u8 parity, bool prefetching, u8 event, s8 block, int err),
-    TP_ARGS(     file_id,     span_offset,    stripe,    parity,      prefetching,    event,    block,     err),
-
-    TP_STRUCT__entry(
-        __field(u64, file_id)
-        __field(u64, span_offset)
-        __field(int, err)
-        __field(s8, block) // negative = non-block event
-        __field(u8, stripe)
-        __field(bool, prefetching)
-        __field(u8, event)
-        __field(u8, parity)
-    ),
-    TP_fast_assign(
-        __entry->file_id = file_id;
-        __entry->span_offset = span_offset;
-        __entry->stripe = stripe;
-        __entry->prefetching = prefetching;
-        __entry->event = event;
-        __entry->err = err;
-        __entry->block = block;
-        __entry->parity = parity;
-    ),
-    TP_printk(
-        "file_id=%016llx span_offset=%llu stripe=%u D=%u P=%u prefetching=%d event=%s block=%d err=%d",
-        __entry->file_id, __entry->span_offset, __entry->stripe, __entry->parity&0xF, __entry->parity>>4, (int)__entry->prefetching,
-        __print_symbolic(
-            __entry->event,
-            { EGGSFS_FETCH_STRIPE_START, "start" },
-            { EGGSFS_FETCH_STRIPE_BLOCK_START, "block_start" },
-            { EGGSFS_FETCH_STRIPE_BLOCK_DONE, "block_done" },
-            { EGGSFS_FETCH_STRIPE_END, "end" },
-            { EGGSFS_FETCH_STRIPE_FREE, "free" }
-        ),
-        __entry->block, __entry->err
-    )
 );
 
 #define EGGSFS_UPSERT_BLOCKSERVICE_MATCH 0

@@ -74,16 +74,15 @@ dmesg_pid=$!
 # Trace metadata requests
 
 ssh -p 2223 -i image-key fmazzol@localhost "sudo sh -c 'echo 1 > /sys/kernel/tracing/events/eggsfs/eggsfs_metadata_request/enable'"
-ssh -p 2223 -i image-key fmazzol@localhost "sudo sh -c 'echo 1 > /sys/kernel/tracing/events/eggsfs/eggsfs_fetch_stripe/enable'"
 ssh -p 2223 -i image-key fmazzol@localhost "sudo cat /sys/kernel/tracing/trace_pipe" > trace &
 trace_pid=$!
 
 # Do not test migrations/scrubbing since we test this outside qemu anyway
 # (it's completely independent from the kmod code)
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -drop-cached-spans-every 100ms -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -shuckle-beacon-port 55556 -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
 
 echo 'Unmounting'
 timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"

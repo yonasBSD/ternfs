@@ -872,9 +872,9 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Dec
 	defer s.decomMutex.Unlock()
 	ld := time.Since(s.lastAutoDecom)
 	if ld < s.config.minAutoDecomInterval {
-		ll.RaiseAlert("rejecting automated decommissioning of blockservice %v: last decommissioned %v ago", req.Id, ld)
 		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
+
 
 	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
 	if err != nil {
@@ -887,7 +887,6 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Dec
 			decommedWithFiles = decommedWithFiles + 1
 		}
 		if decommedWithFiles >= s.config.maxDecommedWithFiles {
-			ll.RaiseAlert("rejecting automated decommissioning of blockservice %v: at least %d blockservices already decommissioned, but still have files", req.Id, decommedWithFiles)
 			return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 		}
 	}
@@ -1601,8 +1600,9 @@ func handleError(
 		return true
 	}
 
-	// we always raise an alert since this is almost always bad news in shuckle
-	log.RaiseAlertStack("", 1, "got unexpected error %v from %v", err, conn.RemoteAddr())
+	if err != msgs.AUTO_DECOMMISSION_FORBIDDEN {
+		log.RaiseAlertStack("", 1, "got unexpected error %v from %v", err, conn.RemoteAddr())
+	}
 
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
@@ -2911,7 +2911,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 				}
 				if len(nonReadableFailureDomains) > 0 {
 					if len(nonReadableFailureDomains) > 3 {
-						newAppType = lib.XMON_CRITICAL
+						newAppType = lib.XMON_DAYTIME
 					}
 					nonReadableFailureDomainAlertText += fmt.Sprintf("\nlocation %s : non-readable failure domains %v", loc.Name, nonReadableFailureDomains)
 				}

@@ -78,7 +78,7 @@ func handleLocalShards(ll *lib.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.
 }
 
 func handleLocalCdc(log *lib.Logger, s *state, req *msgs.LocalCdcReq) (msgs.ShuckleResponse, error) {
-	reqAtLocation := &msgs.CdcAtLocationReq{LocationId: 0}
+	reqAtLocation := &msgs.CdcAtLocationReq{LocationId: s.config.location}
 	resp, err := handleProxyRequest(log, s, reqAtLocation)
 	if err != nil {
 		return nil, err

@@ -272,12 +272,12 @@ func (s *state) selectNonReadableFailureDomains(locationId msgs.Location) ([]str
 }
 
 type shuckleConfig struct {
-	addrs                             msgs.AddrsInfo
-	minAutoDecomInterval              time.Duration
-	maxDecommedWithFiles              int
-	maxFailureDomainsPerShard         int
-	currentBlockServiceUpdateInterval time.Duration
-	blockServiceDelay                 time.Duration
+	addrs                                   msgs.AddrsInfo
+	minAutoDecomInterval                    time.Duration
+	maxNonReadableFailureDomainsPerLocation int
+	maxFailureDomainsPerShard               int
+	currentBlockServiceUpdateInterval       time.Duration
+	blockServiceDelay                       time.Duration
 }
 
 func newState(
@@ -875,20 +875,38 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Dec
 		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
 
-
-	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
+	blockServiceInfo, err := s.selectBlockServices(nil, &req.Id, 0, 0, msgs.Now(), false)
 	if err != nil {
 		return nil, err
 	}
 
-	decommedWithFiles := 0
-	for _, bs := range blockServices {
-		if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
-			decommedWithFiles = decommedWithFiles + 1
+	if len(blockServiceInfo) != 1 {
+		return nil, msgs.BLOCK_SERVICE_NOT_FOUND
+	}
+
+	bsInfo := blockServiceInfo[req.Id]
+	if bsInfo.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+		return &msgs.DecommissionBlockServiceResp{}, nil
+	}
+
+	nonReadableFailureDomains, err := s.selectNonReadableFailureDomains(bsInfo.LocationId)
+	if err != nil {
+		return nil, err
+	}
+	nonReadableFailureDomainsCount := len(nonReadableFailureDomains)
+	newFailureDomain := true
+	for _, fd := range nonReadableFailureDomains {
+		if fd == bsInfo.FailureDomain.String() {
+			newFailureDomain = false
+			break
 		}
-		if decommedWithFiles >= s.config.maxDecommedWithFiles {
-			return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
-		}
+	}
+	if newFailureDomain {
+		nonReadableFailureDomainsCount++
+	}
+
+	if nonReadableFailureDomainsCount >= s.config.maxNonReadableFailureDomainsPerLocation {
+		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
 
 	r := msgs.SetBlockServiceFlagsReq{
@@ -2713,7 +2731,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 				// we already know that decommissioned block services are gone
 				n("d_flag", msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED),
 				// if it was manually marked as non read/non write it's most likely being worked on. no point to alert
-				n("nr_nw_flags", msgs.EGGSFS_BLOCK_SERVICE_NO_READ | msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE),
+				n("nr_nw_flags", msgs.EGGSFS_BLOCK_SERVICE_NO_READ|msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE),
 			)
 			if err != nil {
 				ll.RaiseAlert("error selecting blockServices: %s", err)
@@ -2824,7 +2842,6 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	appType := lib.XMON_NEVER
 	nonReadableFailureDomainsAlert.SetAppType(appType)
 
-
 	for {
 		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
 		if err != nil {
@@ -2910,14 +2927,14 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 					continue
 				}
 				if len(nonReadableFailureDomains) > 0 {
-					if len(nonReadableFailureDomains) > 3 {
+					if len(nonReadableFailureDomains) > s.config.maxNonReadableFailureDomainsPerLocation {
 						newAppType = lib.XMON_DAYTIME
 					}
 					nonReadableFailureDomainAlertText += fmt.Sprintf("\nlocation %s : non-readable failure domains %v", loc.Name, nonReadableFailureDomains)
 				}
 			}
 			if nonReadableFailureDomainAlertText != "" {
-				if (appType != newAppType) {
+				if appType != newAppType {
 					log.ClearNC(nonReadableFailureDomainsAlert)
 					appType = newAppType
 					nonReadableFailureDomainsAlert.SetAppType(appType)
@@ -3121,7 +3138,7 @@ func main() {
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	blockServiceDelay := flag.Duration("block-service-delay", 0*time.Minute, "How long to wait before starting to use new block services")
 	minDecomInterval := flag.Duration("min-decom-interval", 2*time.Hour, "Minimum interval between calls to decommission blockservices by automation")
-	maxDecommedWithFiles := flag.Int("max-decommed-with-files", 3, "Maximum number of migrating decommissioned blockservices before rejecting further automated decommissions")
+	maxDecommedWithFiles := flag.Int("max-non-readable-failure-domains", 3, "Maximum number of non readable failure domains before alerting and rejecting further automated decommissions")
 	maxFailureDomainsPerShard := flag.Int("max-failure-domains-per-shard", 28, "Maximum number of failure domains per storage class that shards use for assigning blocks at a single point in time")
 	currentBlockServiceUpdateInterval := flag.Duration("current-block-service-update-interval", 30*time.Minute, "Maximum interval between re-calculating current block services")
 	scriptsJs := flag.String("scripts-js", "", "")
@@ -3232,12 +3249,12 @@ func main() {
 	}
 
 	config := &shuckleConfig{
-		addrs:                             msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
-		minAutoDecomInterval:              *minDecomInterval,
-		maxDecommedWithFiles:              *maxDecommedWithFiles,
-		maxFailureDomainsPerShard:         *maxFailureDomainsPerShard,
-		currentBlockServiceUpdateInterval: *currentBlockServiceUpdateInterval,
-		blockServiceDelay:                 *blockServiceDelay,
+		addrs:                                   msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
+		minAutoDecomInterval:                    *minDecomInterval,
+		maxNonReadableFailureDomainsPerLocation: *maxDecommedWithFiles,
+		maxFailureDomainsPerShard:               *maxFailureDomainsPerShard,
+		currentBlockServiceUpdateInterval:       *currentBlockServiceUpdateInterval,
+		blockServiceDelay:                       *blockServiceDelay,
 	}
 	state, err := newState(log, db, config)
 	if err != nil {

@@ -2687,11 +2687,17 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	staleCDCAlert := ll.NewNCAlert(0)
 	staleCDCAlert.SetAppType(lib.XMON_DAYTIME)
 
+	gracePeriodThreshold := uint64(msgs.Now())
+
 	for {
 		<-ticker.C
 
 		now := msgs.Now()
 		thresh := uint64(now) - uint64(staleDelta.Nanoseconds())
+
+		if thresh < gracePeriodThreshold {
+			continue
+		}
 
 		formatLastSeen := func(t msgs.EggsTime) string {
 			return formatNanos(uint64(now) - uint64(t))

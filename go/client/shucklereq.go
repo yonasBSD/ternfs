@@ -301,7 +301,11 @@ ReconnectBegin:
 		tcpConn.Close()
 		return nil, err
 	}
-	if err = tcpConn.SetKeepAlivePeriod(c.timeout.ReconnectTimeout.Overall); err != nil {
+	keepAlivePeriod := c.timeout.ReconnectTimeout.Overall
+	if keepAlivePeriod == 0 {
+		keepAlivePeriod = c.timeout.RequestTimeout
+	}
+	if err = tcpConn.SetKeepAlivePeriod(keepAlivePeriod); err != nil {
 		c.log.RaiseAlert("could not set keepalive period on connection to shuckle: %v", err)
 		tcpConn.Close()
 		return nil, err

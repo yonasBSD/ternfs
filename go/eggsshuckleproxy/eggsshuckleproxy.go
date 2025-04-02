@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"xtx/eggsfs/bincode"
@@ -48,12 +49,6 @@ func newState(
 	}
 
 	return st
-}
-
-func (st *state) resetTimings() {
-	for _, t := range st.counters {
-		t.Reset()
-	}
 }
 
 func handleLocalChangedBlockServices(ll *lib.Logger, s *state, req *msgs.LocalChangedBlockServicesReq) (*msgs.LocalChangedBlockServicesResp, error) {
@@ -242,9 +237,6 @@ func handleError(
 		return true
 	}
 
-	// we always raise an alert since this is almost always bad news in shuckle
-	log.RaiseAlertStack("", 1, "got unexpected error %v from %v", err, conn.RemoteAddr())
-
 	// attempt to say goodbye, ignore errors
 	if eggsErr, isEggsErr := err.(msgs.EggsError); isEggsErr {
 		writeShuckleResponseError(log, conn, eggsErr)
@@ -344,7 +336,12 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 	defer conn.Close()
 
 	for {
+		now := time.Now()
+		reqDeadline := now.Add(client.DefaultShuckleTimeout.RequestTimeout)
+		conn.SetReadDeadline(now.Add(client.DefaultShuckleTimeout.ReconnectTimeout.Overall))
 		req, err := readShuckleRequest(log, conn)
+		conn.SetReadDeadline(time.Time{})
+
 		if err != nil {
 			if handleError(log, conn, err) {
 				return
@@ -360,11 +357,13 @@ func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
 			}
 		} else {
 			log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
+			conn.SetWriteDeadline(reqDeadline)
 			if err := writeShuckleResponse(log, conn, resp); err != nil {
 				if handleError(log, conn, err) {
 					return
 				}
 			}
+			conn.SetWriteDeadline(time.Time{})
 		}
 	}
 }
@@ -418,6 +417,7 @@ func main() {
 	shuckleAddress := flag.String("shuckle-address", "", "Shuckle address to connect to.")
 	location := flag.Uint("location", 0, "Location id for this shuckle proxy.")
 	numHandlers := flag.Uint("num-handlers", 100, "Number of shuckle connections to open.")
+	maxConnections := flag.Uint("max-connections", 4000, "Maximum number of connections to accept.")
 	mtu := flag.Uint64("mtu", 0, "")
 
 	flag.Parse()
@@ -476,6 +476,7 @@ func main() {
 	log.Info("  location = %d", *location)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  logLevel = %v", level)
+	log.Info("  maxConnections = %d", *maxConnections)
 	log.Info("  mtu = %v", *mtu)
 
 
@@ -525,6 +526,7 @@ func main() {
 
 	terminateChan := make(chan any)
 
+	var activeConnections int64
 	startBincodeHandler := func(listener net.Listener) {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -534,8 +536,16 @@ func main() {
 					terminateChan <- err
 					return
 				}
+				if (atomic.AddInt64(&activeConnections, 1) > int64(*maxConnections)) {
+					conn.Close()
+					atomic.AddInt64(&activeConnections, -1)
+					continue
+				}
 				go func() {
-					defer func() { lib.HandleRecoverPanic(log, recover()) }()
+					defer func() {
+						atomic.AddInt64(&activeConnections, -1)
+						lib.HandleRecoverPanic(log, recover())
+					}()
 					handleRequest(log, state, conn.(*net.TCPConn))
 				}()
 			}

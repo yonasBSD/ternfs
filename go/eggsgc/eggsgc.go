@@ -80,7 +80,7 @@ func main() {
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
-	numShuckleHandlers := flag.Uint("num-shuckle-handlers", 100, "Number of parallel shuckle requests")
+	numShuckleHandlers := flag.Uint("num-shuckle-handlers", 10, "Number of parallel shuckle requests")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
@@ -171,8 +171,8 @@ func main() {
 	}
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
-	shuckleTimeouts := &client.DefaultShuckleTimeout
-	shuckleTimeouts.Overall = 0
+	shuckleTimeouts := client.DefaultShuckleTimeout
+	shuckleTimeouts.ReconnectTimeout.Overall = 0
 	shardTimeouts := &client.DefaultShardTimeout
 	shardTimeouts.Initial = 500 * time.Millisecond
 	shardTimeouts.Overall = 0
@@ -186,7 +186,7 @@ func main() {
 	blockTimeouts.Overall = 10 * time.Minute
 
 	dirInfoCache := client.NewDirInfoCache()
-	c, err := client.NewClient(log, shuckleTimeouts, *shuckleAddress)
+	c, err := client.NewClient(log, &shuckleTimeouts, *shuckleAddress)
 	if err != nil {
 		panic(err)
 	}

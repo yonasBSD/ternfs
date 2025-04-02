@@ -1025,7 +1025,7 @@ func (c *Client) refreshAddrs(log *lib.Logger) error {
 // also refreshes the shard/cdc infos every minute.
 func NewClient(
 	log *lib.Logger,
-	shuckleTimeout *lib.ReqTimeouts,
+	shuckleTimeout *ShuckleTimeouts,
 	shuckleAddress string,
 ) (*Client, error) {
 	c, err := NewClientDirectNoAddrs(log)

@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"xtx/eggsfs/bincode"
@@ -3140,6 +3141,7 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	metrics := flag.Bool("metrics", false, "")
 	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
+	maxConnections := flag.Uint("max-connections", 4000, "Maximum number of connections to accept.")
 	mtu := flag.Uint64("mtu", 0, "")
 	stale := flag.Duration("stale", 3*time.Minute, "")
 	blockServiceDelay := flag.Duration("block-service-delay", 0*time.Minute, "How long to wait before starting to use new block services")
@@ -3203,6 +3205,7 @@ func main() {
 	log.Info("  httpPort = %v", *httpPort)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  logLevel = %v", level)
+	log.Info("  maxConnections = %d", *maxConnections)
 	log.Info("  mtu = %v", *mtu)
 	log.Info("  stale = '%v'", *stale)
 	log.Info("  blockServiceDelay ='%v' ", *blockServiceDelay)
@@ -3284,6 +3287,7 @@ func main() {
 		assignWritableBlockServicesToShards(log, state)
 	}()
 
+	var activeConnections int64
 	startBincodeHandler := func(listener net.Listener) {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -3293,8 +3297,16 @@ func main() {
 					terminateChan <- err
 					return
 				}
+				if (atomic.AddInt64(&activeConnections, 1) > int64(*maxConnections)) {
+					conn.Close()
+					atomic.AddInt64(&activeConnections, -1)
+					continue
+				}
 				go func() {
-					defer func() { lib.HandleRecoverPanic(log, recover()) }()
+					defer func() {
+						atomic.AddInt64(&activeConnections, -1)
+						lib.HandleRecoverPanic(log, recover())
+					}()
 					handleRequest(log, state, conn.(*net.TCPConn))
 				}()
 			}

@@ -127,17 +127,26 @@ func readShuckleResponse(
 	return resp, nil
 }
 
-var DefaultShuckleTimeout = lib.ReqTimeouts{
-	Initial: 100 * time.Millisecond,
-	Max:     1 * time.Second,
-	Overall: 10 * time.Second,
-	Growth:  1.5,
-	Jitter:  0.1,
+type ShuckleTimeouts struct {
+	ReconnectTimeout lib.ReqTimeouts
+	RequestTimeout time.Duration
 }
+
+var DefaultShuckleTimeout = ShuckleTimeouts {
+	ReconnectTimeout: lib.ReqTimeouts{
+		Initial: 100 * time.Millisecond,
+		Max:     1 * time.Second,
+		Overall: 10 * time.Second,
+		Growth:  1.5,
+		Jitter:  0.1,
+	},
+	RequestTimeout: 20 * time.Second,
+}
+
 
 func ShuckleRequest(
 	log *lib.Logger,
-	timeout *lib.ReqTimeouts,
+	timeout *ShuckleTimeouts,
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
 ) (msgs.ShuckleResponse, error) {
@@ -154,12 +163,12 @@ type shuckResp struct {
 type shuckReq struct {
 	req   msgs.ShuckleRequest
 	respC chan<- shuckResp
+	startedAt time.Time
 }
 
 type ShuckleConn struct {
 	log            *lib.Logger
-	timeout        *lib.ReqTimeouts
-	connTimeout    time.Duration
+	timeout        ShuckleTimeouts
 	shuckleAddress string
 	reqChan        chan shuckReq
 	numHandlers    uint
@@ -167,14 +176,14 @@ type ShuckleConn struct {
 
 func MakeShuckleConn(
 	log *lib.Logger,
-	timeout *lib.ReqTimeouts,
+	timeout *ShuckleTimeouts,
 	shuckleAddress string,
 	numHandlers uint,
 ) *ShuckleConn {
 	if timeout == nil {
 		timeout = &DefaultShuckleTimeout
 	}
-	shuckConn := ShuckleConn{log, timeout, 5 * time.Second, shuckleAddress, make(chan shuckReq), 0}
+	shuckConn := ShuckleConn{log, *timeout, shuckleAddress, make(chan shuckReq), 0}
 	shuckConn.IncreaseNumHandlersTo(numHandlers)
 	return &shuckConn
 }
@@ -197,35 +206,55 @@ func (c *ShuckleConn) requestHandler() {
 		}
 	}()
 	for {
-		reconnectAttempted := false
 		req, ok := <-c.reqChan
 		if !ok {
 			return
 		}
+		reqDeadline := req.startedAt.Add(c.timeout.RequestTimeout)
+
+		if time.Now().After(reqDeadline) {
+			req.respC <- shuckResp{nil, msgs.TIMEOUT}
+			continue
+		}
+
+		connectAttempted := false
 	Reconnect:
-		if conn == nil {
-			if !reconnectAttempted {
-				reconnectAttempted = true
-				if conn, err = c.connect(); err != nil {
-					req.respC <- shuckResp{nil, err}
-					continue
-				}
-			} else {
-				req.respC <- shuckResp{nil, fmt.Errorf("couldn't connect to to shuckle")}
+		if conn == nil && !connectAttempted {
+
+			connectAttempted = true
+			if conn, err = c.connect(); err != nil {
+				req.respC <- shuckResp{nil, err}
 				continue
 			}
 		}
+		if conn == nil {
+			req.respC <- shuckResp{nil, msgs.INTERNAL_ERROR}
+			continue
+		}
+		conn.SetWriteDeadline(reqDeadline)
 		if err = writeShuckleRequest(c.log, conn, req.req); err != nil {
 			conn.Close()
 			conn = nil
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				req.respC <- shuckResp{nil, msgs.TIMEOUT}
+				continue
+			}
 			goto Reconnect
 		}
+		conn.SetWriteDeadline(time.Time{})
+		conn.SetReadDeadline(reqDeadline)
 		resp, err := readShuckleResponse(c.log, conn)
 		if err != nil {
 			if _, isEggsErr := err.(msgs.EggsError); !isEggsErr {
 				conn.Close()
 				conn = nil
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					err = msgs.TIMEOUT
+				}
 			}
+		}
+		if conn != nil {
+			conn.SetReadDeadline(time.Time{})
 		}
 		req.respC <- shuckResp{resp, err}
 	}
@@ -241,7 +270,7 @@ func (c *ShuckleConn) connect() (net.Conn, error) {
 	goto ReconnectBegin
 
 Reconnect:
-	delay = c.timeout.Next(start)
+	delay = c.timeout.ReconnectTimeout.Next(start)
 	if delay == 0 {
 		c.log.Info("could not connect to shuckle and we're out of attempts: %v", err)
 		return nil, err
@@ -249,7 +278,7 @@ Reconnect:
 	time.Sleep(delay)
 
 ReconnectBegin:
-	conn, err = net.DialTimeout("tcp", c.shuckleAddress, c.connTimeout)
+	conn, err = net.DialTimeout("tcp", c.shuckleAddress, c.timeout.ReconnectTimeout.Max)
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
@@ -266,12 +295,23 @@ ReconnectBegin:
 		c.log.Info("could not connect to shuckle: %v", err)
 		return nil, err
 	}
+	tcpConn := conn.(*net.TCPConn)
+	if err = tcpConn.SetKeepAlive(true); err != nil {
+		c.log.RaiseAlert("could not set keepalive on connection to shuckle: %v", err)
+		tcpConn.Close()
+		return nil, err
+	}
+	if err = tcpConn.SetKeepAlivePeriod(c.timeout.ReconnectTimeout.Overall); err != nil {
+		c.log.RaiseAlert("could not set keepalive period on connection to shuckle: %v", err)
+		tcpConn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
 
 func (c *ShuckleConn) Request(req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	respC := make(chan shuckResp)
-	c.reqChan <- shuckReq{req, respC}
+	c.reqChan <- shuckReq{req, respC, time.Now()}
 	resp := <-respC
 	return resp.resp, resp.err
 }

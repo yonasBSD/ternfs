@@ -288,6 +288,8 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
         ));
     }
 
+    bool wake_up_waiters = false;
+
     if (finished_writing) {
         span->attempts++;
         if (unlikely(err == 0 && any_block_errs)) {
@@ -296,15 +298,17 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
             if (err == 0) {
                 // we've successfully retried, so we shouldn't wake up waiters
                 // (the thing retrying will).
-                put_transient_span(span);
-                return;
+                goto out;
             }
         }
         atomic_cmpxchg(&enode->file.transient_err, 0, err); // store error if we have one
-        // span uses enode during cleanup, we need to put it before waking up waiters otherwise enode might be freed
-        struct eggsfs_inode* enode = span->enode;
-        put_transient_span(span);
-        up(&enode->file.flushing_span_sema); // wake up waiters
+        wake_up_waiters = true;
+    }
+out:
+    // span uses enode during cleanup, we need to put it before waking up waiters otherwise enode might be freed
+    put_transient_span(span);
+    if (wake_up_waiters) {
+        up(&enode->file.flushing_span_sema);
     }
 }
 
@@ -680,17 +684,18 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
 
     // Now turn the writing span into a flushing span
     struct eggsfs_transient_span* span = enode->file.writing_span;
+
     if (span == NULL) {
         up(&enode->file.flushing_span_sema);
         return 0;
     }
     enode->file.writing_span = NULL;
-
+    bool wake_up_waiters = false;
     err = compute_span_parameters(
         enode->block_policy, enode->span_policy, enode->stripe_policy, span
     );
     if (err) {
-        up(&enode->file.flushing_span_sema);
+        wake_up_waiters = true;
         goto out;
     }
 
@@ -699,7 +704,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
     // a bit unfortunate.
 
     if (span->storage_class == EGGSFS_EMPTY_STORAGE) {
-        up(&enode->file.flushing_span_sema); // nothing to do
+        wake_up_waiters = true; // nothing to do
     } else if (span->storage_class == EGGSFS_INLINE_STORAGE) {
         // this is an easy one, just add the inline span
         struct page* page = list_first_entry(&span->pages, struct page, lru);
@@ -710,7 +715,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
             span->offset, span->written, data, span->written
         ));
         kunmap(page);
-        up(&enode->file.flushing_span_sema);
+        wake_up_waiters = true;
     } else {
         // The real deal, we need to write blocks. Note that
         // this guy is tasked with releasing the flushing semaphore
@@ -725,6 +730,9 @@ out:
     }
     // we don't need this anymore (the requests might though)
     put_transient_span(span);
+    if (wake_up_waiters) {
+        up(&enode->file.flushing_span_sema);
+    }
     return err;
 }
 

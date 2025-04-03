@@ -456,7 +456,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	}
 
 	if os.IsNotExist(err) {
-		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
+		log.ErrorNoAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
 	}
 
@@ -863,7 +863,7 @@ func handleRequestError(
 	}
 
 	// we always raise an alert since this is almost always bad news in the block service
-	if !errors.Is(err, syscall.ENOSPC) {
+	if !errors.Is(err, syscall.ENOSPC) && err != msgs.BLOCK_SERVICE_NOT_FOUND && err != msgs.BLOCK_NOT_FOUND {
 		log.RaiseAlertStack("", 1, "got unexpected error %v from %v for req kind %v, block service %v, previous error %v", err, conn.RemoteAddr(), req, blockServiceId, *lastError)
 	}
 

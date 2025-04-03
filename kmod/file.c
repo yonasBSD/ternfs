@@ -55,6 +55,7 @@ struct eggsfs_transient_span {
     u8 storage_class;
     u8 parity;
     u8 blacklist_length;
+    bool started_flushing;
 };
 // just a sanity check, this is just two per page rn
 static_assert(sizeof(struct eggsfs_transient_span) < (2<<10));
@@ -159,6 +160,7 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     // the pages, if any.
     span->parity = 0;
     span->blacklist_length = 0;
+    span->started_flushing = false;
     return span;
 }
 
@@ -185,6 +187,9 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
         }
 #undef FREE_PAGES
         atomic_long_add(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
+        if (span->started_flushing) {
+            up(&span->enode->file.flushing_span_sema);
+        }
         // Free the span itself
         kmem_cache_free(eggsfs_transient_span_cachep, span);
         return true;
@@ -288,28 +293,17 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
         ));
     }
 
-    bool wake_up_waiters = false;
-
     if (finished_writing) {
         span->attempts++;
         if (unlikely(err == 0 && any_block_errs)) {
             // if we failed writing blocks, consider retrying
             err = retry_after_block_error(span);
-            if (err == 0) {
-                // we've successfully retried, so we shouldn't wake up waiters
-                // (the thing retrying will).
-                goto out;
-            }
         }
-        atomic_cmpxchg(&enode->file.transient_err, 0, err); // store error if we have one
-        wake_up_waiters = true;
+        atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
 out:
-    // span uses enode during cleanup, we need to put it before waking up waiters otherwise enode might be freed
+    // waiters will be woken up once span ref count reaches 0
     put_transient_span(span);
-    if (wake_up_waiters) {
-        up(&enode->file.flushing_span_sema);
-    }
 }
 
 static void write_block_done(void* data, struct list_head* pages, u64 block_id, u64 proof, int block_write_err) {
@@ -690,12 +684,15 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
         return 0;
     }
     enode->file.writing_span = NULL;
-    bool wake_up_waiters = false;
+    // We should hold the only reference
+    BUG_ON(atomic_read(&span->refcount) != 1);
+    // We mark span as started flushin so we know to wake up waiters on last reference going away.
+    // At that point operation is done in either failure or success.
+    span->started_flushing = true;
     err = compute_span_parameters(
         enode->block_policy, enode->span_policy, enode->stripe_policy, span
     );
     if (err) {
-        wake_up_waiters = true;
         goto out;
     }
 
@@ -703,9 +700,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
     // blocking, since we don't have async metadata requests yet, which is
     // a bit unfortunate.
 
-    if (span->storage_class == EGGSFS_EMPTY_STORAGE) {
-        wake_up_waiters = true; // nothing to do
-    } else if (span->storage_class == EGGSFS_INLINE_STORAGE) {
+    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
         // this is an easy one, just add the inline span
         struct page* page = list_first_entry(&span->pages, struct page, lru);
         char* data = kmap(page);
@@ -715,8 +710,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
             span->offset, span->written, data, span->written
         ));
         kunmap(page);
-        wake_up_waiters = true;
-    } else {
+    } else if (span->storage_class != EGGSFS_EMPTY_STORAGE) {
         // The real deal, we need to write blocks. Note that
         // this guy is tasked with releasing the flushing semaphore
         // if things fail (otherwise we're not done yet).
@@ -730,9 +724,6 @@ out:
     }
     // we don't need this anymore (the requests might though)
     put_transient_span(span);
-    if (wake_up_waiters) {
-        up(&enode->file.flushing_span_sema);
-    }
     return err;
 }
 

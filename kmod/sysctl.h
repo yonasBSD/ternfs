@@ -3,7 +3,6 @@
 
 #include <linux/init.h>
 
-extern int eggsfs_prefetch;
 extern int eggsfs_debug_output;
 
 int __init eggsfs_sysctl_init(void);

@@ -72,20 +72,6 @@ struct eggsfs_inode_file {
     // be careful when freeing spans).
     struct rb_root spans;
     struct rw_semaphore spans_lock;
-    // low 32 bits: section start. high 32 bits: section end. Rouded up to
-    // PAGE_SIZE, since we know each stripe is at PAGE_SIZE boundary anyway.
-    // This means that prefetch with be somewhat broken for files > 16TiB.
-    // This is what we use in our prefetch heuristic.
-    atomic64_t prefetch_section;
-    atomic_t prefetches_in_flight;
-
-    // On top of sometimes holding references to inodes, we also have this
-    // mechanism to try to make sure that every in-flight operation is done
-    // before the file is closed. This should ensure that we don't leak inodes
-    // after unmounting.
-    // TODO we only use this for file _writing_ now. Do we still need it?
-    atomic_t in_flight;
-    wait_queue_head_t in_flight_wq;
 
     // Transient file stuff. Only initialized on file creation (rather than opening),
     // otherwise it's garbage.
@@ -231,21 +217,6 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type);
 // 1: started
 // -n: error
 int eggsfs_start_async_getattr(struct eggsfs_inode* enode);
-
-static inline void eggsfs_in_flight_begin(struct eggsfs_inode* enode) {
-    ihold(&enode->inode);
-    atomic_inc(&enode->file.in_flight);
-    smp_mb__after_atomic();
-}
-
-static inline void eggsfs_in_flight_end(struct eggsfs_inode* enode) {
-    smp_mb__before_atomic();
-    int remaining = atomic_dec_return(&enode->file.in_flight);
-    if (remaining == 0) { wake_up_all(&enode->file.in_flight_wq); }
-    iput(&enode->inode);
-}
-
-void eggsfs_wait_in_flight(struct eggsfs_inode* enode);
 
 int __init eggsfs_inode_init(void);
 void __cold eggsfs_inode_exit(void);

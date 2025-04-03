@@ -687,9 +687,6 @@ struct inode* eggsfs_get_inode(
             // file stuff is only filled in if needed.
             enode->file.spans = RB_ROOT;
             init_rwsem(&enode->file.spans_lock);
-            atomic64_set(&enode->file.prefetch_section, 0);
-            atomic_set(&enode->file.in_flight, 0);
-            init_waitqueue_head(&enode->file.in_flight_wq);
         }
 
         inode->i_uid = fs_info->uid;
@@ -737,15 +734,4 @@ struct inode* eggsfs_get_inode(
     trace_eggsfs_get_inode_exit(ino, inode, new, 0);
 
     return inode;
-}
-
-void eggsfs_wait_in_flight(struct eggsfs_inode* enode) {
-    if (atomic_read(&enode->file.in_flight) == 0) { return; }
-
-    long res = wait_event_timeout(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0, 10 * HZ);
-    if (res > 0) { return; }
-
-    eggsfs_warn("waited for 10 seconds for in flight requests for inode %016lx, either some requests are stuck or this is a bug, will now wait without timeout", enode->inode.i_ino);
-
-    wait_event(enode->file.in_flight_wq, atomic_read(&enode->file.in_flight) == 0);
 }

@@ -933,15 +933,6 @@ retry:
     // We need to fetch the spans.
     down_write(&enode->file.spans_lock);
 
-    // Fetch one batch of spans. We could fetch more, which would aid prefetching
-    // (right now prefetching just does nothing if it does not have the span ready)
-    // but:
-    //
-    // 1. Currently prefetching is off
-    // 2. We have some directories  with max span size 3MB, which
-    //      means that files have tons of spans, which stresses out the metadata servers
-    //      massively. These are files where the quants are doing 1MB random accesses,
-    //      so one batch of spans will suffice.
     u64 next_offset;
     struct get_span_ctx ctx = { .err = 0, .enode = enode };
     ctx.spans = RB_ROOT;

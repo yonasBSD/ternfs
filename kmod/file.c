@@ -143,7 +143,6 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     struct eggsfs_transient_span* span = kmem_cache_alloc(eggsfs_transient_span_cachep, GFP_KERNEL);
     if (span == NULL) { return span; }
     span->enode = enode;
-    eggsfs_in_flight_begin(enode);
     BUG_ON(atomic_read(&span->refcount) != 0);
     atomic_set(&span->refcount, 1);
     span->offset = offset;
@@ -167,7 +166,7 @@ static void hold_transient_span(struct eggsfs_transient_span* span) {
     atomic_inc(&span->refcount);
 }
 
-static void put_transient_span(struct eggsfs_transient_span* span) {
+static bool put_transient_span(struct eggsfs_transient_span* span) {
     if (atomic_dec_return(&span->refcount) == 0) {
         BUG_ON(spin_is_locked(&span->lock));
         // free pages, adjust OOM score
@@ -186,10 +185,11 @@ static void put_transient_span(struct eggsfs_transient_span* span) {
         }
 #undef FREE_PAGES
         atomic_long_add(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
-        eggsfs_in_flight_end(span->enode);
         // Free the span itself
         kmem_cache_free(eggsfs_transient_span_cachep, span);
+        return true;
     }
+    return false;
 }
 
 static int add_span_initiate(struct eggsfs_transient_span* span);
@@ -296,16 +296,16 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
             if (err == 0) {
                 // we've successfully retried, so we shouldn't wake up waiters
                 // (the thing retrying will).
-                goto out;
+                put_transient_span(span);
+                return;
             }
         }
         atomic_cmpxchg(&enode->file.transient_err, 0, err); // store error if we have one
-        up(&span->enode->file.flushing_span_sema); // wake up waiters
+        // span uses enode during cleanup, we need to put it before waking up waiters otherwise enode might be freed
+        struct eggsfs_inode* enode = span->enode;
+        put_transient_span(span);
+        up(&enode->file.flushing_span_sema); // wake up waiters
     }
-
-out:
-    put_transient_span(span);
-    return;
 }
 
 static void write_block_done(void* data, struct list_head* pages, u64 block_id, u64 proof, int block_write_err) {
@@ -947,18 +947,12 @@ out:
     }
     // There are cases where we decide not to flush, we still need to free the writing span
     if (enode->file.writing_span != NULL) {
-        put_transient_span(enode->file.writing_span);
+        // if writing_span is not NULL we should be the one holding last reference to it
+        BUG_ON(!put_transient_span(enode->file.writing_span));
         enode->file.writing_span = NULL;
     }
-
-    // unlock
-    inode_unlock(&enode->inode);
-    // wait for all in flight requests to be done, this will mean that we will
-    // be able to unmount safely
-    eggsfs_wait_in_flight(enode);
-    // now drop MM (otherwise the transient span might access it)
-    inode_lock(&enode->inode);
     // after we last cleared it should have no longer be set
+
     BUG_ON(enode->file.writing_span != NULL);
     if (enode->file.mm) {
         mmdrop(enode->file.mm);

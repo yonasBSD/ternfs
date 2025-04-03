@@ -12,6 +12,10 @@
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
+#define kernel_setsockopt(sock, level, optname, optval, optlen) sock_setsockopt(sock, level, optname, KERNEL_SOCKPTR(optval), optlen)
+#endif
+
 unsigned eggsfs_initial_shard_timeout_jiffies = MSECS_TO_JIFFIES(250);
 unsigned eggsfs_max_shard_timeout_jiffies = MSECS_TO_JIFFIES(2000);
 unsigned eggsfs_overall_shard_timeout_jiffies = MSECS_TO_JIFFIES(10000);

@@ -182,6 +182,7 @@ static void getattr_async_complete(struct work_struct* work) {
         // This is consumed by the parse functions below. You need to make sure that those
         // functions run or consume it yourself.
         struct sk_buff* skb = enode->getattr_async_req.skb;
+        enode->getattr_async_req.skb = NULL;
         u64 mtime;
         u64 expiry;
         bool has_atime = false;

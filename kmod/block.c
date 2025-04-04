@@ -41,7 +41,7 @@ static struct kmem_cache* write_request_cachep;
 #define BLOCK_SOCKET_BUCKETS (1<<BLOCK_SOCKET_BITS)
 
 static u64 block_socket_key(struct sockaddr_in* addr) {
-    return ((u64)addr->sin_addr.s_addr << 16) | addr->sin_port;
+    return ((__force u64)addr->sin_addr.s_addr << 16) | (__force u64)addr->sin_port;
 }
 
 struct block_socket;
@@ -398,7 +398,7 @@ static void block_socket_sk_write_space(struct sock* sk) {
 // Gets the socket, and acquires a reference to it.
 //
 // If successful, returns with RCU read lock taken.
-static struct block_socket* get_block_socket(
+static struct block_socket* __acquires(RCU) get_block_socket(
     struct block_ops* ops,
     struct sockaddr_in* addr
 ) {
@@ -417,14 +417,18 @@ static struct block_socket* get_block_socket(
     eggsfs_debug("socket to %pI4:%d not found, will create", &addr->sin_addr, ntohs(addr->sin_port));
 
     sock = kmalloc(sizeof(struct block_socket), GFP_KERNEL);
-    if (sock == NULL) { return ERR_PTR(-ENOMEM); }
+    int err = 0;
+    if (sock == NULL) {
+        err = -ENOMEM;
+        goto out_err;
+    }
 
     memcpy(&sock->addr, addr, sizeof(struct sockaddr_in));
 
     atomic_set(&sock->err, 0);
 
-    int err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock->sock);
-    if (err != 0) { goto out_err; }
+    err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock->sock);
+    if (err != 0) { goto out_err_sock; }
 
     // very important to set it so we can use kernel_sendmsg from sk_write_space callback
     // otherwsi we might try to allocate and sleep
@@ -453,7 +457,7 @@ static struct block_socket* get_block_socket(
         if (unlikely(err != -EINPROGRESS)) {
             eggsfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
             sock_release(sock->sock);
-            goto out_err;
+            goto out_err_sock;
         } else {
             if (likely(sock->sock->sk->sk_state != TCP_ESTABLISHED)) {
                 eggsfs_debug("waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
@@ -462,7 +466,7 @@ static struct block_socket* get_block_socket(
                     eggsfs_warn("timed out waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
                     sock_release(sock->sock);
                     err = -ETIMEDOUT;
-                    goto out_err;
+                    goto out_err_sock;
                 }
                 // we need to re-init for removal waiters
                 reinit_completion(&sock->sock_wait);
@@ -540,9 +544,11 @@ static struct block_socket* get_block_socket(
     // We are holding RCU, let's verify that we also have a socket.
     BUG_ON(IS_ERR(sock));
     return sock;
-
-out_err:
+out_err_sock:
     kfree(sock);
+out_err:
+    // we grab rcu to keep sparse happy as we promised to acquire RCU
+    rcu_read_lock();
     return ERR_PTR(err);
 }
 
@@ -735,6 +741,37 @@ static void block_socket_sk_data_ready(
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
+static struct block_socket* __acquires(RCU) get_blockservice_socket(
+    struct block_ops* ops,
+    struct eggsfs_block_service* bs
+)   {
+    int i, block_ip;
+    struct sockaddr_in addr;
+    struct block_socket* sock;
+
+    // Try both ips (if we have them) before giving up
+    block_ip = WHICH_BLOCK_IP++;
+    for (i = 0; i < 1 + (bs->port2 != 0); i++, block_ip++) { // we might not have a second address
+        addr.sin_family = AF_INET;
+        if (bs->port2 == 0 || block_ip&1) {
+            addr.sin_addr.s_addr = htonl(bs->ip1);
+            addr.sin_port = htons(bs->port1);
+        } else {
+            addr.sin_addr.s_addr = htonl(bs->ip2);
+            addr.sin_port = htons(bs->port2);
+        }
+
+        sock = get_block_socket(ops, &addr);
+        if (!IS_ERR(sock)) {
+            goto out;
+        }
+        rcu_read_unlock();
+    }
+    rcu_read_lock();
+out:
+    return sock;
+}
+
 static int block_socket_start_req(
     struct block_ops* ops,
     struct block_request* req,
@@ -742,9 +779,8 @@ static int block_socket_start_req(
     u32 left_to_write,
     u32 left_to_read
 ) {
-    int err, i, block_ip;
+    int err, i;
     bool is_first, socket_error;
-    struct sockaddr_in addr;
     struct block_socket* sock;
 
     atomic_set(&req->err, 0);
@@ -760,27 +796,12 @@ static int block_socket_start_req(
 
 retry_get_socket:
     // As the very last thing, try to get the socket (will get RCU lock).
-    // Try both ips (if we have them) before giving up
-    block_ip = WHICH_BLOCK_IP++;
-    for (i = 0; i < 1 + (bs->port2 != 0); i++, block_ip++) { // we might not have a second address
-        addr.sin_family = AF_INET;
-        if (bs->port2 == 0 || block_ip&1) {
-            addr.sin_addr.s_addr = htonl(bs->ip1);
-            addr.sin_port = htons(bs->port1);
-        } else {
-            addr.sin_addr.s_addr = htonl(bs->ip2);
-            addr.sin_port = htons(bs->port2);
-        }
-
-        sock = get_block_socket(ops, &addr);
-        if (!IS_ERR(sock)) {
-            goto sock_found;
-        } else {
-            err = PTR_ERR(sock);
-        }
+    sock = get_blockservice_socket(ops, bs);
+    if (IS_ERR(sock)) {
+        err = PTR_ERR(sock);
+        rcu_read_unlock();
+        goto out_err;
     }
-    if (err < 0) { goto out_err; }
-sock_found:
     err = 0;
 
     // We have a socket, and we also have the RCU lock. We need to hurry
@@ -813,14 +834,14 @@ sock_found:
         err = wait_for_completion_timeout(&sock->sock_wait, MSECS_TO_JIFFIES(100));
         // we can't use atomics if we want to have a timeout here otherwise we race with destruction
         spin_lock_bh(&sock->list_lock);
-        if (--sock->waiters == 0) {
-            // we were last waiter, schedule work to delete socket
+        bool last_waiter = --sock->waiters == 0;
+        spin_unlock_bh(&sock->list_lock);
+        if (last_waiter) {
             queue_work(eggsfs_fast_wq, &sock->cleanup_work);
         }
-        spin_unlock_bh(&sock->list_lock);
 
         if (err <= 0) {
-            eggsfs_warn("timed out waiting for socked to %pI4:%d to be cleaned up", &addr.sin_addr, ntohs(addr.sin_port));
+            eggsfs_warn("timed out waiting for socked to bs=%016llx  to be cleaned up", bs->id);
             err = -ETIMEDOUT;
             goto out_err;
         }
@@ -1330,7 +1351,7 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
             eggsfs_write_block_req_put_size(&ctx, req_crc, req_size, req->size);
             eggsfs_write_block_req_put_certificate(&ctx, req_size, req_certificate, req->certificate);
             eggsfs_write_block_req_put_end(ctx, req_certificate, end);
-            BUG_ON(ctx.cursor != ctx.end);
+            BUILD_BUG_ON(ctx.cursor != ctx.end);
         }
 
         // send message

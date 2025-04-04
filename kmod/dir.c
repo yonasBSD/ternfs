@@ -200,7 +200,7 @@ again:
         eggsfs_debug("inode=%p is_err=%d", inode, IS_ERR(inode));
         // d_splice_alias propagates error in inode
         WRITE_ONCE(dentry->d_time, dir_seqno);
-        alias = d_splice_alias(inode, dentry); 
+        alias = d_splice_alias(inode, dentry);
         eggsfs_debug("alias=%p is_err=%d", alias, IS_ERR(alias));
         d_lookup_done(dentry);
         if (alias) {
@@ -340,7 +340,7 @@ out_err_dirents:
 };
 
 // vfs: exclusive inode.i_rwsem
-// vfs: mutex file.f_pos_lock 
+// vfs: mutex file.f_pos_lock
 static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     struct eggsfs_readdir_ctx* ctx = filp->private_data;
 
@@ -541,7 +541,7 @@ out_err:
     return offset;
 }
 
-int eggsfs_dir_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
+static int eggsfs_dir_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
     return 0;
 }
 

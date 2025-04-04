@@ -11,7 +11,7 @@ struct eggsfs_stored_block_service {
     struct hlist_node hnode;
     spinlock_t lock;
     u64 id;
-    struct eggsfs_block_service* __rcu bs;
+    struct eggsfs_block_service __rcu* bs;
 };
 
 #define BS_BITS 14
@@ -44,7 +44,7 @@ struct eggsfs_stored_block_service* eggsfs_upsert_block_service(struct eggsfs_bl
         }
         rcu_read_unlock();
         trace_eggsfs_upsert_block_service(bs->id, EGGSFS_UPSERT_BLOCKSERVICE_NOMATCH);
-        // Things differ, we do need to update, 
+        // Things differ, we do need to update
         struct eggsfs_block_service* new_bs = kmalloc(sizeof(struct eggsfs_block_service), GFP_KERNEL);
         if (new_bs == NULL) {
             return ERR_PTR(-ENOMEM);
@@ -69,15 +69,17 @@ struct eggsfs_stored_block_service* eggsfs_upsert_block_service(struct eggsfs_bl
     if (new_bs_node == NULL) {
         return ERR_PTR(-ENOMEM);
     }
-    new_bs_node->bs = kmalloc(sizeof(struct eggsfs_block_service), GFP_KERNEL);
-    if (new_bs_node->bs == NULL) {
+
+    struct eggsfs_block_service* new_bs = kmalloc(sizeof(struct eggsfs_block_service), GFP_KERNEL);
+    if (new_bs == NULL) {
         kfree(new_bs_node);
         return ERR_PTR(-ENOMEM);
     }
+    memcpy(new_bs, bs, sizeof(*bs));
+    rcu_assign_pointer(new_bs_node->bs, new_bs);
 
     new_bs_node->id = bs->id;
     spin_lock_init(&new_bs_node->lock);
-    memcpy(new_bs_node->bs, bs, sizeof(*bs));
 
     // Hashing not strictly needed, the block service ids are already
     // random...
@@ -88,7 +90,7 @@ struct eggsfs_stored_block_service* eggsfs_upsert_block_service(struct eggsfs_bl
     if (unlikely(bs_node != NULL)) {
         // Let's not bother updating to our thing in this racy case
         spin_unlock(&block_services_locks[bucket]);
-        kfree(new_bs_node->bs);
+        kfree(new_bs);
         kfree(new_bs_node);
         return bs_node;
     }
@@ -118,8 +120,12 @@ void eggsfs_block_service_exit(void) {
     int bucket;
     struct hlist_node* tmp;
     struct eggsfs_stored_block_service* bs;
+    // While this pattern is not safe in general, at this point everything should be unmounted
+    // and nothing should be accessing block services anyway
+    rcu_read_lock();
     hash_for_each_safe(block_services, bucket, tmp, bs, hnode) {
-        kfree(bs->bs);
+        kfree(rcu_dereference(bs->bs));
         kfree(bs);
     }
+    rcu_read_unlock();
 }

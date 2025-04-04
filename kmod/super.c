@@ -223,7 +223,7 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
         {
             char last_changed_and_len[sizeof(last_changed) + sizeof(block_services_len)];
             if (shuckle_resp_len < sizeof(last_changed_and_len)) {
-                eggsfs_debug("expected size of at least %d for BlockServicesWithFlagChangeResp, got %d", sizeof(last_changed_and_len), shuckle_resp_len);
+                eggsfs_debug("expected size of at least %ld for BlockServicesWithFlagChangeResp, got %d", sizeof(last_changed_and_len), shuckle_resp_len);
                 err = -EINVAL;
                 goto out_sock;
             }

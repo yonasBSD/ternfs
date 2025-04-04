@@ -16,7 +16,7 @@ struct eggsfs_policy {
     u8 tag;
     // First byte: len, then the body. We store this separatedly
     // since we it's RCU protected.
-    char* __rcu body;
+    char __rcu*  body;
 };
 
 #define POLICY_BITS 8
@@ -76,22 +76,24 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
         // done
         return policy;
     }
-    
+
     // We need to add a new one. Allocate both struct and body
     struct eggsfs_policy* new_policy = kmalloc(sizeof(struct eggsfs_policy), GFP_KERNEL);
     if (new_policy == NULL) {
         return ERR_PTR(-ENOMEM);
     }
-    new_policy->body = kmalloc(1 + len, GFP_KERNEL);
-    if (new_policy->body == NULL) {
+    u8* new_policy_body = kmalloc(1 + len, GFP_KERNEL);
+    if (new_policy_body == NULL) {
         kfree(new_policy);
         return ERR_PTR(-ENOMEM);
     }
 
+    *new_policy_body = len;
+    memcpy(new_policy_body+1, body, len);
+    rcu_assign_pointer(new_policy->body, new_policy_body);
+
     new_policy->inode = inode;
     new_policy->tag = tag;
-    *(u8*)new_policy->body = len;
-    memcpy(new_policy->body+1, body, len);
     spin_lock_init(&new_policy->lock);
 
     int bucket = hash_min(policy_key(inode, tag), HASH_BITS(policies));
@@ -101,7 +103,7 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
     if (unlikely(policy != NULL)) {
         // let's not bother updating to our thing in this racy case
         spin_unlock(&policies_locks[bucket]);
-        kfree(new_policy->body);
+        kfree(new_policy_body);
         kfree(new_policy);
         return policy;
     }
@@ -132,8 +134,12 @@ void eggsfs_policy_exit(void) {
     int bucket;
     struct hlist_node* tmp;
     struct eggsfs_policy* policy;
+    // While this pattern is not safe in general, at this point everything should be unmounted
+    // and nothing should be accessing policies anyway
+    rcu_read_lock();
     hash_for_each_safe(policies, bucket, tmp, policy, hnode) {
-        kfree(policy->body);
+        kfree(rcu_dereference(policy->body));
         kfree(policy);
     }
+    rcu_read_unlock();
 }

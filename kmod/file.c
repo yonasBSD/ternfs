@@ -301,7 +301,6 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
         }
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-out:
     // waiters will be woken up once span ref count reaches 0
     put_transient_span(span);
 }

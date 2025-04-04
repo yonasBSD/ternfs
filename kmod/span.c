@@ -556,8 +556,8 @@ int eggsfs_span_get_pages(struct eggsfs_block_span* block_span, struct address_s
             }
             st->start_offset = next_block_offset;
 
-            u32 remaining_cell = min(block_span->span.end - block_span->span.start - stripe_ix*eggsfs_stripe_size(block_span) - curr_block_ix*block_span->cell_size, block_span->cell_size);
-            page_count = min(remaining_pages, (remaining_cell - next_block_offset%block_span->cell_size + PAGE_SIZE - 1)/PAGE_SIZE);
+            u32 remaining_cell = min((u32)(block_span->span.end - block_span->span.start - stripe_ix*eggsfs_stripe_size(block_span) - curr_block_ix*block_span->cell_size), block_span->cell_size);
+            page_count = min(remaining_pages, (unsigned)((remaining_cell - next_block_offset%block_span->cell_size + PAGE_SIZE - 1)/PAGE_SIZE));
             BUG_ON(page_count == 0);
             remaining_pages -= page_count;
 
@@ -843,7 +843,6 @@ void eggsfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     memcpy(span->stripes_crc, stripes_crcs, sizeof(uint32_t)*stripes);
     span->num_stripes = stripes;
     span->parity = parity;
-    int i;
     eggsfs_debug("adding normal span");
     insert_span(&ctx->spans, &span->span);
 }

@@ -182,7 +182,7 @@ static int eggsfs_parse_single_shuckle_addr(const char* str, int len, atomic64_t
 
     // parse device, which is the shuckle address in 0.0.0.0:0 form (ipv4, port)
     __be32 addrn;
-    if (in4_pton(str, len, (u8*)&addrn, ':', &addr_end) != 1) {
+    if (in4_pton(str, len, (__force u8*)&addrn, ':', &addr_end) != 1) {
         return -EINVAL;
     }
     u16 port;
@@ -209,8 +209,6 @@ static int eggsfs_parse_single_shuckle_addr(const char* str, int len, atomic64_t
     eggsfs_debug("parsed shuckle addr %pI4:%d", &addrn, port);
 
     atomic64_set(addr, eggsfs_mk_addr(ntohl(addrn), port));
-
-    eggsfs_debug("")
 
     return 0;
 }

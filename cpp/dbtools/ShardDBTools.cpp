@@ -613,7 +613,8 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
         for (it->SeekToFirst(); it->Valid(); it->Next())
         {
-            auto edgeK = ExternalValue<EdgeKey>::FromSlice(it->key());
+            auto keyValue = it->key().ToString(); // we move iterator within the loop, we need to copy key
+            auto edgeK = ExternalValue<EdgeKey>::FromSlice(rocksdb::Slice(keyValue));
             InodeId ownedTargetId = NULL_INODE_ID;
             std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
             std::optional<ExternalValue<SnapshotEdgeBody>> snapshotEdge;

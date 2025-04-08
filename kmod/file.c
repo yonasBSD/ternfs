@@ -658,7 +658,6 @@ static int write_blocks(struct eggsfs_transient_span* span) {
 out:
     if (err) { // we've failed before trying to write blocks, terminate immediately
         atomic_cmpxchg(&enode->file.transient_err, 0, err); // store error if we have one
-        up(&span->enode->file.flushing_span_sema); // wake up waiters
     }
     return err;
 

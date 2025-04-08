@@ -177,6 +177,7 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
         while (!list_empty(__pages)) { \
             struct page* victim = lru_to_page(__pages); \
             list_del(&victim->lru); \
+            BUG_ON(atomic_read(&victim->_refcount) != 1); \
             put_page(victim); \
             num_pages++; \
         }
@@ -1293,7 +1294,7 @@ retry:
         kunmap_atomic(from_ptr);
 
         BUG_ON(atomic_read(&stripe_page->_refcount) != 1);
-        __free_page(stripe_page);
+        put_page(stripe_page);
     }
 
 out:

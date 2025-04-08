@@ -1293,7 +1293,8 @@ retry:
         kunmap_atomic(to_ptr);
         kunmap_atomic(from_ptr);
 
-        BUG_ON(atomic_read(&stripe_page->_refcount) < 1);
+        BUG_ON(atomic_read(&stripe_page->_refcount) != 1);
+        __free_page(stripe_page);
     }
 
 out:

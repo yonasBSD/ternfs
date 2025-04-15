@@ -52,7 +52,7 @@ func cleanupAfterTest(
 	counters *client.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,
 ) {
-	c, err := client.NewClient(log, nil, shuckleAddress)
+	c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}

@@ -318,7 +318,7 @@ func newState(
 		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
 
-	st.client, err = client.NewClientDirectNoAddrs(log)
+	st.client, err = client.NewClientDirectNoAddrs(log, msgs.AddrsInfo{})
 	if err != nil {
 		return nil, err
 	}

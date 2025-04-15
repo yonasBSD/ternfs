@@ -339,7 +339,7 @@ func fileHistoryTest(
 			seed := uint64(i)
 			go func() {
 				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				c, err := client.NewClient(log, nil, shuckleAddress)
+				c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 				if err != nil {
 					panic(err)
 				}

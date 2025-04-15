@@ -32,7 +32,7 @@ func parallelDirsTest(
 		return fmt.Sprintf(fmt.Sprintf("%%0%dd-%%d", numThreadsDigits), tid, i)
 	}
 
-	client, err := client.NewClient(log, nil, shuckleAddress)
+	client, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}

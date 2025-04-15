@@ -80,6 +80,8 @@ func main() {
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	var addresses lib.StringArrayFlags
+	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	numShuckleHandlers := flag.Uint("num-shuckle-handlers", 10, "Number of parallel shuckle requests")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
@@ -113,6 +115,24 @@ func main() {
 	if *shuckleAddress == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify -shuckle.\n")
 		os.Exit(2)
+	}
+
+	var localAddresses msgs.AddrsInfo
+	if len(addresses) > 0 {
+		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+		if err != nil {
+			panic(err)
+		}
+		localAddresses.Addr1 = msgs.IpPort{Addrs: ownIp1, Port: port1}
+		var ownIp2 [4]byte
+		var port2 uint16
+		if len(addresses) == 2 {
+			ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+			if err != nil {
+				panic(err)
+			}
+		}
+		localAddresses.Addr2 = msgs.IpPort{Addrs: ownIp2, Port: port2}
 	}
 
 	if *dataDir == "" {
@@ -186,7 +206,7 @@ func main() {
 	blockTimeouts.Overall = 10 * time.Minute
 
 	dirInfoCache := client.NewDirInfoCache()
-	c, err := client.NewClient(log, &shuckleTimeouts, *shuckleAddress)
+	c, err := client.NewClient(log, &shuckleTimeouts, *shuckleAddress, localAddresses)
 	if err != nil {
 		panic(err)
 	}

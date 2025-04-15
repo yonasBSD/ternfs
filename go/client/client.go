@@ -626,6 +626,8 @@ type blocksProcessor struct {
 	inFlightReqChan chan clientBlockResponseWithGeneration
 	addr1           net.TCPAddr
 	addr2           net.TCPAddr
+	sourceAddr1     *net.TCPAddr
+	sourceAddr2		*net.TCPAddr
 	what            string
 	timeout         **lib.ReqTimeouts
 	_conn           *blocksProcessorConn // this must be loaded through loadConn
@@ -645,12 +647,21 @@ func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
 	return newConn
 }
 
-var whichBlockIp uint
+var whichBlockIp uint64
+var whichSourceIp uint64
 
 func (proc *blocksProcessor) connect(log *lib.Logger) (*net.TCPConn, error) {
 	var err error
-	whichBlockIp++
-	for i := whichBlockIp; i < whichBlockIp+2; i++ {
+	sourceIpSelector := atomic.AddUint64(&whichSourceIp, 1)
+	var sourceAddr *net.TCPAddr
+	if sourceIpSelector&1 == 0 {
+		sourceAddr = proc.sourceAddr1
+	} else {
+		sourceAddr = proc.sourceAddr2
+	}
+
+	blockIpSelector := atomic.AddUint64(&whichBlockIp, 1)
+	for i := blockIpSelector; i < blockIpSelector+2; i++ {
 		var addr *net.TCPAddr
 		if i&1 == 0 {
 			addr = &proc.addr1
@@ -661,7 +672,7 @@ func (proc *blocksProcessor) connect(log *lib.Logger) (*net.TCPConn, error) {
 			continue
 		}
 		log.Debug("trying to connect to block service %v", addr)
-		dialer := net.Dialer{Timeout: (*proc.timeout).Max}
+		dialer := net.Dialer{LocalAddr: sourceAddr, Timeout: (*proc.timeout).Max}
 		var conn net.Conn
 		conn, err = dialer.Dial("tcp4", addr.String())
 		if err == nil {
@@ -853,11 +864,19 @@ type blocksProcessors struct {
 	blockServiceBits uint8
 	// blocksProcessorKey -> *blocksProcessor
 	processors sync.Map
+	sourceAddr1 net.TCPAddr
+	sourceAddr2 net.TCPAddr
 }
 
-func (procs *blocksProcessors) init(what string, timeouts **lib.ReqTimeouts) {
+func (procs *blocksProcessors) init(what string, timeouts **lib.ReqTimeouts, localAddresses msgs.AddrsInfo) {
 	procs.what = what
 	procs.timeouts = timeouts
+	if localAddresses.Addr1.Addrs[0] != 0 {
+		procs.sourceAddr1 = net.TCPAddr{IP: net.IP(localAddresses.Addr1.Addrs[:]), Port: int(localAddresses.Addr1.Port)}
+	}
+	if localAddresses.Addr2.Addrs[0] != 0 {
+		procs.sourceAddr2 = net.TCPAddr{IP: net.IP(localAddresses.Addr2.Addrs[:]), Port: int(localAddresses.Addr2.Port)}
+	}
 }
 
 type sendArgs struct {
@@ -912,6 +931,8 @@ func (procs *blocksProcessors) send(
 		inFlightReqChan: make(chan clientBlockResponseWithGeneration, 128),
 		addr1:           net.TCPAddr{IP: net.IP(args.addrs.Addr1.Addrs[:]), Port: int(args.addrs.Addr1.Port)},
 		addr2:           net.TCPAddr{IP: net.IP(args.addrs.Addr2.Addrs[:]), Port: int(args.addrs.Addr2.Port)},
+		sourceAddr1:     &procs.sourceAddr1,
+		sourceAddr2:     &procs.sourceAddr2,
 		what:            procs.what,
 		timeout:         procs.timeouts,
 		_conn:           &blocksProcessorConn{},
@@ -1027,8 +1048,9 @@ func NewClient(
 	log *lib.Logger,
 	shuckleTimeout *ShuckleTimeouts,
 	shuckleAddress string,
+	localAddresses msgs.AddrsInfo,
 ) (*Client, error) {
-	c, err := NewClientDirectNoAddrs(log)
+	c, err := NewClientDirectNoAddrs(log, localAddresses)
 	if err != nil {
 		return nil, err
 	}
@@ -1104,6 +1126,7 @@ func SetMTU(mtu uint64) {
 
 func NewClientDirectNoAddrs(
 	log *lib.Logger,
+	localAddresses msgs.AddrsInfo,
 ) (c *Client, err error) {
 	c = &Client{
 		// do not catch requests from previous executions
@@ -1137,17 +1160,17 @@ func NewClientDirectNoAddrs(
 	//
 	// (The exact expected number of connections per server is
 	// ~30.7447, I'll let you figure out why.)
-	c.writeBlockProcessors.init("write", &c.blockTimeout)
+	c.writeBlockProcessors.init("write", &c.blockTimeout, localAddresses)
 	c.writeBlockProcessors.blockServiceBits = 5
-	c.fetchBlockProcessors.init("fetch", &c.blockTimeout)
+	c.fetchBlockProcessors.init("fetch", &c.blockTimeout, localAddresses)
 	c.fetchBlockProcessors.blockServiceBits = 5
-	c.eraseBlockProcessors.init("erase", &c.blockTimeout)
+	c.eraseBlockProcessors.init("erase", &c.blockTimeout, localAddresses)
 	// we're not constrained by bandwidth here, we want to have requests
 	// for all block services in parallel.
 	c.eraseBlockProcessors.blockServiceBits = 63
 	// here we're also not constrained by bandwidth, but the requests
 	// take a long time, so have a separate channel from the erase ones.
-	c.checkBlockProcessors.init("check", &c.blockTimeout)
+	c.checkBlockProcessors.init("check", &c.blockTimeout, localAddresses)
 	c.checkBlockProcessors.blockServiceBits = 63
 	return c, nil
 }

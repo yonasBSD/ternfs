@@ -61,7 +61,7 @@ func WaitForClient(log *lib.Logger, shuckleAddress string, timeout time.Duration
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for client, last error: %w", err))
 		}
-		client, err = NewClient(log, nil, shuckleAddress)
+		client, err = NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 		if err != nil {
 			log.Info("getting shuckle client failed, waiting: %v", err)
 			time.Sleep(time.Second)

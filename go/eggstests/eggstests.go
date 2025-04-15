@@ -251,7 +251,7 @@ func (r *RunTests) run(
 	log *lib.Logger,
 ) {
 	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-	c, err := client.NewClient(log, nil, r.shuckleAddress())
+	c, err := client.NewClient(log, nil, r.shuckleAddress(), msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}

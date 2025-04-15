@@ -685,6 +685,8 @@ func main() {
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	var addresses lib.StringArrayFlags
+	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
 	allowOther := flag.Bool("allow-other", false, "")
@@ -742,10 +744,28 @@ func main() {
 		pprof.StartCPUProfile(f) // we stop in terminate()
 	}
 
+	var localAddresses msgs.AddrsInfo
+	if len(addresses) > 0 {
+		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+		if err != nil {
+			panic(err)
+		}
+		localAddresses.Addr1 = msgs.IpPort{Addrs: ownIp1, Port: port1}
+		var ownIp2 [4]byte
+		var port2 uint16
+		if len(addresses) == 2 {
+			ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+			if err != nil {
+				panic(err)
+			}
+		}
+		localAddresses.Addr2 = msgs.IpPort{Addrs: ownIp2, Port: port2}
+	}
+
 	counters := client.NewClientCounters()
 
 	var err error
-	c, err = client.NewClient(logger, nil, *shuckleAddress)
+	c, err = client.NewClient(logger, nil, *shuckleAddress, localAddresses)
 	if err != nil {
 		panic(err)
 	}

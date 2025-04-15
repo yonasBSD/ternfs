@@ -184,6 +184,8 @@ func formatSize(bytes uint64) string {
 func main() {
 	flag.Usage = usage
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	var addresses lib.StringArrayFlags
+	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	mtu := flag.String("mtu", "", "MTU to use, either an integer or \"max\"")
 	shardInitialTimeout := flag.Duration("shard-initial-timeout", 0, "")
 	shardMaxTimeout := flag.Duration("shard-max-timeout", 0, "")
@@ -198,6 +200,25 @@ func main() {
 	var log *lib.Logger
 	var mbClient *client.Client
 	var clientMu sync.RWMutex
+
+
+	var localAddresses msgs.AddrsInfo
+	if len(addresses) > 0 {
+		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+		if err != nil {
+			panic(err)
+		}
+		localAddresses.Addr1 = msgs.IpPort{Addrs: ownIp1, Port: port1}
+		var ownIp2 [4]byte
+		var port2 uint16
+		if len(addresses) == 2 {
+			ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+			if err != nil {
+				panic(err)
+			}
+		}
+		localAddresses.Addr2 = msgs.IpPort{Addrs: ownIp2, Port: port2}
+	}
 	defer func() {
 		clientMu.Lock()
 		if mbClient != nil {
@@ -222,7 +243,7 @@ func main() {
 			panic("You need to specify -shuckle (or -prod).\n")
 		}
 		var err error
-		c, err := client.NewClient(log, nil, *shuckleAddress)
+		c, err := client.NewClient(log, nil, *shuckleAddress, localAddresses)
 		if err != nil {
 			clientMu.Unlock()
 			panic(fmt.Errorf("could not create client: %v", err))

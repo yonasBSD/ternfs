@@ -725,8 +725,9 @@ void ShardDBTools::outputFilesWithDuplicateFailureDomains(const std::string& dbP
             if (spanV().isInlineStorage() == INLINE_STORAGE) {
                 continue;
             }
-            failureDomains.clear();
+
             for (uint8_t i = 0; i < spanV().locationCount(); ++i) {
+                failureDomains.clear();
                 auto blocksBody = spanV().blocksBodyReadOnly(i);
                 uint8_t failureToleranceCount = blocksBody.parity().parityBlocks();
 

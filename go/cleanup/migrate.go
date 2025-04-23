@@ -385,7 +385,7 @@ func migrateBlocksInFileGeneric(
 								if !ok {
 									return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
 								}
-								blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
+								blacklist = append(blacklist, msgs.BlacklistEntry{FailureDomain: failureDomain, BlockService: newBlockServiceId})
 								break
 							}
 						}
@@ -418,7 +418,7 @@ func migrateBlocksInFileGeneric(
 						if !ok {
 							return fmt.Errorf("could not find failure domain for [%v]", newBlockServiceId)
 						}
-						blacklist = append(blacklist, msgs.BlacklistEntry{failureDomain, newBlockServiceId})
+						blacklist = append(blacklist, msgs.BlacklistEntry{FailureDomain: failureDomain, BlockService: newBlockServiceId})
 					}
 					if newBlock != 0 {
 						swapReq := msgs.SwapBlocksReq{
@@ -913,28 +913,21 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 				tmpFile := scratch.NewScratchFile(m.log, m.client, shid, fmt.Sprintf("migrator %d for blockservices in shard %v", j, shid))
 				defer tmpFile.Close()
 				blockNotFoundAlert := m.log.NewNCAlert(0)
-				for {
-					select {
-					case file, ok := <-c:
-						if !ok {
-							m.log.Debug("recived stop signal in fileMigrator %v for shard %v", idx, shid)
-							return
+				for file := range c{
+					err := error(nil)
+					for {
+						if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {
+							break
 						}
-						err := error(nil)
-						for {
-							if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {
-								break
-							}
-							if err != msgs.BLOCK_NOT_FOUND {
-								m.log.Info("could not migrate file %v in shard %v: %v", file, shid, err)
-								break
-							}
-							m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)
-							time.Sleep(time.Second)
+						if err != msgs.BLOCK_NOT_FOUND {
+							m.log.Info("could not migrate file %v in shard %v: %v", file, shid, err)
+							break
 						}
-						m.log.ClearNC(blockNotFoundAlert)
-						m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
+						m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)
+						time.Sleep(time.Second)
 					}
+					m.log.ClearNC(blockNotFoundAlert)
+					m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
 				}
 			}(j, msgs.ShardId(i), m.fileMigratorsNewFile[i])
 		}

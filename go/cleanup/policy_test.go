@@ -120,10 +120,10 @@ func TestDeleteAfterTime2(t *testing.T) {
 		},
 	}
 	// This falls on day 2, note that the edge owning the file is expired, but we still don't delete anything
-	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
+	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges, time.Duration(0)))
 	// Once the deletion edge expires, _then_ we delete, but only the snapshot
 	// edge.
-	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(10), edges))
+	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(10), edges, time.Duration(0)))
 }
 
 func TestDeleteAfterTime3(t *testing.T) {
@@ -137,7 +137,7 @@ func TestDeleteAfterTime3(t *testing.T) {
 		},
 	}
 	// This falls on day 2, note that the edge owning the file is expired, but we still don't delete anything
-	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges))
+	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(24 * time.Hour * 2)}, date(4), edges, time.Duration(0)))
 }
 
 func TestDontDeleteCurrent(t *testing.T) {
@@ -150,5 +150,5 @@ func TestDontDeleteCurrent(t *testing.T) {
 			Current:      true,
 		},
 	}
-	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges))
+	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges, time.Duration(0)))
 }

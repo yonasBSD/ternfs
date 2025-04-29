@@ -123,6 +123,7 @@ type env struct {
 	eraseLocks     map[msgs.BlockServiceId]*sync.Mutex
 	shuckleConn    *client.ShuckleConn
 	failureDomain  string
+	pathPrefix     string
 	readWholeFile  bool
 	ioAlertPercent uint8
 }
@@ -213,6 +214,7 @@ func updateBlockServiceInfoBlocks(
 }
 
 func initBlockServicesInfo(
+	env *env,
 	log *lib.Logger,
 	locationId msgs.Location,
 	addrs msgs.AddrsInfo,
@@ -232,7 +234,11 @@ func initBlockServicesInfo(
 		bs.cachedInfo.SecretKey = bs.key
 		bs.cachedInfo.StorageClass = bs.storageClass
 		bs.cachedInfo.FailureDomain.Name = failureDomain
-		bs.cachedInfo.Path = bs.path
+		if len(env.pathPrefix) > 0 {
+			bs.cachedInfo.Path = fmt.Sprintf("%s:%s", env.pathPrefix, bs.path)
+		} else {
+			bs.cachedInfo.Path = bs.path
+		}
 		closureBs := bs
 		go func() {
 			// only update if it isn't filled it in already from shuckle
@@ -1325,6 +1331,7 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
+	pathPrefixStr := flag.String("path-prefix", "", "We filter our block service not only by failure domain but also by path prefix")
 
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
 	var addresses lib.StringArrayFlags
@@ -1344,6 +1351,7 @@ func main() {
 	readWholeFile := flag.Bool("read-whole-file", false, "")
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
 	shuckleConnectionTimeout := flag.Duration("shuckle-connection-timeout", 10*time.Second, "")
+
 	flag.Parse()
 	flagErrors := false
 	if flag.NArg()%2 != 0 {
@@ -1375,6 +1383,12 @@ func main() {
 	}
 
 	if *failureDomainStr == "" {
+		fmt.Fprintf(os.Stderr, "failure-domain can not be empty\n")
+		flagErrors = true
+	}
+
+	if *pathPrefixStr == "" {
+		*pathPrefixStr = *failureDomainStr
 	}
 
 	if flagErrors {
@@ -1463,6 +1477,7 @@ func main() {
 	log.Info("Running block service with options:")
 	log.Info("  locationId = %v", *locationId)
 	log.Info("  failureDomain = %v", *failureDomainStr)
+	log.Info("  pathPrefix = %v", *pathPrefixStr)
 	log.Info("  futureCutoff = %v", *futureCutoff)
 	log.Info("  addr = '%v'", addresses)
 	log.Info("  logLevel = %v", level)
@@ -1479,6 +1494,7 @@ func main() {
 		eraseLocks:     make(map[msgs.BlockServiceId]*sync.Mutex),
 		readWholeFile:  *readWholeFile,
 		failureDomain:  *failureDomainStr,
+		pathPrefix:     *pathPrefixStr,
 		ioAlertPercent: uint8(*ioAlertPercent),
 		shuckleConn:    client.MakeShuckleConn(log, nil, *shuckleAddress, 1),
 	}
@@ -1545,6 +1561,12 @@ func main() {
 			bs := &shuckleBlockServices[i]
 			ourBs, weHaveBs := blockServices[bs.Id]
 			sameFailureDomain := bs.FailureDomain.Name == failureDomain
+			if len(env.pathPrefix) > 0 {
+				pathParts := strings.Split(bs.Path, ":")
+				if len(pathParts) == 2 {
+					sameFailureDomain = pathParts[0] == env.pathPrefix
+				}
+			}
 			isDecommissioned := (bs.Flags & msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
 			// No disagreement on failure domain with shuckle (otherwise we could end up with
 			// a split brain scenario where two eggsblocks processes assume control of two dead
@@ -1600,7 +1622,7 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(log, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage)
+	initBlockServicesInfo(env, log, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage)
 	log.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)

@@ -745,6 +745,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 					available_bytes = excluded.available_bytes,
 					blocks = excluded.blocks,
 					last_seen = excluded.last_seen,
+					path = excluded.path,
 					flags_last_changed =
 						IIF(
 							(
@@ -758,9 +759,12 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 				WHERE`+
 			// we allow update if one of the new addresses matches old addresses
 			`
+					(
+						(ip1 = excluded.ip1 AND port1 = excluded.port1) OR (ip1 = excluded.ip2 AND port1 = excluded.port2) OR
+						(port2 <> 0 AND (ip2 = excluded.ip1 AND port2 = excluded.port1) OR ( ip2 = excluded.ip2 AND port2 = excluded.port2))
+					) AND
 					storage_class = excluded.storage_class AND
 					failure_domain = excluded.failure_domain AND
-					path = excluded.path AND
 					secret_key = excluded.secret_key
 			`,
 			bs.Id, bs.LocationId, bs.Addrs.Addr1.Addrs[:], bs.Addrs.Addr1.Port, bs.Addrs.Addr2.Addrs[:], bs.Addrs.Addr2.Port,
@@ -2892,18 +2896,25 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			}
 
 			if _, found := activeBlockServices[fd][bs.Path]; !found {
-				missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
+				if _, found := activeBlockServices[fd][fmt.Sprintf("%s:%s",fd,bs.Path)]; !found {
+					missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
+				}
 			}
 		}
 		if len(missingBlockServices) == 0 {
 			log.ClearNC(replaceDecommedAlert)
 		} else {
+
 			bss := make([]string, 0, len(missingBlockServices))
 			for bs := range missingBlockServices {
 				bss = append(bss, bs)
 			}
 			sort.Strings(bss)
-			log.RaiseNC(replaceDecommedAlert, "decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
+			alertString := fmt.Sprintf("decommissioned block services have to be replaced: %s", strings.Join(bss, " "))
+			if len(alertString) > 10000 {
+				alertString = alertString[:10000] + "...."
+			}
+			log.RaiseNC(replaceDecommedAlert, alertString)
 		}
 
 		if len(decommedWithFiles) == 0 {

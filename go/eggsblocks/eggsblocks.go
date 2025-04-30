@@ -1221,6 +1221,7 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(mrand.Uint64())
 	alert := log.NewNCAlert(10 * time.Second)
+	failureDomainEscaped := strings.ReplaceAll(failureDomain, " ", "-")
 	for {
 		diskMetrics, err := getDiskStats(log, "/proc/diskstats")
 		if err != nil {
@@ -1232,27 +1233,27 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 		for bsId, bsStats := range env.stats {
 			metrics.Measurement("eggsfs_blocks_write")
 			metrics.Tag("blockservice", bsId.String())
-			metrics.Tag("failuredomain", failureDomain)
+			metrics.Tag("failuredomain", failureDomainEscaped)
 			metrics.FieldU64("bytes", bsStats.bytesWritten)
 			metrics.FieldU64("blocks", bsStats.blocksWritten)
 			metrics.Timestamp(now)
 
 			metrics.Measurement("eggsfs_blocks_read")
 			metrics.Tag("blockservice", bsId.String())
-			metrics.Tag("failuredomain", failureDomain)
+			metrics.Tag("failuredomain", failureDomainEscaped)
 			metrics.FieldU64("bytes", bsStats.bytesFetched)
 			metrics.FieldU64("blocks", bsStats.blocksFetched)
 			metrics.Timestamp(now)
 
 			metrics.Measurement("eggsfs_blocks_erase")
 			metrics.Tag("blockservice", bsId.String())
-			metrics.Tag("failuredomain", failureDomain)
+			metrics.Tag("failuredomain", failureDomainEscaped)
 			metrics.FieldU64("blocks", bsStats.blocksErased)
 			metrics.Timestamp(now)
 
 			metrics.Measurement("eggsfs_blocks_check")
 			metrics.Tag("blockservice", bsId.String())
-			metrics.Tag("failuredomain", failureDomain)
+			metrics.Tag("failuredomain", failureDomainEscaped)
 			metrics.FieldU64("blocks", bsStats.blocksChecked)
 			metrics.FieldU64("bytes", bsStats.bytesChecked)
 			metrics.Timestamp(now)
@@ -1260,7 +1261,7 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 		for bsId, bsInfo := range blockServices {
 			metrics.Measurement("eggsfs_blocks_storage")
 			metrics.Tag("blockservice", bsId.String())
-			metrics.Tag("failuredomain", failureDomain)
+			metrics.Tag("failuredomain", failureDomainEscaped)
 			metrics.Tag("storageclass", bsInfo.storageClass.String())
 			metrics.FieldU64("capacity", bsInfo.cachedInfo.CapacityBytes)
 			metrics.FieldU64("available", bsInfo.cachedInfo.AvailableBytes)

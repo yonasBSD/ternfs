@@ -1726,7 +1726,7 @@ private:
     XmonNCAlert _alert;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
-        PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 1_mins, 0.1}),
+        PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 2_mins, 1}),
         _shared(shared),
         _shrid(_shared.options.shrid),
         _location(_shared.options.location),

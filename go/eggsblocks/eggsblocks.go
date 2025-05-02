@@ -258,7 +258,10 @@ func initBlockServicesInfo(
 	return nil
 }
 
-var maximumRegisterInterval time.Duration = time.Second * 30
+var minimumRegisterInterval time.Duration = time.Second * 60
+var maximumRegisterInterval time.Duration = minimumRegisterInterval * 2
+var variantRegisterInterval time.Duration = maximumRegisterInterval - minimumRegisterInterval
+
 
 func registerPeriodically(
 	log *lib.Logger,
@@ -283,7 +286,7 @@ func registerPeriodically(
 			continue
 		}
 		log.ClearNC(alert)
-		waitFor := time.Duration(mrand.Uint64() % uint64(maximumRegisterInterval.Nanoseconds()))
+		waitFor := minimumRegisterInterval + time.Duration(mrand.Uint64() % uint64(variantRegisterInterval.Nanoseconds()))
 		log.Info("registered with %v (%v alive), waiting %v", env.shuckleConn.ShuckleAddress(), len(blockServices), waitFor)
 		time.Sleep(waitFor)
 	}

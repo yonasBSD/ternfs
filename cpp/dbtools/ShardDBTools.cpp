@@ -496,10 +496,10 @@ struct StorageClassSize {
     uint64_t hdd{0};
 };
 
-typedef std::array<StorageClassSize, 2> LocationSize;
+typedef std::array<StorageClassSize, 3> LocationSize;
 struct SizePerStorageClass {
     uint64_t logical{0};
-    LocationSize size{StorageClassSize{0,0},StorageClassSize{0,0}};
+    LocationSize size{StorageClassSize{0,0},StorageClassSize{0,0}, StorageClassSize{0,0}};
     uint64_t inMetadata{0};
 };
 
@@ -555,7 +555,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
     {
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, spansCf));
         InodeId thisFile = NULL_INODE_ID;
-        LocationSize thisFileSize{StorageClassSize{0,0},StorageClassSize{0,0}};
+        LocationSize thisFileSize{StorageClassSize{0,0},StorageClassSize{0,0}, StorageClassSize{0,0}};
         uint64_t thisFileInlineSize{0};
         for (it->SeekToFirst(); it->Valid(); it->Next()) {
             auto spanK = ExternalValue<SpanKey>::FromSlice(it->key());
@@ -569,7 +569,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                     file_it->second.size.inMetadata = thisFileInlineSize;
                 }
                 thisFile = spanK().fileId();
-                thisFileSize = LocationSize{StorageClassSize{0,0},StorageClassSize{0,0}};
+                thisFileSize = LocationSize{StorageClassSize{0,0},StorageClassSize{0,0}, StorageClassSize{0,0}};
                 thisFileInlineSize = 0;
             }
 
@@ -580,9 +580,6 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             }
             for(uint8_t i = 0; i < spanV().locationCount(); ++i) {
                 auto blocksBody = spanV().blocksBodyReadOnly(i);
-                if (blocksBody.location() != 0) {
-                    continue;
-                }
                 auto physicalSize = (uint64_t)blocksBody.parity().blocks() * blocksBody.stripes() * blocksBody.cellSize();
                 switch (blocksBody.storageClass()){
                     case HDD_STORAGE:
@@ -676,8 +673,10 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             outputStream << file_id->second.size.logical << ",";
             outputStream << file_id->second.size.size[0].hdd << ",";
             outputStream << file_id->second.size.size[1].hdd << ",";
+            outputStream << file_id->second.size.size[2].hdd << ",";
             outputStream << file_id->second.size.size[0].flash << ",";
             outputStream << file_id->second.size.size[1].flash << ",";
+            outputStream << file_id->second.size.size[2].flash << ",";
             outputStream << file_id->second.size.inMetadata << ",";
             outputStream << creationTime << ",";
             outputStream << deletionTime << ",";

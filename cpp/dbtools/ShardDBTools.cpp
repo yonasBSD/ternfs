@@ -589,7 +589,6 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
                         thisFileSize[blocksBody.location()].flash += physicalSize;
                         break;
                 }
-                break;
             }
         }
         auto file_it = files.find(thisFile);

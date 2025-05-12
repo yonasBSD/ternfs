@@ -211,10 +211,12 @@ static void getattr_async_complete(struct work_struct* work) {
             has_atime = true;
             if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
                 enode->inode.i_size = 0;
+                enode->inode.i_blocks = 0;
                 expiry = 0;
                 mtime = 0;
             } else if (err == 0) {
                 enode->inode.i_size = size;
+                enode->inode.i_blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
                 expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
             }
             err = eggsfs_error_to_linux(err);
@@ -320,6 +322,10 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
                         mtime = 0;
                     } else if (err == 0) {
                         enode->inode.i_size = size;
+                        // This is not correct physical size, in order to calculate physical size we would need to get span information as
+                        // our replication policy is per span. This is quite expensive to do for stat.
+                        // We could keep this value calcualated and stored on shards but it's not worth it at this point.
+                        enode->inode.i_blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
                         expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
                     }
                 } else {

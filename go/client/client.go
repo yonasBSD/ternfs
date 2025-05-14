@@ -1167,11 +1167,11 @@ func NewClientDirectNoAddrs(
 	c.eraseBlockProcessors.init("erase", &c.blockTimeout, localAddresses)
 	// we're not constrained by bandwidth here, we want to have requests
 	// for all block services in parallel.
-	c.eraseBlockProcessors.blockServiceBits = 63
+	c.eraseBlockProcessors.blockServiceBits = 5
 	// here we're also not constrained by bandwidth, but the requests
 	// take a long time, so have a separate channel from the erase ones.
 	c.checkBlockProcessors.init("check", &c.blockTimeout, localAddresses)
-	c.checkBlockProcessors.blockServiceBits = 63
+	c.checkBlockProcessors.blockServiceBits = 5
 	return c, nil
 }
 

@@ -126,6 +126,8 @@ func (c *Client) shardRequestInternal(
 		r.Mtu = mtu
 	case *msgs.LocalFileSpansReq:
 		r.Mtu = mtu
+	case *msgs.FileSpansReq:
+		r.Mtu = mtu
 	case *msgs.VisitDirectoriesReq:
 		r.Mtu = mtu
 	case *msgs.VisitFilesReq:

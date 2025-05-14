@@ -2053,9 +2053,9 @@ type SetBlockServiceFlagsReq struct {
 
 type SetBlockServiceFlagsResp struct{}
 
-type AllBlockServicesReq struct{}
+type AllBlockServicesDeprecatedReq struct{}
 
-type AllBlockServicesResp struct {
+type AllBlockServicesDeprecatedResp struct {
 	BlockServices []BlockServiceInfo
 }
 

@@ -347,7 +347,7 @@ export function renderIndex() {
         const [blockServices, setBlockServices] = useState(null);
         const [locations, setLocations] = useState(null);
         useEffect(async () => {
-            const resp = await shuckleReq('ALL_BLOCK_SERVICES', {});
+            const resp = await shuckleReq('ALL_BLOCK_SERVICES_DEPRECATED', {});
             setBlockServices(resp);
         }, []);
 

@@ -1945,8 +1945,8 @@ func main() {
 		},
 		{
 			0x21,
-			reflect.TypeOf(msgs.AllBlockServicesReq{}),
-			reflect.TypeOf(msgs.AllBlockServicesResp{}),
+			reflect.TypeOf(msgs.AllBlockServicesDeprecatedReq{}),
+			reflect.TypeOf(msgs.AllBlockServicesDeprecatedResp{}),
 		},
 		{
 			0x23,

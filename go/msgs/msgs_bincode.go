@@ -845,7 +845,7 @@ func (k ShuckleMessageKind) String() string {
 	case 32:
 		return "ERASE_DECOMMISSIONED_BLOCK"
 	case 33:
-		return "ALL_BLOCK_SERVICES"
+		return "ALL_BLOCK_SERVICES_DEPRECATED"
 	case 35:
 		return "MOVE_CDC_LEADER"
 	case 36:
@@ -881,7 +881,7 @@ const (
 	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x18
 	ALL_CDC ShuckleMessageKind = 0x19
 	ERASE_DECOMMISSIONED_BLOCK ShuckleMessageKind = 0x20
-	ALL_BLOCK_SERVICES ShuckleMessageKind = 0x21
+	ALL_BLOCK_SERVICES_DEPRECATED ShuckleMessageKind = 0x21
 	MOVE_CDC_LEADER ShuckleMessageKind = 0x23
 	CLEAR_CDC_INFO ShuckleMessageKind = 0x24
 )
@@ -911,7 +911,7 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	SHARD_BLOCK_SERVICES,
 	ALL_CDC,
 	ERASE_DECOMMISSIONED_BLOCK,
-	ALL_BLOCK_SERVICES,
+	ALL_BLOCK_SERVICES_DEPRECATED,
 	MOVE_CDC_LEADER,
 	CLEAR_CDC_INFO,
 }
@@ -968,8 +968,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &AllCdcReq{}, &AllCdcResp{}, nil
 	case k == "ERASE_DECOMMISSIONED_BLOCK":
 		return &EraseDecommissionedBlockReq{}, &EraseDecommissionedBlockResp{}, nil
-	case k == "ALL_BLOCK_SERVICES":
-		return &AllBlockServicesReq{}, &AllBlockServicesResp{}, nil
+	case k == "ALL_BLOCK_SERVICES_DEPRECATED":
+		return &AllBlockServicesDeprecatedReq{}, &AllBlockServicesDeprecatedResp{}, nil
 	case k == "MOVE_CDC_LEADER":
 		return &MoveCdcLeaderReq{}, &MoveCdcLeaderResp{}, nil
 	case k == "CLEAR_CDC_INFO":
@@ -6059,23 +6059,23 @@ func (v *EraseDecommissionedBlockResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
-	return ALL_BLOCK_SERVICES
+func (v *AllBlockServicesDeprecatedReq) ShuckleRequestKind() ShuckleMessageKind {
+	return ALL_BLOCK_SERVICES_DEPRECATED
 }
 
-func (v *AllBlockServicesReq) Pack(w io.Writer) error {
+func (v *AllBlockServicesDeprecatedReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllBlockServicesReq) Unpack(r io.Reader) error {
+func (v *AllBlockServicesDeprecatedReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
-	return ALL_BLOCK_SERVICES
+func (v *AllBlockServicesDeprecatedResp) ShuckleResponseKind() ShuckleMessageKind {
+	return ALL_BLOCK_SERVICES_DEPRECATED
 }
 
-func (v *AllBlockServicesResp) Pack(w io.Writer) error {
+func (v *AllBlockServicesDeprecatedResp) Pack(w io.Writer) error {
 	len1 := len(v.BlockServices)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -6088,7 +6088,7 @@ func (v *AllBlockServicesResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllBlockServicesResp) Unpack(r io.Reader) error {
+func (v *AllBlockServicesDeprecatedResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err

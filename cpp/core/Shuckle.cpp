@@ -135,7 +135,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     // all block services
     {
         ShuckleReqContainer reqContainer;
-        auto& req = reqContainer.setAllBlockServices();
+        auto& req = reqContainer.setAllBlockServicesDeprecated();
         {
             const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
             if (err) { FAIL(err, errStr); }
@@ -147,7 +147,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
             if (err) { FAIL(err, errStr); }
         }
 
-        blockServices = respContainer.getAllBlockServices().blockServices.els;
+        blockServices = respContainer.getAllBlockServicesDeprecated().blockServices.els;
     }
 
     // current block services

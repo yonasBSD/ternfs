@@ -648,13 +648,14 @@ OUT:
 		}
 		m.cleanVisitedBlockService()
 		m.log.Debug("requesting block services")
-		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesReq{})
+		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			m.log.RaiseNC(shuckleResponseAlert, "error getting block services from shuckle: %v", err)
 		} else {
 			m.log.ClearNC(shuckleResponseAlert)
-			blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+			blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
 			for _, bs := range blockServices.BlockServices {
+
 				if m.failureDomainFilter != "" && (bs.FailureDomain.String() != m.failureDomainFilter) {
 					continue
 				}

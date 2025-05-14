@@ -1559,12 +1559,12 @@ func main() {
 			alert := log.NewNCAlert(0)
 			log.RaiseNC(alert, "fetching block services")
 
-			resp, err := env.shuckleConn.Request(&msgs.AllBlockServicesReq{})
+			resp, err := env.shuckleConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
 			if err != nil {
 				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
 			}
 			log.ClearNC(alert)
-			shuckleBlockServices = resp.(*msgs.AllBlockServicesResp).BlockServices
+			shuckleBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
 		}
 		for i := range shuckleBlockServices {
 			bs := &shuckleBlockServices[i]

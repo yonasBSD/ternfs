@@ -550,8 +550,8 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << "ERASE_DECOMMISSIONED_BLOCK";
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << "ALL_BLOCK_SERVICES";
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        out << "ALL_BLOCK_SERVICES_DEPRECATED";
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         out << "MOVE_CDC_LEADER";
@@ -4772,35 +4772,35 @@ std::ostream& operator<<(std::ostream& out, const EraseDecommissionedBlockResp& 
     return out;
 }
 
-void AllBlockServicesReq::pack(BincodeBuf& buf) const {
+void AllBlockServicesDeprecatedReq::pack(BincodeBuf& buf) const {
 }
-void AllBlockServicesReq::unpack(BincodeBuf& buf) {
+void AllBlockServicesDeprecatedReq::unpack(BincodeBuf& buf) {
 }
-void AllBlockServicesReq::clear() {
+void AllBlockServicesDeprecatedReq::clear() {
 }
-bool AllBlockServicesReq::operator==(const AllBlockServicesReq& rhs) const {
+bool AllBlockServicesDeprecatedReq::operator==(const AllBlockServicesDeprecatedReq& rhs) const {
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const AllBlockServicesReq& x) {
-    out << "AllBlockServicesReq(" << ")";
+std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedReq& x) {
+    out << "AllBlockServicesDeprecatedReq(" << ")";
     return out;
 }
 
-void AllBlockServicesResp::pack(BincodeBuf& buf) const {
+void AllBlockServicesDeprecatedResp::pack(BincodeBuf& buf) const {
     buf.packList<BlockServiceInfo>(blockServices);
 }
-void AllBlockServicesResp::unpack(BincodeBuf& buf) {
+void AllBlockServicesDeprecatedResp::unpack(BincodeBuf& buf) {
     buf.unpackList<BlockServiceInfo>(blockServices);
 }
-void AllBlockServicesResp::clear() {
+void AllBlockServicesDeprecatedResp::clear() {
     blockServices.clear();
 }
-bool AllBlockServicesResp::operator==(const AllBlockServicesResp& rhs) const {
+bool AllBlockServicesDeprecatedResp::operator==(const AllBlockServicesDeprecatedResp& rhs) const {
     if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const AllBlockServicesResp& x) {
-    out << "AllBlockServicesResp(" << "BlockServices=" << x.blockServices << ")";
+std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedResp& x) {
+    out << "AllBlockServicesDeprecatedResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -8520,12 +8520,12 @@ EraseDecommissionedBlockReq& ShuckleReqContainer::setEraseDecommissionedBlock() 
     auto& x = _data.emplace<23>();
     return x;
 }
-const AllBlockServicesReq& ShuckleReqContainer::getAllBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+const AllBlockServicesDeprecatedReq& ShuckleReqContainer::getAllBlockServicesDeprecated() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
     return std::get<24>(_data);
 }
-AllBlockServicesReq& ShuckleReqContainer::setAllBlockServices() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+AllBlockServicesDeprecatedReq& ShuckleReqContainer::setAllBlockServicesDeprecated() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
     auto& x = _data.emplace<24>();
     return x;
 }
@@ -8636,8 +8636,8 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        setAllBlockServices() = other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        setAllBlockServicesDeprecated() = other.getAllBlockServicesDeprecated();
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         setMoveCdcLeader() = other.getMoveCdcLeader();
@@ -8706,7 +8706,7 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         return sizeof(ShuckleMessageKind) + std::get<24>(_data).packedSize();
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         return sizeof(ShuckleMessageKind) + std::get<25>(_data).packedSize();
@@ -8792,7 +8792,7 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<23>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         std::get<24>(_data).pack(buf);
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
@@ -8881,7 +8881,7 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         _data.emplace<24>().unpack(buf);
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
@@ -8947,8 +8947,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getAllCdc() == other.getAllCdc();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return getAllBlockServices() == other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        return getAllBlockServicesDeprecated() == other.getAllBlockServicesDeprecated();
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         return getMoveCdcLeader() == other.getMoveCdcLeader();
     case ShuckleMessageKind::CLEAR_CDC_INFO:
@@ -9032,8 +9032,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << x.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        out << x.getAllBlockServicesDeprecated();
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         out << x.getMoveCdcLeader();
@@ -9275,12 +9275,12 @@ EraseDecommissionedBlockResp& ShuckleRespContainer::setEraseDecommissionedBlock(
     auto& x = _data.emplace<24>();
     return x;
 }
-const AllBlockServicesResp& ShuckleRespContainer::getAllBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES);
+const AllBlockServicesDeprecatedResp& ShuckleRespContainer::getAllBlockServicesDeprecated() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
     return std::get<25>(_data);
 }
-AllBlockServicesResp& ShuckleRespContainer::setAllBlockServices() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES;
+AllBlockServicesDeprecatedResp& ShuckleRespContainer::setAllBlockServicesDeprecated() {
+    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
     auto& x = _data.emplace<25>();
     return x;
 }
@@ -9394,8 +9394,8 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        setAllBlockServices() = other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        setAllBlockServicesDeprecated() = other.getAllBlockServicesDeprecated();
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         setMoveCdcLeader() = other.getMoveCdcLeader();
@@ -9466,7 +9466,7 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return sizeof(ShuckleMessageKind) + std::get<24>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         return sizeof(ShuckleMessageKind) + std::get<25>(_data).packedSize();
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         return sizeof(ShuckleMessageKind) + std::get<26>(_data).packedSize();
@@ -9555,7 +9555,7 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<24>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         std::get<25>(_data).pack(buf);
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
@@ -9647,7 +9647,7 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         _data.emplace<25>().unpack(buf);
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
@@ -9715,8 +9715,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getAllCdc() == other.getAllCdc();
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        return getAllBlockServices() == other.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        return getAllBlockServicesDeprecated() == other.getAllBlockServicesDeprecated();
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         return getMoveCdcLeader() == other.getMoveCdcLeader();
     case ShuckleMessageKind::CLEAR_CDC_INFO:
@@ -9803,8 +9803,8 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
     case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES:
-        out << x.getAllBlockServices();
+    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        out << x.getAllBlockServicesDeprecated();
         break;
     case ShuckleMessageKind::MOVE_CDC_LEADER:
         out << x.getMoveCdcLeader();

@@ -648,8 +648,8 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	}
 }
 
-func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesReq) (*msgs.AllBlockServicesResp, error) {
-	resp := msgs.AllBlockServicesResp{}
+func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesDeprecatedReq) (*msgs.AllBlockServicesDeprecatedResp, error) {
+	resp := msgs.AllBlockServicesDeprecatedResp{}
 	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
@@ -1498,7 +1498,7 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleAllShards(log, s, whichReq)
 	case *msgs.RegisterShardReq:
 		resp, err = handleRegisterShard(log, s, whichReq)
-	case *msgs.AllBlockServicesReq:
+	case *msgs.AllBlockServicesDeprecatedReq:
 		resp, err = handleAllBlockServices(log, s, whichReq)
 	case *msgs.LocalChangedBlockServicesReq:
 		resp, err = handleLocalChangedBlockServices(log, s, whichReq)
@@ -1663,8 +1663,8 @@ func readShuckleRequest(
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.ALL_BLOCK_SERVICES:
-		req = &msgs.AllBlockServicesReq{}
+	case msgs.ALL_BLOCK_SERVICES_DEPRECATED:
+		req = &msgs.AllBlockServicesDeprecatedReq{}
 	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:
 		req = &msgs.LocalChangedBlockServicesReq{}
 	case msgs.DECOMMISSION_BLOCK_SERVICE:

@@ -12,12 +12,12 @@ func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockSe
 	for {
 		var resp msgs.ShuckleResponse
 		var bss []msgs.BlockServiceInfo
-		resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.AllBlockServicesReq{})
+		resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			ll.Debug("got error while getting block services from shuckle, will keep waiting: %v", err)
 			goto KeepChecking
 		}
-		bss = resp.(*msgs.AllBlockServicesResp).BlockServices
+		bss = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
 		if len(bss) < expectedBlockServices {
 			err = fmt.Errorf("not all block services are up yet, will keep waiting")
 			ll.Debug("%v", err)

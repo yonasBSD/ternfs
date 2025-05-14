@@ -1015,11 +1015,11 @@ func (c *Client) refreshAddrs(log *lib.Logger) error {
 		return nil
 	}
 
-	blockServicesResp, err := c.shuckleConn.Request(&msgs.AllBlockServicesReq{})
+	blockServicesResp, err := c.shuckleConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
 	if err != nil {
 		return fmt.Errorf("could not request block services from shuckle: %w", err)
 	}
-	blockServices := blockServicesResp.(*msgs.AllBlockServicesResp)
+	blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
 	var blockServicesToAdd []msgs.BlacklistEntry
 	func () {
 

@@ -850,6 +850,8 @@ func (k ShuckleMessageKind) String() string {
 		return "MOVE_CDC_LEADER"
 	case 36:
 		return "CLEAR_CDC_INFO"
+	case 37:
+		return "UPDATE_BLOCK_SERVICE_PATH"
 	default:
 		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
 	}
@@ -884,6 +886,7 @@ const (
 	ALL_BLOCK_SERVICES_DEPRECATED ShuckleMessageKind = 0x21
 	MOVE_CDC_LEADER ShuckleMessageKind = 0x23
 	CLEAR_CDC_INFO ShuckleMessageKind = 0x24
+	UPDATE_BLOCK_SERVICE_PATH ShuckleMessageKind = 0x25
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -914,9 +917,10 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	ALL_BLOCK_SERVICES_DEPRECATED,
 	MOVE_CDC_LEADER,
 	CLEAR_CDC_INFO,
+	UPDATE_BLOCK_SERVICE_PATH,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 36
+const MaxShuckleMessageKind ShuckleMessageKind = 37
 
 func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 	switch {
@@ -974,6 +978,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &MoveCdcLeaderReq{}, &MoveCdcLeaderResp{}, nil
 	case k == "CLEAR_CDC_INFO":
 		return &ClearCdcInfoReq{}, &ClearCdcInfoResp{}, nil
+	case k == "UPDATE_BLOCK_SERVICE_PATH":
+		return &UpdateBlockServicePathReq{}, &UpdateBlockServicePathResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -6171,6 +6177,42 @@ func (v *ClearCdcInfoResp) Pack(w io.Writer) error {
 }
 
 func (v *ClearCdcInfoResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *UpdateBlockServicePathReq) ShuckleRequestKind() ShuckleMessageKind {
+	return UPDATE_BLOCK_SERVICE_PATH
+}
+
+func (v *UpdateBlockServicePathReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.NewPath)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *UpdateBlockServicePathReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.NewPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *UpdateBlockServicePathResp) ShuckleResponseKind() ShuckleMessageKind {
+	return UPDATE_BLOCK_SERVICE_PATH
+}
+
+func (v *UpdateBlockServicePathResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *UpdateBlockServicePathResp) Unpack(r io.Reader) error {
 	return nil
 }
 

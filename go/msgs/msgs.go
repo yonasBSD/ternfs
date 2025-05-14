@@ -2099,6 +2099,13 @@ type RegisterBlockServicesReq struct {
 
 type RegisterBlockServicesResp struct{}
 
+type UpdateBlockServicePathReq struct {
+	Id      BlockServiceId
+	NewPath string
+}
+
+type UpdateBlockServicePathResp struct{}
+
 type EraseDecommissionedBlockReq struct {
 	BlockServiceId BlockServiceId
 	BlockId        BlockId

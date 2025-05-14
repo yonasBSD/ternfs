@@ -117,6 +117,8 @@ func readShuckleResponse(
 		resp = &msgs.ShardsAtLocationResp{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		resp = &msgs.ShardBlockServicesResp{}
+	case msgs.UPDATE_BLOCK_SERVICE_PATH:
+		resp = &msgs.UpdateBlockServicePathResp{}
 	default:
 		return nil, fmt.Errorf("bad shuckle response kind %v", kind)
 	}
@@ -129,10 +131,10 @@ func readShuckleResponse(
 
 type ShuckleTimeouts struct {
 	ReconnectTimeout lib.ReqTimeouts
-	RequestTimeout time.Duration
+	RequestTimeout   time.Duration
 }
 
-var DefaultShuckleTimeout = ShuckleTimeouts {
+var DefaultShuckleTimeout = ShuckleTimeouts{
 	ReconnectTimeout: lib.ReqTimeouts{
 		Initial: 100 * time.Millisecond,
 		Max:     1 * time.Second,
@@ -142,7 +144,6 @@ var DefaultShuckleTimeout = ShuckleTimeouts {
 	},
 	RequestTimeout: 20 * time.Second,
 }
-
 
 func ShuckleRequest(
 	log *lib.Logger,
@@ -161,8 +162,8 @@ type shuckResp struct {
 }
 
 type shuckReq struct {
-	req   msgs.ShuckleRequest
-	respC chan<- shuckResp
+	req       msgs.ShuckleRequest
+	respC     chan<- shuckResp
 	startedAt time.Time
 }
 
@@ -320,7 +321,7 @@ func (c *ShuckleConn) Request(req msgs.ShuckleRequest) (msgs.ShuckleResponse, er
 	return resp.resp, resp.err
 }
 
-func (c *ShuckleConn) ShuckleAddress() string{
+func (c *ShuckleConn) ShuckleAddress() string {
 	return c.shuckleAddress
 }
 

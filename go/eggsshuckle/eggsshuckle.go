@@ -800,6 +800,29 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 	return &msgs.RegisterBlockServicesResp{}, nil
 }
 
+func handleUpdateBlockServicePath(ll *lib.Logger, s *state, req *msgs.UpdateBlockServicePathReq) (*msgs.UpdateBlockServicePathResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	n := sql.Named
+	res, err := s.db.Exec(
+		"UPDATE block_services SET path = :path WHERE id = :id",
+		n("path", req.NewPath), n("id", req.Id),
+	)
+	if err != nil {
+		return nil, err
+	}
+	nrows, err := res.RowsAffected()
+	if err != nil {
+		ll.RaiseAlert("error fetching the number of affected rows when setting path for %d: %s", req.Id, err)
+		return nil, err
+	}
+	if nrows != 1 {
+		return nil, fmt.Errorf("unexpected number of rows affected when setting path for %d, got:%d, want:1", req.Id, nrows)
+	}
+	return &msgs.UpdateBlockServicePathResp{}, nil
+}
+
 func setBlockServiceFilePresence(ll *lib.Logger, s *state, bsId msgs.BlockServiceId, hasFiles bool) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -1534,6 +1557,8 @@ func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleLocations(log, s, whichReq)
 	case *msgs.RegisterBlockServicesReq:
 		resp, err = handleRegisterBlockServices(log, s, whichReq)
+	case *msgs.UpdateBlockServicePathReq:
+		resp, err = handleUpdateBlockServicePath(log, s, whichReq)
 	case *msgs.CdcAtLocationReq:
 		resp, err = handleCdcAtLocation(log, s, whichReq)
 	case *msgs.ChangedBlockServicesAtLocationReq:
@@ -1713,6 +1738,8 @@ func readShuckleRequest(
 		req = &msgs.ShardsAtLocationReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
+	case msgs.UPDATE_BLOCK_SERVICE_PATH:
+		req = &msgs.UpdateBlockServicePathReq{}
 	default:
 		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
 	}
@@ -2896,7 +2923,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			}
 
 			if _, found := activeBlockServices[fd][bs.Path]; !found {
-				if _, found := activeBlockServices[fd][fmt.Sprintf("%s:%s",fd,bs.Path)]; !found {
+				if _, found := activeBlockServices[fd][fmt.Sprintf("%s:%s", fd, bs.Path)]; !found {
 					missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
 				}
 			}
@@ -3308,7 +3335,7 @@ func main() {
 					terminateChan <- err
 					return
 				}
-				if (atomic.AddInt64(&activeConnections, 1) > int64(*maxConnections)) {
+				if atomic.AddInt64(&activeConnections, 1) > int64(*maxConnections) {
 					conn.Close()
 					atomic.AddInt64(&activeConnections, -1)
 					continue

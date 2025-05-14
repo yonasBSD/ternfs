@@ -559,6 +559,9 @@ std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         out << "CLEAR_CDC_INFO";
         break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        out << "UPDATE_BLOCK_SERVICE_PATH";
+        break;
     case ShuckleMessageKind::EMPTY:
         out << "EMPTY";
         break;
@@ -4876,6 +4879,42 @@ std::ostream& operator<<(std::ostream& out, const ClearCdcInfoResp& x) {
     return out;
 }
 
+void UpdateBlockServicePathReq::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    buf.packBytes(newPath);
+}
+void UpdateBlockServicePathReq::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    buf.unpackBytes(newPath);
+}
+void UpdateBlockServicePathReq::clear() {
+    id = BlockServiceId(0);
+    newPath.clear();
+}
+bool UpdateBlockServicePathReq::operator==(const UpdateBlockServicePathReq& rhs) const {
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if (newPath != rhs.newPath) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const UpdateBlockServicePathReq& x) {
+    out << "UpdateBlockServicePathReq(" << "Id=" << x.id << ", " << "NewPath=" << GoLangQuotedStringFmt(x.newPath.data(), x.newPath.size()) << ")";
+    return out;
+}
+
+void UpdateBlockServicePathResp::pack(BincodeBuf& buf) const {
+}
+void UpdateBlockServicePathResp::unpack(BincodeBuf& buf) {
+}
+void UpdateBlockServicePathResp::clear() {
+}
+bool UpdateBlockServicePathResp::operator==(const UpdateBlockServicePathResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const UpdateBlockServicePathResp& x) {
+    out << "UpdateBlockServicePathResp(" << ")";
+    return out;
+}
+
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -8547,6 +8586,15 @@ ClearCdcInfoReq& ShuckleReqContainer::setClearCdcInfo() {
     auto& x = _data.emplace<26>();
     return x;
 }
+const UpdateBlockServicePathReq& ShuckleReqContainer::getUpdateBlockServicePath() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH);
+    return std::get<27>(_data);
+}
+UpdateBlockServicePathReq& ShuckleReqContainer::setUpdateBlockServicePath() {
+    _kind = ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH;
+    auto& x = _data.emplace<27>();
+    return x;
+}
 ShuckleReqContainer::ShuckleReqContainer() {
     clear();
 }
@@ -8645,6 +8693,9 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         setClearCdcInfo() = other.getClearCdcInfo();
         break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        setUpdateBlockServicePath() = other.getUpdateBlockServicePath();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -8712,6 +8763,8 @@ size_t ShuckleReqContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<25>(_data).packedSize();
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         return sizeof(ShuckleMessageKind) + std::get<26>(_data).packedSize();
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        return sizeof(ShuckleMessageKind) + std::get<27>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8800,6 +8853,9 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         std::get<26>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        std::get<27>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -8890,6 +8946,9 @@ void ShuckleReqContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         _data.emplace<26>().unpack(buf);
         break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        _data.emplace<27>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -8953,6 +9012,8 @@ bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
         return getMoveCdcLeader() == other.getMoveCdcLeader();
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         return getClearCdcInfo() == other.getClearCdcInfo();
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        return getUpdateBlockServicePath() == other.getUpdateBlockServicePath();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -9040,6 +9101,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         break;
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         out << x.getClearCdcInfo();
+        break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        out << x.getUpdateBlockServicePath();
         break;
     case ShuckleMessageKind::EMPTY:
         out << "EMPTY";
@@ -9302,6 +9366,15 @@ ClearCdcInfoResp& ShuckleRespContainer::setClearCdcInfo() {
     auto& x = _data.emplace<27>();
     return x;
 }
+const UpdateBlockServicePathResp& ShuckleRespContainer::getUpdateBlockServicePath() const {
+    ALWAYS_ASSERT(_kind == ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH);
+    return std::get<28>(_data);
+}
+UpdateBlockServicePathResp& ShuckleRespContainer::setUpdateBlockServicePath() {
+    _kind = ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH;
+    auto& x = _data.emplace<28>();
+    return x;
+}
 ShuckleRespContainer::ShuckleRespContainer() {
     clear();
 }
@@ -9403,6 +9476,9 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         setClearCdcInfo() = other.getClearCdcInfo();
         break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        setUpdateBlockServicePath() = other.getUpdateBlockServicePath();
+        break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
@@ -9472,6 +9548,8 @@ size_t ShuckleRespContainer::packedSize() const {
         return sizeof(ShuckleMessageKind) + std::get<26>(_data).packedSize();
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         return sizeof(ShuckleMessageKind) + std::get<27>(_data).packedSize();
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        return sizeof(ShuckleMessageKind) + std::get<28>(_data).packedSize();
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -9563,6 +9641,9 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         break;
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         std::get<27>(_data).pack(buf);
+        break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        std::get<28>(_data).pack(buf);
         break;
     default:
         throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
@@ -9656,6 +9737,9 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         _data.emplace<27>().unpack(buf);
         break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        _data.emplace<28>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -9721,6 +9805,8 @@ bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
         return getMoveCdcLeader() == other.getMoveCdcLeader();
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         return getClearCdcInfo() == other.getClearCdcInfo();
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        return getUpdateBlockServicePath() == other.getUpdateBlockServicePath();
     default:
         throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
@@ -9811,6 +9897,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         break;
     case ShuckleMessageKind::CLEAR_CDC_INFO:
         out << x.getClearCdcInfo();
+        break;
+    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        out << x.getUpdateBlockServicePath();
         break;
     case ShuckleMessageKind::EMPTY:
         out << "EMPTY";

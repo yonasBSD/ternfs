@@ -1958,6 +1958,11 @@ func main() {
 			reflect.TypeOf(msgs.ClearCdcInfoReq{}),
 			reflect.TypeOf(msgs.ClearCdcInfoResp{}),
 		},
+		{
+			0x25,
+			reflect.TypeOf(msgs.UpdateBlockServicePathReq{}),
+			reflect.TypeOf(msgs.UpdateBlockServicePathResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

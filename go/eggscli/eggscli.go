@@ -201,7 +201,6 @@ func main() {
 	var mbClient *client.Client
 	var clientMu sync.RWMutex
 
-
 	var localAddresses msgs.AddrsInfo
 	if len(addresses) > 0 {
 		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
@@ -831,6 +830,33 @@ func main() {
 	commands["decommission-blockservice"] = commandSpec{
 		flags: decommissionBlockserviceCmd,
 		run:   decommissionBlockserviceRun,
+	}
+
+	updateBlockservicePathCmd := flag.NewFlagSet("update-blockservice-path", flag.ExitOnError)
+	updateBlockservicePathId := updateBlockservicePathCmd.Int64("id", 0, "Block service id")
+	updateBlockserviceNewPath := updateBlockservicePathCmd.String("new-path", "", "New block service path")
+	updateBlockservicePathRun := func() {
+		if *updateBlockservicePathId == 0 {
+			fmt.Fprintf(os.Stderr, "must provide -id\n")
+			os.Exit(2)
+		}
+		if *updateBlockserviceNewPath == "" {
+			fmt.Fprintf(os.Stderr, "must provide -new-path\n")
+			os.Exit(2)
+		}
+		bsId := msgs.BlockServiceId(*updateBlockservicePathId)
+		log.Info("setting path to %s for block service %v", *updateBlockserviceNewPath, bsId)
+		_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.UpdateBlockServicePathReq{
+			Id:      bsId,
+			NewPath: *updateBlockserviceNewPath,
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+	commands["update-blockservice-path"] = commandSpec{
+		flags: updateBlockservicePathCmd,
+		run:   updateBlockservicePathRun,
 	}
 
 	fileSizesCmd := flag.NewFlagSet("file-sizes", flag.ExitOnError)

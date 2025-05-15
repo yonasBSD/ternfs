@@ -40,6 +40,7 @@ import (
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+	"xtx/eggsfs/msgs/public"
 	"xtx/eggsfs/wyhash"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -176,7 +177,7 @@ type BlockServiceInfoWithLocation struct {
 }
 
 // if flagsFilter&flags is non-zero, things won't be returned
-func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, flagsChangedBefore msgs.EggsTime, filterWithSpaceAvailable bool) (map[msgs.BlockServiceId]BlockServiceInfoWithLocation, error) {
+func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockServiceId, flagsFilter msgs.BlockServiceFlags, flagsChangedSince msgs.EggsTime, flagsChangedBefore msgs.EggsTime, filterWithSpaceAvailable bool, hostFilter string) (map[msgs.BlockServiceId]BlockServiceInfoWithLocation, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	n := sql.Named
@@ -194,6 +195,14 @@ func (s *state) selectBlockServices(locationId *msgs.Location, id *msgs.BlockSer
 	if id != nil {
 		q += " AND id = :id"
 		args = append(args, n("id", *id))
+	}
+	if len(hostFilter) > 0 {
+		// Even though we currently filter on failure domain, the aim is to query specific host.
+		// This will have to change when failure domain does not match hostname any more.
+		// Failure domain is stored as [16]byte so the string hostname needs to be converted to the same format.
+		q += " AND path like :failure_domain"
+		parts := strings.Split(hostFilter, ".")
+		args = append(args, n("failure_domain", parts[0]+":%"))
 	}
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -238,7 +247,7 @@ func (s *state) selectLocations() ([]msgs.LocationInfo, error) {
 
 func (s *state) selectNonReadableFailureDomains(locationId msgs.Location) ([]string, error) {
 
-	bs, err := s.selectBlockServices(&locationId, nil, 0, 0, msgs.Now(), false)
+	bs, err := s.selectBlockServices(&locationId, nil, 0, 0, msgs.Now(), false, "")
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +312,7 @@ func newState(
 		lowCapacityAlerts:           make(map[locStorageClass]*lib.XmonNCAlert),
 	}
 
-	blockServices, err := st.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
+	blockServices, err := st.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +430,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	lastBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 	for {
 		newBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
-		blockServicesMap, err := s.selectBlockServices(nil, nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, msgs.MakeEggsTime(time.Now().Add(-s.config.blockServiceDelay)), true)
+		blockServicesMap, err := s.selectBlockServices(nil, nil, msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE|msgs.EGGSFS_BLOCK_SERVICE_STALE|msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, 0, msgs.MakeEggsTime(time.Now().Add(-s.config.blockServiceDelay)), true, "")
 		if err != nil {
 			log.RaiseAlert("failed to select block services: %v", err)
 		}
@@ -650,7 +659,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesDeprecatedReq) (*msgs.AllBlockServicesDeprecatedResp, error) {
 	resp := msgs.AllBlockServicesDeprecatedResp{}
-	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
+	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -678,7 +687,7 @@ func handleLocalChangedBlockServices(ll *lib.Logger, s *state, req *msgs.LocalCh
 func handleChangedBlockServicesAtLocation(ll *lib.Logger, s *state, req *msgs.ChangedBlockServicesAtLocationReq) (*msgs.ChangedBlockServicesAtLocationResp, error) {
 	resp := msgs.ChangedBlockServicesAtLocationResp{}
 
-	blockServices, err := s.selectBlockServices(&req.LocationId, nil, 0, req.ChangedSince, msgs.Now(), false)
+	blockServices, err := s.selectBlockServices(&req.LocationId, nil, 0, req.ChangedSince, msgs.Now(), false, "")
 	if err != nil {
 		ll.RaiseAlert("error reading block services: %s", err)
 		return nil, err
@@ -852,7 +861,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 	rand.Seed(time.Now().UnixNano())
 
 	for {
-		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
+		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 		if err != nil {
 			ll.RaiseNC(blockServicesAlert, "error reading block services, will try again in %v: %s", sleepInterval, err)
 			time.Sleep(sleepInterval)
@@ -903,7 +912,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Dec
 		return nil, msgs.AUTO_DECOMMISSION_FORBIDDEN
 	}
 
-	blockServiceInfo, err := s.selectBlockServices(nil, &req.Id, 0, 0, msgs.Now(), false)
+	blockServiceInfo, err := s.selectBlockServices(nil, &req.Id, 0, 0, msgs.Now(), false, "")
 	if err != nil {
 		return nil, err
 	}
@@ -985,7 +994,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	if (req.FlagsMask&uint8(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) != 0 {
 		s.decommedBlockServicesMu.Lock()
 		defer s.decommedBlockServicesMu.Unlock()
-		bs, err := s.selectBlockServices(nil, &req.Id, 0, 0, msgs.Now(), false)
+		bs, err := s.selectBlockServices(nil, &req.Id, 0, 0, msgs.Now(), false, "")
 		if err != nil {
 			ll.RaiseAlert("couldnt select block service after decommissioning")
 		} else {
@@ -993,6 +1002,33 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 		}
 	}
 	return &msgs.SetBlockServiceFlagsResp{}, nil
+}
+
+func handleStorageHostStatus(ll *lib.Logger, s *state, req *public.StorageHostStatusReq) (*public.StorageHostStatusResp, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	bs, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, req.Hostname)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := public.StorageHostStatusResp{IsIdle: true, IsDrained: true}
+	for _, v := range bs {
+		if v.HasFiles {
+			ret.IsDrained = false
+		}
+		if v.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED {
+			ret.IsDrained = false
+			// Either D or NR|NW would qualify as idled.
+			// S is not considered intentional state.
+			if v.Flags&msgs.EGGSFS_BLOCK_SERVICE_NO_READ != msgs.EGGSFS_BLOCK_SERVICE_NO_READ ||
+				v.Flags&msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE != msgs.EGGSFS_BLOCK_SERVICE_NO_WRITE {
+				ret.IsIdle = false
+			}
+		}
+	}
+	return &ret, nil
 }
 
 func handleLocalShards(ll *lib.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.LocalShardsResp, error) {
@@ -1981,7 +2017,7 @@ func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServices, err := state.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
+			blockServices, err := state.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 			if err != nil {
 				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
@@ -2562,6 +2598,64 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 	)
 }
 
+func handlePublicRequestParsed(log *lib.Logger, s *state, req any) (any, error) {
+	log.Debug("handling request %T", req)
+	log.Trace("request body %+v", req)
+	var err error
+	var resp any
+	switch whichReq := req.(type) {
+	case *public.StorageHostStatusReq:
+		resp, err = handleStorageHostStatus(log, s, whichReq)
+	default:
+		err = fmt.Errorf("bad req type %T", req)
+	}
+	return resp, err
+}
+
+func handlePublic(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+	methodAllowed := http.MethodPost
+	handleWithRecover(
+		log, w, r, &methodAllowed,
+		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+			segments := strings.Split(r.URL.Path, "/")[1:]
+			if segments[0] != "public" {
+				panic(fmt.Errorf("bad path %v", r.URL.Path))
+			}
+			badUrl := func(what string) (io.ReadCloser, int64, int) {
+				return sendJsonErr(w, fmt.Errorf("expected /public/<req>, got %v (%v)", r.URL.Path, what), http.StatusBadRequest)
+			}
+			sendResponse := func(resp any) (io.ReadCloser, int64, int) {
+
+				out, err := json.Marshal(resp)
+				if err != nil {
+					return sendJsonErr(w, fmt.Errorf("could not marshal request: %v", err), http.StatusInternalServerError)
+				}
+				return sendJson(w, out)
+			}
+			switch segments[1] {
+			case "shuckle":
+				if len(segments) != 3 {
+					return badUrl("bad segments len")
+				}
+				req, _, err := public.MkPublicMessage(segments[2])
+				if err != nil {
+					return badUrl("bad ")
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
+				}
+				resp, err := handlePublicRequestParsed(log, st, req)
+				if err != nil {
+					return sendJsonErr(w, err, http.StatusInternalServerError)
+				}
+				return sendResponse(resp)
+			default:
+				return badUrl("bad api type")
+			}
+		},
+	)
+}
+
 //go:embed preact-10.18.1.module.js
 var preactJsStr []byte
 
@@ -2655,6 +2749,11 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 	http.HandleFunc(
 		"/api/",
 		func(w http.ResponseWriter, r *http.Request) { handleApi(log, st, w, r) },
+	)
+
+	http.HandleFunc(
+		"/public/",
+		func(w http.ResponseWriter, r *http.Request) { handlePublic(log, st, w, r) },
 	)
 
 	// pages
@@ -2881,7 +2980,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	nonReadableFailureDomainsAlert.SetAppType(appType)
 
 	for {
-		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false)
+		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 		if err != nil {
 			log.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)

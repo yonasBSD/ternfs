@@ -287,10 +287,11 @@ ReconnectBegin:
 					goto Reconnect
 				}
 			}
-			if opErr, ok := err.(*net.OpError); ok {
-				if dnsErr, ok := opErr.Err.(*net.DNSError); ok && (dnsErr.IsTemporary || dnsErr.IsTimeout) {
-					goto Reconnect
-				}
+			if opErr.Timeout() {
+				goto Reconnect
+			}
+			if dnsErr, ok := opErr.Err.(*net.DNSError); ok && (dnsErr.IsTemporary || dnsErr.IsTimeout) {
+				goto Reconnect
 			}
 		}
 		c.log.Info("could not connect to shuckle: %v", err)

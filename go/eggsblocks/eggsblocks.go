@@ -441,7 +441,7 @@ func (c *newToOldReadConverter) Read(p []byte) (int, error) {
 	return read, nil
 }
 
-func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool) error {
+func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, fileId msgs.InodeId) error {
 	if offset%msgs.EGGS_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
@@ -465,7 +465,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	}
 
 	if os.IsNotExist(err) {
-		log.ErrorNoAlert("could not find block to fetch at path %v", blockPath)
+		log.ErrorNoAlert("could not find block to fetch at path %v for file %v. Request from client: %v", blockPath, fileId, conn.RemoteAddr())
 		return msgs.BLOCK_NOT_FOUND
 	}
 
@@ -1016,12 +1016,12 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false, msgs.InodeId(0)); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockWithCrcReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true, whichReq.FileId); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}

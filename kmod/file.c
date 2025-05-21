@@ -880,7 +880,7 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     // If the owner doesn't have an mm anymore, it means that the file
     // is being torn down after the process has been terminated. In that case
     // we shouldn't even link the file.
-    if (enode->file.owner->mm != enode->file.mm) {
+    if (current->mm == NULL) {
         // abort everything
         atomic_cmpxchg(&enode->file.transient_err, 0, -EIO);
         goto out;

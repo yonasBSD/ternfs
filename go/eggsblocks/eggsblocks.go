@@ -595,7 +595,6 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		return syscall.EIO
 	}
 	if os.IsNotExist(err) {
-		log.RaiseAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
 	}
 	if err != nil {
@@ -632,7 +631,6 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 		return syscall.EIO
 	}
 	if os.IsNotExist(err) {
-		log.ErrorNoAlert("could not find block to fetch at path %v", blockPath)
 		return msgs.BLOCK_NOT_FOUND
 	}
 	if err != nil {

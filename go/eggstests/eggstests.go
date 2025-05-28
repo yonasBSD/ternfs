@@ -174,11 +174,8 @@ func setKmodDirRefreshTime(ms uint64) {
 	}
 }
 
-func mountKmod(shuckleAddr string, shuckleBeaconAddr string, mountPoint string) {
+func mountKmod(shuckleAddr string, mountPoint string) {
 	dev := shuckleAddr
-	if shuckleBeaconAddr != "" {
-		dev = fmt.Sprintf("%s,%s", shuckleBeaconAddr, shuckleAddr)
-	}
 	out, err := exec.Command("sudo", "mount", "-t", "eggsfs", dev, mountPoint).CombinedOutput()
 	if err != nil {
 		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
@@ -871,7 +868,6 @@ func main() {
 	shucklePortArg := flag.Uint("shuckle-port", 55555, "")
 	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
 	race := flag.Bool("race", false, "Go race detector")
-	shuckleBeaconPort := flag.Uint("shuckle-beacon-port", 0, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
@@ -958,7 +954,6 @@ func main() {
 			ShuckleExe:       path.Join(*binariesDir, "eggsshuckle"),
 			BlocksExe:        path.Join(*binariesDir, "eggsblocks"),
 			FuseExe:          path.Join(*binariesDir, "eggsfuse"),
-			ShuckleBeaconExe: path.Join(*binariesDir, "eggsshucklebeacon"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
@@ -1030,20 +1025,6 @@ func main() {
 
 	shucklePort := uint16(*shucklePortArg)
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
-
-	// Start shuckle beacon
-	var shuckleBeaconAddr string
-	if *shuckleBeaconPort != 0 {
-		shuckleBeaconAddr = fmt.Sprintf("127.0.0.1:%v", *shuckleBeaconPort)
-		shuckleBeaconOpts := &managedprocess.ShuckleBeaconOpts{
-			Exe:          goExes.ShuckleBeaconExe,
-			LogLevel:     level,
-			Dir:          path.Join(*dataDir, "shucklebeacon"),
-			Addr1:        shuckleBeaconAddr,
-			ShuckleAddr1: shuckleAddress,
-		}
-		procs.StartShuckleBeacon(log, shuckleBeaconOpts)
-	}
 
 	// Start shuckle
 	shuckleOpts := &managedprocess.ShuckleOpts{
@@ -1208,7 +1189,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		mountKmod(shuckleAddress, shuckleBeaconAddr, mountPoint)
+		mountKmod(shuckleAddress, mountPoint)
 		defer func() {
 			log.Info("about to unmount kmod mount")
 			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()

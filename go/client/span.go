@@ -735,7 +735,7 @@ func (c *Client) fetchRsSpan(log *lib.Logger,
 	bufPool *lib.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-	) (*lib.Buf, error){
+) (*lib.Buf, error){
 	body := span.Body.(*msgs.FetchedBlocksSpan)
 	blockSize := uint32(body.Stripes)*uint32(body.CellSize)
 

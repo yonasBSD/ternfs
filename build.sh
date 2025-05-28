@@ -30,7 +30,6 @@ binaries=(
     go/eggscli/eggscli
     go/eggsgc/eggsgc
     go/eggstests/eggstests
-    go/eggsshucklebeacon/eggsshucklebeacon
     go/eggsshuckleproxy/eggsshuckleproxy
 )
 

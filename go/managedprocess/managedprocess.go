@@ -479,12 +479,11 @@ type GoExes struct {
 	ShuckleExe       string
 	BlocksExe        string
 	FuseExe          string
-	ShuckleBeaconExe string
-	ShuckleProxyExe string
+	ShuckleProxyExe  string
 }
 
 func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
-	args := []string{"eggsshuckle", "eggsblocks", "eggsfuse", "eggsshucklebeacon"}
+	args := []string{"eggsshuckle", "eggsblocks", "eggsfuse"}
 	if race {
 		args = append(args, "--race")
 	}
@@ -500,8 +499,7 @@ func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
 		ShuckleExe:       path.Join(goDir(repoDir), "eggsshuckle", "eggsshuckle"),
 		BlocksExe:        path.Join(goDir(repoDir), "eggsblocks", "eggsblocks"),
 		FuseExe:          path.Join(goDir(repoDir), "eggsfuse", "eggsfuse"),
-		ShuckleBeaconExe: path.Join(goDir(repoDir), "eggsshucklebeacon", "eggsshucklebeacon"),
-		ShuckleProxyExe: path.Join(goDir(repoDir), "eggsshuckleproxy", "eggsshuckleproxy"),
+		ShuckleProxyExe:  path.Join(goDir(repoDir), "eggsshuckleproxy", "eggsshuckleproxy"),
 	}
 }
 
@@ -687,45 +685,6 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 		)
 	}
 	procs.Start(ll, &mpArgs)
-}
-
-type ShuckleBeaconOpts struct {
-	Exe          string
-	LogLevel     lib.LogLevel
-	Addr1        string
-	Addr2        string
-	ShuckleAddr1 string
-	ShuckleAddr2 string
-	Dir          string // just for logs
-}
-
-func (procs *ManagedProcesses) StartShuckleBeacon(ll *lib.Logger, opts *ShuckleBeaconOpts) {
-	createDataDir(opts.Dir)
-	args := []string{
-		"-log-file", path.Join(opts.Dir, "log"),
-		"-addr", opts.Addr1,
-		"-shuckle-1", opts.ShuckleAddr1,
-	}
-	if opts.LogLevel == lib.DEBUG {
-		args = append(args, "-verbose")
-	}
-	if opts.LogLevel == lib.TRACE {
-		args = append(args, "-trace")
-	}
-	if opts.Addr2 != "" {
-		args = append(args, "-addr", opts.Addr2)
-	}
-	if opts.ShuckleAddr2 != "" {
-		args = append(args, "-shuckle-2", opts.ShuckleAddr2)
-	}
-	procs.Start(ll, &ManagedProcessArgs{
-		Name:            "shucklebeacon",
-		Exe:             opts.Exe,
-		Args:            args,
-		StdoutFile:      path.Join(opts.Dir, "stdout"),
-		StderrFile:      path.Join(opts.Dir, "stderr"),
-		TerminateOnExit: true,
-	})
 }
 
 type BuildCppOpts struct {

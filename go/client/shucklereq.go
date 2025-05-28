@@ -105,8 +105,6 @@ func readShuckleResponse(
 		resp = &msgs.RenameLocationResp{}
 	case msgs.ALL_SHARDS:
 		resp = &msgs.AllShardsResp{}
-	case msgs.SHUCKLE:
-		resp = &msgs.ShuckleResp{}
 	case msgs.CDC_AT_LOCATION:
 		resp = &msgs.CdcAtLocationResp{}
 	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:

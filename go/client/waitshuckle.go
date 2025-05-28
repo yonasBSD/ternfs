@@ -40,7 +40,7 @@ func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockSe
 func WaitForShuckle(ll *lib.Logger, shuckleAddress string, timeout time.Duration) error {
 	t0 := time.Now()
 	for {
-		_, err := ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShuckleReq{})
+		_, err := ShuckleRequest(ll, nil, shuckleAddress, &msgs.InfoReq{})
 		if err == nil {
 			return nil
 		}

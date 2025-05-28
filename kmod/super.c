@@ -29,6 +29,8 @@ static void eggsfs_free_fs_info(struct eggsfs_fs_info* info) {
     eggsfs_debug("info=%p", info);
     cancel_delayed_work_sync(&info->shuckle_refresh_work);
     eggsfs_net_shard_free_socket(&info->sock);
+    put_net(info->shuckle_addr.net);
+    kfree(info->shuckle_addr.addr);
     kfree(info);
 }
 
@@ -36,7 +38,7 @@ static int eggsfs_refresh_fs_info(struct eggsfs_fs_info* info) {
     int err;
 
     struct socket* shuckle_sock;
-    err = eggsfs_create_shuckle_socket(&info->shuckle_addr1, &info->shuckle_addr2, &shuckle_sock);
+    err = eggsfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
     if (err < 0) { return err; }
 
     struct kvec iov;
@@ -451,20 +453,25 @@ static int eggsfs_parse_options(char* options, struct eggsfs_fs_info* eggsfs_inf
     return 0;
 }
 
-static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name, char* options) {
+static struct eggsfs_fs_info* eggsfs_init_fs_info(struct net* net, const char* dev_name, char* options) {
     int err;
 
-    struct eggsfs_fs_info* eggsfs_info = kmalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
+    struct eggsfs_fs_info* eggsfs_info = kzalloc(sizeof(struct eggsfs_fs_info), GFP_KERNEL);
     if (!eggsfs_info) { err = -ENOMEM; goto out; }
 
-    err = eggsfs_parse_shuckle_addr(dev_name, &eggsfs_info->shuckle_addr1, &eggsfs_info->shuckle_addr2);
-    if (err) { goto out_info; }
+    eggsfs_info->shuckle_addr.net = get_net(net);
+    eggsfs_info->shuckle_addr.addr = kmalloc(strlen(dev_name)+1, GFP_KERNEL);
+    if (!eggsfs_info->shuckle_addr.addr) {
+        err = -ENOMEM;
+        goto out_info;
+    }
+    memcpy(eggsfs_info->shuckle_addr.addr, dev_name, strlen(dev_name)+1);
 
     err = eggsfs_parse_options(options, eggsfs_info);
-    if (err) { goto out_info; }
+    if (err) { goto out_addr; }
 
     err = eggsfs_init_shard_socket(&eggsfs_info->sock);
-    if (err) { goto out_info; }
+    if (err) { goto out_addr; }
 
     // for the first update we will ask for everything that changed in last day.
     // this is more than enough time for any older changed to be visible to shards and propagated through block info
@@ -482,7 +489,10 @@ static struct eggsfs_fs_info* eggsfs_init_fs_info(const char* dev_name, char* op
 
 out_socket:
     eggsfs_net_shard_free_socket(&eggsfs_info->sock);
+out_addr:
+    kfree(eggsfs_info->shuckle_addr.addr);
 out_info:
+    put_net(eggsfs_info->shuckle_addr.net);
     kfree(eggsfs_info);
 out:
     return ERR_PTR(err);
@@ -527,7 +537,7 @@ static struct dentry* eggsfs_mount(struct file_system_type* fs_type, int flags, 
     eggsfs_info("mounting at %s", dev_name);
     eggsfs_debug("fs_type=%p flags=%d dev_name=%s data=%s", fs_type, flags, dev_name, data ? (char*)data : "");
 
-    struct eggsfs_fs_info* info = eggsfs_init_fs_info(dev_name, data);
+    struct eggsfs_fs_info* info = eggsfs_init_fs_info(current->nsproxy->net_ns, dev_name, data);
     if (IS_ERR(info)) { err = PTR_ERR(info); goto out_err; }
 
     struct super_block* sb = sget(fs_type, NULL, set_anon_super, flags, NULL);

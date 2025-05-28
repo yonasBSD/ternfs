@@ -4,6 +4,7 @@
 #include <linux/inet.h>
 
 #include "net.h"
+#include "shuckle.h"
 
 extern int eggsfs_shuckle_refresh_time_jiffies;
 extern unsigned int eggsfs_readahead_pages;
@@ -11,8 +12,7 @@ extern unsigned int eggsfs_readahead_pages;
 // We store addresses as atomics so that we can
 // easily refresh them.
 struct eggsfs_fs_info {
-    atomic64_t shuckle_addr1;
-    atomic64_t shuckle_addr2;
+    struct eggsfs_shuckle_addr shuckle_addr;
 
     struct eggsfs_metadata_socket sock;
 

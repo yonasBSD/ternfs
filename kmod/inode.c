@@ -451,7 +451,7 @@ static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 reque
 
         // FIXME: symlinks
         // if requests_mask is 0 then this is originating from stat() call and not statx and we should fill in basic stats
-        if (request_mask && !(request_mask & STATX_MTIME) && (S_ISDIR(inode->i_mode) || !(request_mask & STATX_SIZE))) {
+        if (request_mask && !(request_mask & STATX_MTIME) && (S_ISDIR(inode->i_mode) || !(request_mask & (STATX_ATIME | STATX_SIZE | STATX_BLOCKS)))) {
             goto done;
         }
 

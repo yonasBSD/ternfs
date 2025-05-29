@@ -173,11 +173,16 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
         BUG_ON(spin_is_locked(&span->lock));
         // free pages, adjust OOM score
         int num_pages = 0;
+        // We are not necessarily holding the last reference to a page here.
+        // We could have errored out before fully sending out the request.
+        // In which case network stack could still hold a reference to it.
+        // It is however fine to adjust the OOM score here as technically
+        // the file system is now responsible for this memory and it's no
+        // longer tied to the process lifetime.
 #define FREE_PAGES(__pages) \
         while (!list_empty(__pages)) { \
             struct page* victim = lru_to_page(__pages); \
             list_del(&victim->lru); \
-            WARN_ON_ONCE(atomic_read(&victim->_refcount) != 1); \
             put_page(victim); \
             num_pages++; \
         }

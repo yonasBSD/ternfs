@@ -177,7 +177,7 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
         while (!list_empty(__pages)) { \
             struct page* victim = lru_to_page(__pages); \
             list_del(&victim->lru); \
-            BUG_ON(atomic_read(&victim->_refcount) != 1); \
+            WARN_ON_ONCE(atomic_read(&victim->_refcount) != 1); \
             put_page(victim); \
             num_pages++; \
         }

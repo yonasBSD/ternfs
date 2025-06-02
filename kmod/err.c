@@ -62,6 +62,8 @@ bool eggsfs_unexpected_error(int err) {
     case EGGSFS_ERR_BAD_BLOCK_CRC: return true;
     case EGGSFS_ERR_BLOCK_TOO_BIG: return true;
     case EGGSFS_ERR_BLOCK_NOT_FOUND: return true;
+    case EGGSFS_ERR_BLOCK_IO_ERROR_FILE: return false;
+    case EGGSFS_ERR_BLOCK_IO_ERROR_DEVICE: return false;
     case -ERESTARTSYS: return false;
     case -ETIMEDOUT: return false;
     case -ECONNREFUSED: return false;
@@ -77,7 +79,6 @@ int eggsfs_error_to_linux(int err) {
     if (unexpected) {
         eggsfs_warn("unexpected eggsfs error %s (%d)", eggsfs_err_str(err), err);
     }
-    WARN_ON(unexpected);
     if (err <= 0) { return err; }
     switch (err) {
     case EGGSFS_ERR_INTERNAL_ERROR: return -EIO;
@@ -112,6 +113,8 @@ int eggsfs_error_to_linux(int err) {
     case EGGSFS_ERR_LOOP_IN_DIRECTORY_RENAME: return -ELOOP;
     case EGGSFS_ERR_MALFORMED_REQUEST: return -EIO;
     case EGGSFS_ERR_MALFORMED_RESPONSE: return -EIO;
+    case EGGSFS_ERR_BLOCK_IO_ERROR_FILE: return -EIO;
+    case EGGSFS_ERR_BLOCK_IO_ERROR_DEVICE: return -EIO;
     }
     return -EIO;
 }

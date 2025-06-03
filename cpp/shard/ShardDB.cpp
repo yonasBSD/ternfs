@@ -3105,13 +3105,7 @@ struct ShardDBImpl {
         const auto& cache = inMemoryBlockServiceData.blockServices.at(blockServiceId.u64);
         auto expectedProof = cbcmac(cache.secretKey, (uint8_t*)buf, sizeof(buf));
 
-        bool good = proof.proof == expectedProof;
-
-        if (!good) {
-            RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "bad block write proof for block service id %s, expected %s, got %s", blockServiceId, BincodeFixedBytes<8>(expectedProof), proof);
-        }
-
-        return good;
+        return proof.proof == expectedProof;
     }
 
     std::array<uint8_t, 8> _blockEraseCertificate(uint32_t blockSize, const BlockBody block, const AES128Key& secretKey) {

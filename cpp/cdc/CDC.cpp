@@ -85,8 +85,13 @@ static bool innocuousShardError(EggsError err) {
 //
 // DIRECTORY_HAS_OWNER can happen in gc (we clean it up and then remove
 // it, but somebody else might have created stuff in it in the meantime)
+//
+// DIRECTORY_NOT_FOUND can happen if a client unlinks a directory and sends a retry
+// after first transaction finished but before it got the response (or response got lost).
+// This will create a new transaction which can race with gc fully cleaning up the directory
+// (which can happen if it was empty).
 static bool rareInnocuousShardError(EggsError err) {
-    return err == EggsError::DIRECTORY_HAS_OWNER;
+    return err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::DIRECTORY_NOT_FOUND;
 }
 
 struct InFlightCDCRequestKey {

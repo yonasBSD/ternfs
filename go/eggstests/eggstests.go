@@ -319,7 +319,7 @@ func (r *RunTests) run(
 		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *client.ClientCounters) {
-			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, "")
+			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, apiHarness{})
 		},
 	)
 
@@ -328,7 +328,16 @@ func (r *RunTests) run(
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *client.ClientCounters) {
-			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, r.mountPoint)
+			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, posixHarness{r.mountPoint})
+		},
+	)
+
+	r.test(
+		log,
+		"s3 fs",
+		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+		func(counters *client.ClientCounters) {
+			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, s3Harness{})
 		},
 	)
 

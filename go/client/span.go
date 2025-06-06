@@ -933,6 +933,7 @@ type fileReader struct {
 	log           *lib.Logger
 	bufPool       *lib.BufPool
 	fileId        msgs.InodeId
+	fileSize int64 // if -1, we haven't initialized this yet
 	blockServices []msgs.BlockService
 	spans         []msgs.FetchedSpan
 	currentStripe *FetchedStripe
@@ -963,11 +964,32 @@ func (f *fileReader) Read(p []byte) (int, error) {
 	return r, nil
 }
 
+func (f *fileReader) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		f.cursor = uint64(offset)
+	case io.SeekCurrent:
+		f.cursor = uint64(int64(f.cursor) + offset)
+	case io.SeekEnd:
+		if f.fileSize < 0 {
+			resp := msgs.StatFileResp{}
+			if err := f.client.ShardRequest(f.log, f.fileId.Shard(), &msgs.StatFileReq{Id: f.fileId}, &resp); err != nil {
+				return 0, err
+			}
+			f.fileSize = int64(resp.Size)
+		}
+		f.cursor = uint64(f.fileSize + offset)
+	default:
+		return 0, fmt.Errorf("bad whence %v", whence)
+	}
+	return int64(f.cursor), nil
+}
+
 func (c *Client) ReadFile(
 	log *lib.Logger,
 	bufPool *lib.BufPool,
 	id msgs.InodeId,
-) (io.ReadCloser, error) {
+) (io.ReadSeekCloser, error) {
 	blockServices, spans, err := c.FetchSpans(log, id)
 	if err != nil {
 		return nil, err
@@ -977,6 +999,7 @@ func (c *Client) ReadFile(
 		log:           log,
 		bufPool:       bufPool,
 		fileId:        id,
+		fileSize:	   -1,
 		blockServices: blockServices,
 		spans:         spans,
 	}

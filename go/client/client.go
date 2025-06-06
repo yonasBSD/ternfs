@@ -177,6 +177,7 @@ type metadataProcessorRequest struct {
 type metadataProcessorResponse struct {
 	requestId uint64
 	resp      any
+	extra     any
 	err       error
 }
 
@@ -308,6 +309,7 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       err,
+					extra:     req.extra,
 					resp:      nil,
 				}
 			}
@@ -341,6 +343,7 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       err,
+					extra:     req.extra,
 					resp:      nil,
 				}
 			}
@@ -398,6 +401,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 		req.respCh <- &metadataProcessorResponse{
 			requestId: req.requestId,
 			err:       err,
+			extra:     req.extra,
 			resp:      nil,
 		}
 	} else {
@@ -409,6 +413,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       msgs.MALFORMED_RESPONSE,
+					extra:     req.extra,
 					resp:      nil,
 				}
 				return
@@ -420,6 +425,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       msgs.MALFORMED_RESPONSE,
+					extra:     req.extra,
 					resp:      nil,
 				}
 				return
@@ -431,6 +437,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 			req.respCh <- &metadataProcessorResponse{
 				requestId: req.requestId,
 				err:       err,
+				extra:     req.extra,
 				resp:      nil,
 			}
 			return
@@ -440,6 +447,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 		req.respCh <- &metadataProcessorResponse{
 			requestId: req.requestId,
 			err:       nil,
+			extra:     req.extra,
 			resp:      req.resp,
 		}
 	}
@@ -477,6 +485,7 @@ func (cm *clientMetadata) processRawResponse(log *lib.Logger, rawResp *rawMetada
 				first.respCh <- &metadataProcessorResponse{
 					requestId: first.requestId,
 					err:       msgs.TIMEOUT,
+					extra:     first.extra,
 					resp:      nil,
 				}
 			}()

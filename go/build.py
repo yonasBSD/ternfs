@@ -41,6 +41,7 @@ else:
     # Otherwise go will try to create the cache in /.cache, which won't work
     # since we're not running as root.
     os.environ['GOCACHE'] = '/eggsfs/.cache'
+    os.environ['GOMODCACHE'] = '/eggsfs/.go-cache'
     if args.generate:
         subprocess.run(['go', 'generate', './...'], cwd=go_dir, check=True)
     else:

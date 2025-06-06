@@ -3,11 +3,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -19,8 +24,12 @@ import (
 	"xtx/eggsfs/client"
 	"xtx/eggsfs/lib"
 	"xtx/eggsfs/msgs"
+	eggss3 "xtx/eggsfs/s3"
 	"xtx/eggsfs/wyhash"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	s3config "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"golang.org/x/sys/unix"
 )
 
@@ -43,7 +52,7 @@ type fsTestOpts struct {
 
 type fsTestHarness[Id comparable] interface {
 	createDirectory(log *lib.Logger, owner Id, name string) (Id, msgs.EggsTime)
-	rename(log *lib.Logger, targetId Id, oldOwner Id, oldCreationTime msgs.EggsTime, oldName string, newOwner Id, newName string) (Id, msgs.EggsTime)
+	rename(log *lib.Logger, isDirectory bool, targetId Id, oldOwner Id, oldCreationTime msgs.EggsTime, oldName string, newOwner Id, newName string) (Id, msgs.EggsTime)
 	createFile(log *lib.Logger, owner Id, spanSize uint32, name string, size uint64, dataSeed uint64) (Id, msgs.EggsTime)
 	checkFileData(log *lib.Logger, id Id, size uint64, dataSeed uint64)
 	// files, directories
@@ -71,6 +80,7 @@ func (c *apiFsTestHarness) createDirectory(log *lib.Logger, owner msgs.InodeId, 
 
 func (c *apiFsTestHarness) rename(
 	log *lib.Logger,
+	isDirectory bool,
 	targetId msgs.InodeId,
 	oldOwner msgs.InodeId,
 	oldCreationTime msgs.EggsTime,
@@ -78,6 +88,9 @@ func (c *apiFsTestHarness) rename(
 	newOwner msgs.InodeId,
 	newName string,
 ) (msgs.InodeId, msgs.EggsTime) {
+	if isDirectory != (targetId.Type() == msgs.DIRECTORY) {
+		panic("mismatching isDirectory")
+	}
 	if oldOwner == newOwner {
 		req := msgs.SameDirectoryRenameReq{
 			TargetId:        targetId,
@@ -199,6 +212,182 @@ func (c *apiFsTestHarness) removeDirectory(log *lib.Logger, ownerId msgs.InodeId
 
 var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 
+type s3TestHarness struct {
+	client  *s3.Client
+	bucket  string
+	bufPool *lib.BufPool
+}
+
+func (c *s3TestHarness) createDirectory(log *lib.Logger, owner string, name string) (id string, creationTime msgs.EggsTime) {
+	fullPath := path.Join(owner, name) + "/"
+	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(fullPath),
+		Body:   bytes.NewReader([]byte{}),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return path.Join(owner, name), 0
+}
+
+func (c *s3TestHarness) rename(log *lib.Logger, isDirectory bool, targetFullPath string, oldDir string, oldCreationTime msgs.EggsTime, oldName string, newDir string, newName string) (string, msgs.EggsTime) {
+	if targetFullPath != path.Join(oldDir, oldName) {
+		panic(fmt.Errorf("mismatching %v and %v", targetFullPath, path.Join(oldDir, oldName)))
+	}
+	sourcePath := targetFullPath
+	if isDirectory {
+		sourcePath += "/"
+	}
+	sinkPath := path.Join(newDir, newName)
+	if isDirectory {
+		sinkPath += "/"
+	}
+	output, err := c.client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(sourcePath),
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer output.Body.Close()
+	outputSize := *output.ContentLength
+	outputBuf := c.bufPool.Get(int(outputSize))
+	defer c.bufPool.Put(outputBuf)
+	if _, err := io.ReadFull(output.Body, outputBuf.Bytes()); err != nil {
+		panic(err)
+	}
+	_, err = c.client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(sinkPath),
+		Body:   bytes.NewReader(outputBuf.Bytes()),
+	})
+	if err != nil {
+		panic(err)
+	}
+	_, err = c.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(sourcePath),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return path.Join(newDir, newName), 0
+}
+
+func (c *s3TestHarness) createFile(log *lib.Logger, owner string, spanSize uint32, name string, size uint64, dataSeed uint64) (string, msgs.EggsTime) {
+	fullPath := path.Join(owner, name)
+	rand := wyhash.New(dataSeed)
+	bodyBuf := c.bufPool.Get(int(size))
+	defer c.bufPool.Put(bodyBuf)
+	body := bodyBuf.Bytes()
+	rand.Read(body)
+	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(fullPath),
+		Body:   bytes.NewReader(body),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return fullPath, 0
+}
+
+func (c *s3TestHarness) checkFileData(log *lib.Logger, filePath string, size uint64, dataSeed uint64) {
+	fullSize := int(size)
+	expectedData := c.bufPool.Get(fullSize)
+	defer c.bufPool.Put(expectedData)
+	rand := wyhash.New(dataSeed)
+	rand.Read(expectedData.Bytes())
+	actualData := c.bufPool.Get(fullSize)
+	defer c.bufPool.Put(actualData)
+
+	// First do some random reads, hopefully stimulating span caches in some interesting way
+	if fullSize > 1 {
+		for i := 0; i < 10; i++ {
+			func() {
+				offset := int(rand.Uint64() % uint64(fullSize-1))
+				size := 1 + int(rand.Uint64()%uint64(fullSize-offset-1))
+				log.Debug("reading from %v to %v in file of size %v", offset, offset+size, fullSize)
+				expectedPartialData := expectedData.Bytes()[offset : offset+size]
+				actualPartialData := actualData.Bytes()[offset : offset+size]
+				output, err := c.client.GetObject(context.TODO(), &s3.GetObjectInput{
+					Bucket: aws.String(c.bucket),
+					Key:    aws.String(filePath),
+					Range:  aws.String(fmt.Sprintf("bytes=%v-%v", offset, offset+size-1)),
+				})
+				if err != nil {
+					panic(err)
+				}
+				if _, err := io.ReadFull(output.Body, actualPartialData); err != nil {
+					panic(err)
+				}
+				checkFileData(filePath, offset, offset+size, actualPartialData, expectedPartialData)
+			}()
+		}
+	}
+	// Then we check the whole thing
+	output, err := c.client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(filePath),
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer output.Body.Close()
+	if _, err := io.ReadFull(output.Body, actualData.Bytes()); err != nil {
+		panic(err)
+	}
+	checkFileData(filePath, 0, fullSize, actualData.Bytes(), expectedData.Bytes())
+}
+
+func (c *s3TestHarness) readDirectory(log *lib.Logger, dir string) (files []string, directories []string) {
+	files = []string{}
+	directories = []string{}
+
+	paginator := s3.NewListObjectsV2Paginator(c.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(dir + "/"),
+	})
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.TODO())
+		if err != nil {
+			panic(err)
+		}
+		for i := range page.Contents {
+			files = append(files, filepath.Base(*page.Contents[i].Key))
+		}
+		for i := range page.CommonPrefixes {
+			directories = append(directories, filepath.Base(*page.CommonPrefixes[i].Prefix))
+		}
+	}
+
+	return files, directories
+}
+
+func (c *s3TestHarness) removeFile(log *lib.Logger, dir string, name string) {
+	_, err := c.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(path.Join(dir, name)),
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (c *s3TestHarness) removeDirectory(log *lib.Logger, dir string, name string) {
+	_, err := c.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(path.Join(dir, name) + "/"),
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
+var _ = (fsTestHarness[string])((*s3TestHarness)(nil))
+
 type posixFsTestHarness struct {
 	bufPool      *lib.BufPool
 	readWithMmap bool
@@ -215,6 +404,7 @@ func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name s
 
 func (*posixFsTestHarness) rename(
 	log *lib.Logger,
+	isDirectory bool,
 	targetFullPath string,
 	oldDir string,
 	oldCreationTime msgs.EggsTime,
@@ -489,7 +679,7 @@ func (state *fsTestState[Id]) makeDirFromTemp(log *lib.Logger, harness fsTestHar
 	}
 	state.incrementDirs(log, opts)
 	id, tmpCreationTime = harness.createDirectory(log, tmpParentId, "tmp")
-	newId, creationTime := harness.rename(log, id, tmpParentId, tmpCreationTime, "tmp", dir.id, strconv.Itoa(name))
+	newId, creationTime := harness.rename(log, true, id, tmpParentId, tmpCreationTime, "tmp", dir.id, strconv.Itoa(name))
 	dir.children.directories[name] = fsTestChild[fsTestDir[Id]]{
 		body:         *newFsTestDir(newId),
 		creationTime: creationTime,
@@ -565,7 +755,7 @@ func (state *fsTestState[Id]) makeFileFromTemp(log *lib.Logger, harness fsTestHa
 	id, creationTime := harness.createFile(
 		log, tmpParentId, uint32(opts.spanSize), "tmp", size, dataSeed,
 	)
-	newId, creationTime := harness.rename(log, id, tmpParentId, creationTime, "tmp", dir.id, strconv.Itoa(name))
+	newId, creationTime := harness.rename(log, false, id, tmpParentId, creationTime, "tmp", dir.id, strconv.Itoa(name))
 	dir.children.files[name] = fsTestChild[fsTestFile[Id]]{
 		body: fsTestFile[Id]{
 			id:       newId,
@@ -1016,12 +1206,64 @@ func fsTestInternal[Id comparable](
 	log.Info("cleaned files in %s", time.Since(t0))
 }
 
+// createS3ClientFromURL parses a path-style S3 URL and returns an S3 client.
+// The client is configured for anonymous access and uses the URL's host as the endpoint.
+func createS3ClientFromURL(s3URL string) (client *s3.Client, bucket string) {
+	// Parse the provided URL string.
+	parsedURL, err := url.Parse(s3URL)
+	if err != nil {
+		panic(err)
+	}
+
+	// The first segment of the path is the bucket name.
+	// We need to trim the leading slash.
+	bucket = strings.Split(strings.TrimPrefix(parsedURL.Path, "/"), "/")[0]
+	if bucket == "" {
+		panic(fmt.Errorf("could not determine bucket from URL path"))
+	}
+
+	// The endpoint is the scheme and host from the URL.
+	endpoint := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+
+	// Load AWS configuration, specifying no credentials for anonymous access.
+	cfg, err := s3config.LoadDefaultConfig(context.TODO(),
+		s3config.WithCredentialsProvider(aws.AnonymousCredentials{}),
+		s3config.WithRegion("us-east-1"), // A region is required, but not used for path-style requests.
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	// Create the S3 client.
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		// Set the endpoint resolver to our custom endpoint.
+		o.BaseEndpoint = aws.String(endpoint)
+		// Force path-style addressing, which is crucial.
+		o.UsePathStyle = true
+	})
+
+	return s3Client, bucket
+}
+
+type posixHarness struct {
+	mountPoint string
+}
+type s3Harness struct {}
+type apiHarness struct {}
+
+type WhichHarness interface {
+	isHarness()
+}
+func (posixHarness) isHarness() {}
+func (s3Harness) isHarness() {}
+func (apiHarness) isHarness() {}
+
 func fsTest(
 	log *lib.Logger,
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *client.ClientCounters,
-	realFs string, // if non-empty, will run the tests using this mountpoint
+	harnessType WhichHarness,
 ) {
 	c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 	if err != nil {
@@ -1030,7 +1272,18 @@ func fsTest(
 	c.SetFetchBlockServices()
 	defer c.Close()
 	c.SetCounters(counters)
-	if realFs == "" {
+	switch h := harnessType.(type) {
+	case posixHarness:
+		harness := &posixFsTestHarness{
+			bufPool:      lib.NewBufPool(),
+			readWithMmap: opts.readWithMmap,
+		}
+		state := fsTestState[string]{
+			totalDirs: 1, // root dir
+			rootDir:   *newFsTestDir(h.mountPoint),
+		}
+		fsTestInternal[string](log, c, &state, shuckleAddress, opts, counters, harness, h.mountPoint)
+	case apiHarness:
 		harness := &apiFsTestHarness{
 			client:       c,
 			dirInfoCache: client.NewDirInfoCache(),
@@ -1041,15 +1294,37 @@ func fsTest(
 			rootDir:   *newFsTestDir(msgs.ROOT_DIR_INODE_ID),
 		}
 		fsTestInternal[msgs.InodeId](log, c, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
-	} else {
-		harness := &posixFsTestHarness{
-			bufPool:      lib.NewBufPool(),
-			readWithMmap: opts.readWithMmap,
+	case s3Harness:
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			panic(err)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		bufPool := lib.NewBufPool()
+		server := eggss3.NewS3Server(log, c, bufPool, client.NewDirInfoCache(), map[string]string{"bucket": "/"}, "")
+		go http.Serve(listener, server)
+		cfg, err := s3config.LoadDefaultConfig(context.TODO(),
+			s3config.WithCredentialsProvider(aws.AnonymousCredentials{}),
+			s3config.WithRegion("us-east-1"), // A region is required, but not used for path-style requests.
+		)
+		if err != nil {
+			panic(err)
+		}
+		s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(fmt.Sprintf("http://127.0.0.1:%v", port))
+			o.UsePathStyle = true
+		})
+		harness := &s3TestHarness{
+			bucket: "bucket",
+			client: s3Client,
+			bufPool: bufPool,
 		}
 		state := fsTestState[string]{
 			totalDirs: 1, // root dir
-			rootDir:   *newFsTestDir(realFs),
+			rootDir:   *newFsTestDir("/"),
 		}
-		fsTestInternal[string](log, c, &state, shuckleAddress, opts, counters, harness, realFs)
+		fsTestInternal[string](log, c, &state, shuckleAddress, opts, counters, harness, "/")
+	default:
+		panic(fmt.Errorf("bad harness %T", harnessType))
 	}
 }

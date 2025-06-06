@@ -15,6 +15,7 @@
 #include "AssertiveLock.hpp"
 #include "CDCDBData.hpp"
 #include "Common.hpp"
+#include "Env.hpp"
 #include "Exception.hpp"
 #include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
@@ -832,6 +833,7 @@ struct SoftUnlinkDirectoryStateMachine {
         if (err == EggsError::TIMEOUT) {
             lockEdge(true);
         } else if (err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_FOUND) {
+            LOG_INFO(env.env, "failed locking edge in soft unlink for req: %s with err: %s", req, err);
             env.finishWithError(err); // no rollback to be done
         } else {
             ALWAYS_ASSERT(err == EggsError::NO_ERROR);

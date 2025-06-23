@@ -22,7 +22,6 @@ struct CDCOptions {
     bool metrics = false;
     ReplicaId replicaId;
     uint8_t location;
-    std::string appNameSuffix;
 
     std::string dbDir;
 

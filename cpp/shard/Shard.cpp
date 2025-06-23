@@ -2155,7 +2155,7 @@ void runShard(ShardOptions& options) {
         XmonConfig config;
         {
             std::ostringstream ss;
-            ss << "eggsshard" << options.appNameSuffix << "_" << std::setfill('0') << std::setw(3) << options.shrid.shardId() << "_" << options.shrid.replicaId();
+            ss << "eggsshard_" << std::setfill('0') << std::setw(3) << options.shrid.shardId() << "_" << options.shrid.replicaId();
             config.appInstance =  ss.str();
         }
         config.prod = options.xmonProd;

@@ -32,8 +32,6 @@ void usage(const char* binary) {
     fprintf(stderr, " -logsdb-no-replication\n");
     fprintf(stderr, "    	Don't wait for acks from other replicas when becoming leader or replicating.\n");
     fprintf(stderr, "    	Can only be set if -logsdb-leader is also set. Default is false\n");
-    fprintf(stderr, " -app-name-suffix suffix\n");
-    fprintf(stderr, "    	Suffix to use in app name, app name format is 'eggscdc{suffix}_shardId_replicaId'\n");
 }
 
 static bool parseIpv4(const std::string& arg, sockaddr_in& addrOut) {
@@ -174,8 +172,6 @@ int main(int argc, char** argv) {
             options.avoidBeingLeader = false;
         } else if (arg == "-logsdb-no-replication") {
             options.noReplication = true;
-        } else if (arg == "-app-name-suffix") {
-            options.appNameSuffix = getNextArg();
         } else {
             args.emplace_back(std::move(arg));
         }

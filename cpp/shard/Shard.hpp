@@ -9,7 +9,6 @@
 struct ShardOptions {
     ShardReplicaId shrid;
     uint8_t location = 0;
-    std::string appNameSuffix;
     std::string dbDir;
 
     uint16_t port;

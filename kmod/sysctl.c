@@ -134,6 +134,7 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
     EGGSFS_CTL_UINT(max_write_span_attempts),
     EGGSFS_CTL_UINT(atime_update_interval_sec),
     EGGSFS_CTL_UINT(file_io_timeout_sec),
+    EGGSFS_CTL_UINT(file_io_retry_refresh_span_interval_sec),
     EGGSFS_CTL_UINT(disable_ftruncate),
 
     {

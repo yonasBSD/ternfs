@@ -23,6 +23,8 @@ unsigned eggsfs_atime_update_interval_sec = 0;
 
 unsigned eggsfs_file_io_timeout_sec = 86400;
 
+unsigned eggsfs_file_io_retry_refresh_span_interval_sec = 60; // 1 minute interval for refreshing spans during IO retries
+
 unsigned eggsfs_max_write_span_attempts = 5;
 
 static struct kmem_cache* eggsfs_transient_span_cachep;
@@ -1222,9 +1224,9 @@ static int file_readpage(struct file* filp, struct page* page) {
     int err = 0;
 
     struct eggsfs_span* span = NULL;
-    int span_read_attempts = 0;
 
     struct timespec64 start_ts = ns_to_timespec64(ktime_get_real_ns());
+    struct timespec64 last_span_refresh_ts = ns_to_timespec64(0);
 
 retry:
     span = eggsfs_get_span(enode, off);
@@ -1276,19 +1278,18 @@ retry:
         process_file_pages(filp->f_mapping, &extra_pages, 0);
         if (err) {
             put_pages_list(&pages);
-            if (span_read_attempts == 0) {
-                // see comment in read_file_iter for rationale here
-                eggsfs_warn("reading page %lld in file %016lx failed with error %d, retrying since it's the first attempt, and the span structure might have changed in the meantime", off, enode->inode.i_ino, err);
-                eggsfs_unlink_span(enode, span);
-                span_read_attempts++;
-                goto retry;
-            }
             struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
-            if ((end_ts.tv_sec - start_ts.tv_sec) < eggsfs_file_io_timeout_sec) {
-                goto retry;
+            eggsfs_warn("reading page %lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
+            if ((end_ts.tv_sec - start_ts.tv_sec) > eggsfs_file_io_timeout_sec) {
+                eggsfs_warn("io timeout while reading page at off=%lld in file %016lx last error %d", off, enode->inode.i_ino, err);
+                goto out;
             }
-            eggsfs_warn("reading page at off=%lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
-            goto out;
+            if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > eggsfs_file_io_retry_refresh_span_interval_sec) {
+                eggsfs_info("refreshing span %lld of file %016lx as the span structure or block service flags could have changed in the meantime", off, enode->inode.i_ino);
+                eggsfs_unlink_span(enode, span);
+                last_span_refresh_ts = end_ts;
+            }
+            goto retry;
         }
         list_del(&stripe_page->lru);
 

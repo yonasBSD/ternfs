@@ -6,6 +6,7 @@
 extern unsigned eggsfs_atime_update_interval_sec;
 extern unsigned eggsfs_max_write_span_attempts;
 extern unsigned eggsfs_file_io_timeout_sec;
+extern unsigned eggsfs_file_io_retry_refresh_span_interval_sec;
 
 extern int eggsfs_file_getattr_refresh_time_jiffies; // this is only relevant for mtime/atime updates
 

@@ -3038,20 +3038,20 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			if !bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
 			}
-			fd := bs.FailureDomain.String()
+			pathPrefix := strings.Split(bs.Path, ":")[0]
 			// transient files should go away within 36 hours of decommissioning
 			if bs.HasFiles && bs.FlagsLastChanged < msgs.MakeEggsTime(time.Now().Add(-36*time.Hour)) {
 				decommedWithFiles[fmt.Sprintf("%v,%q", bs.Id, bs.Path)] = struct{}{}
 			}
 
-			if _, found := activeBlockServices[fd]; !found {
+			if _, found := activeBlockServices[pathPrefix]; !found {
 				// don't alert for whole servers down
 				continue
 			}
 
-			if _, found := activeBlockServices[fd][bs.Path]; !found {
-				if _, found := activeBlockServices[fd][fmt.Sprintf("%s:%s", fd, bs.Path)]; !found {
-					missingBlockServices[fmt.Sprintf("%q", bs.Path)] = struct{}{}
+			if _, found := activeBlockServices[pathPrefix][bs.Path]; !found {
+				if _, found := activeBlockServices[pathPrefix][bs.Path]; !found {
+					missingBlockServices[bs.Path] = struct{}{}
 				}
 			}
 		}

@@ -121,7 +121,7 @@ static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContai
     return {};
 }
 
-std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceInfo>& blockServices, std::vector<BlockServiceInfoShort>& currentBlockServices) {
+std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<BlockServiceDeprecatedInfo>& blockServices, std::vector<BlockServiceInfoShort>& currentBlockServices) {
     blockServices.clear();
     currentBlockServices.clear();
 
@@ -175,7 +175,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     // shuckle should guarantee that when sending response but verify the invariant
     {
         std::unordered_set<uint64_t> knownBlockServices;
-        std::unordered_map<uint64_t, const BlockServiceInfo* > bsIdToBlockService;
+        std::unordered_map<uint64_t, const BlockServiceDeprecatedInfo* > bsIdToBlockService;
         std::unordered_set<std::string> fdSet;
         for (const auto& bs : blockServices) {
             knownBlockServices.insert(bs.id.u64);

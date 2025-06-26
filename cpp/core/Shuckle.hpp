@@ -19,7 +19,7 @@ std::pair<int, std::string> fetchBlockServices(
     uint16_t shucklePort,
     Duration timeout,
     ShardId shid,
-    std::vector<BlockServiceInfo>& blockServices,
+    std::vector<BlockServiceDeprecatedInfo>& blockServices,
     std::vector<BlockServiceInfoShort>& currentBlockServices
 );
 

@@ -647,7 +647,7 @@ func main() {
 			panic(err)
 		}
 		blockServices := resp.(*msgs.AllBlockServicesDeprecatedResp)
-		var blockServiceInfo msgs.BlockServiceInfo
+		var blockServiceInfo msgs.BlockServiceDeprecatedInfo
 		for _, bsInfo := range blockServices.BlockServices {
 			if bsInfo.Id == msgs.BlockServiceId(*blockReqBlockService) {
 				blockServiceInfo = bsInfo
@@ -684,7 +684,7 @@ func main() {
 			panic(err)
 		}
 		blockServices := resp.(*msgs.AllBlockServicesDeprecatedResp)
-		bsInfos := []msgs.BlockServiceInfo{}
+		bsInfos := []msgs.BlockServiceDeprecatedInfo{}
 		for _, str := range strings.Split(*testBlockWriteBlockService, ",") {
 			bsId, err := strconv.ParseUint(str, 0, 64)
 			if err != nil {

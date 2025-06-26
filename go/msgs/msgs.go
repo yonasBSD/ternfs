@@ -1872,7 +1872,7 @@ type AddInlineSpanEntry struct {
 	Body         []byte
 }
 
-type BlockServiceInfo struct {
+type BlockServiceDeprecatedInfo struct {
 	Id               BlockServiceId
 	Addrs            AddrsInfo
 	StorageClass     StorageClass
@@ -2056,7 +2056,7 @@ type SetBlockServiceFlagsResp struct{}
 type AllBlockServicesDeprecatedReq struct{}
 
 type AllBlockServicesDeprecatedResp struct {
-	BlockServices []BlockServiceInfo
+	BlockServices []BlockServiceDeprecatedInfo
 }
 
 type LocalChangedBlockServicesReq struct {

@@ -4614,7 +4614,7 @@ func (v *EntryNewBlockInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *BlockServiceInfo) Pack(w io.Writer) error {
+func (v *BlockServiceDeprecatedInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
 		return err
 	}
@@ -4657,7 +4657,7 @@ func (v *BlockServiceInfo) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *BlockServiceInfo) Unpack(r io.Reader) error {
+func (v *BlockServiceDeprecatedInfo) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
 		return err
 	}

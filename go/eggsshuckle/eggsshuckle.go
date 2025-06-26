@@ -98,7 +98,7 @@ type state struct {
 	decomMutex    sync.Mutex
 	lastAutoDecom time.Time
 	// speed up generating proof for decommed block deletion
-	decommedBlockServices   map[msgs.BlockServiceId]msgs.BlockServiceInfo
+	decommedBlockServices   map[msgs.BlockServiceId]msgs.BlockServiceDeprecatedInfo
 	decommedBlockServicesMu sync.RWMutex
 	// periodically calculated evenly spread writable block services across all shards
 	currentShardBlockServices   map[msgs.ShardId][]msgs.BlockServiceInfoShort
@@ -172,7 +172,7 @@ func (s *state) selectShards(locationId msgs.Location) (*[256]msgs.ShardInfo, er
 }
 
 type BlockServiceInfoWithLocation struct {
-	msgs.BlockServiceInfo
+	msgs.BlockServiceDeprecatedInfo
 	LocationId msgs.Location
 }
 
@@ -303,7 +303,7 @@ func newState(
 		fsInfoLastUpdate:            time.Time{},
 		fsInfo:                      msgs.InfoResp{},
 		config:                      conf,
-		decommedBlockServices:       make(map[msgs.BlockServiceId]msgs.BlockServiceInfo),
+		decommedBlockServices:       make(map[msgs.BlockServiceId]msgs.BlockServiceDeprecatedInfo),
 		decommedBlockServicesMu:     sync.RWMutex{},
 		currentShardBlockServices:   make(map[msgs.ShardId][]msgs.BlockServiceInfoShort),
 		currentShardBlockServicesMu: sync.RWMutex{},
@@ -320,7 +320,7 @@ func newState(
 		if bs.Flags&msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED == 0 {
 			continue
 		}
-		st.decommedBlockServices[id] = bs.BlockServiceInfo
+		st.decommedBlockServices[id] = bs.BlockServiceDeprecatedInfo
 	}
 	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
 	for _, k := range msgs.AllShuckleMessageKind {
@@ -665,10 +665,10 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 		return nil, err
 	}
 
-	resp.BlockServices = make([]msgs.BlockServiceInfo, len(blockServices))
+	resp.BlockServices = make([]msgs.BlockServiceDeprecatedInfo, len(blockServices))
 	i := 0
 	for _, bs := range blockServices {
-		resp.BlockServices[i] = bs.BlockServiceInfo
+		resp.BlockServices[i] = bs.BlockServiceDeprecatedInfo
 		i++
 	}
 
@@ -998,7 +998,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 		if err != nil {
 			ll.RaiseAlert("couldnt select block service after decommissioning")
 		} else {
-			s.decommedBlockServices[req.Id] = bs[req.Id].BlockServiceInfo
+			s.decommedBlockServices[req.Id] = bs[req.Id].BlockServiceDeprecatedInfo
 		}
 	}
 	return &msgs.SetBlockServiceFlagsResp{}, nil

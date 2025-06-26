@@ -2066,7 +2066,7 @@ func main() {
 	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
-		reflect.TypeOf(msgs.BlockServiceInfo{}),
+		reflect.TypeOf(msgs.BlockServiceDeprecatedInfo{}),
 		reflect.TypeOf(msgs.BlockServiceInfoShort{}),
 
 		reflect.TypeOf(msgs.SpanPolicy{}),

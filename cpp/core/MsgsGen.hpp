@@ -1176,7 +1176,7 @@ struct EntryNewBlockInfo {
 
 std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x);
 
-struct BlockServiceInfo {
+struct BlockServiceDeprecatedInfo {
     BlockServiceId id;
     AddrsInfo addrs;
     uint8_t storageClass;
@@ -1193,7 +1193,7 @@ struct BlockServiceInfo {
 
     static constexpr uint16_t STATIC_SIZE = 8 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 1 + 8; // id + addrs + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen + hasFiles + flagsLastChanged
 
-    BlockServiceInfo() { clear(); }
+    BlockServiceDeprecatedInfo() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1214,10 +1214,10 @@ struct BlockServiceInfo {
     void pack(BincodeBuf& buf) const;
     void unpack(BincodeBuf& buf);
     void clear();
-    bool operator==(const BlockServiceInfo&rhs) const;
+    bool operator==(const BlockServiceDeprecatedInfo&rhs) const;
 };
 
-std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x);
+std::ostream& operator<<(std::ostream& out, const BlockServiceDeprecatedInfo& x);
 
 struct BlockServiceInfoShort {
     uint8_t locationId;
@@ -4541,9 +4541,9 @@ struct AllBlockServicesDeprecatedReq {
 std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedReq& x);
 
 struct AllBlockServicesDeprecatedResp {
-    BincodeList<BlockServiceInfo> blockServices;
+    BincodeList<BlockServiceDeprecatedInfo> blockServices;
 
-    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfo>::STATIC_SIZE; // blockServices
+    static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceDeprecatedInfo>::STATIC_SIZE; // blockServices
 
     AllBlockServicesDeprecatedResp() { clear(); }
     size_t packedSize() const {

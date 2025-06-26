@@ -1150,7 +1150,7 @@ func fsTestInternal[Id comparable](
 			panic(err)
 		}
 		blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
-		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceInfo)
+		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceDeprecatedInfo)
 		for i := range blockServices.BlockServices {
 			blockServicesById[blockServices.BlockServices[i].Id] = &blockServices.BlockServices[i]
 		}

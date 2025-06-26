@@ -1826,7 +1826,7 @@ private:
     std::string _shuckleHost;
     uint16_t _shucklePort;
     XmonNCAlert _alert;
-    std::vector<BlockServiceInfo> _blockServices;
+    std::vector<BlockServiceDeprecatedInfo> _blockServices;
     std::vector<BlockServiceInfoShort> _currentBlockServices;
     bool _updatedOnce;
 public:

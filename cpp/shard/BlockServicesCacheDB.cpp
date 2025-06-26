@@ -243,7 +243,7 @@ BlockServicesCache BlockServicesCacheDB::getCache() const {
     return BlockServicesCache(_mutex, _blockServices, _currentBlockServices);
 }
 
-void BlockServicesCacheDB::updateCache(const std::vector<BlockServiceInfo>& blockServices, const std::vector<BlockServiceInfoShort>& currentBlockServices) {
+void BlockServicesCacheDB::updateCache(const std::vector<BlockServiceDeprecatedInfo>& blockServices, const std::vector<BlockServiceInfoShort>& currentBlockServices) {
     LOG_INFO(_env, "Updating block service cache");
 
     std::unique_lock _(_mutex);

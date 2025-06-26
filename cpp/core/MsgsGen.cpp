@@ -1261,7 +1261,7 @@ std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
     return out;
 }
 
-void BlockServiceInfo::pack(BincodeBuf& buf) const {
+void BlockServiceDeprecatedInfo::pack(BincodeBuf& buf) const {
     id.pack(buf);
     addrs.pack(buf);
     buf.packScalar<uint8_t>(storageClass);
@@ -1276,7 +1276,7 @@ void BlockServiceInfo::pack(BincodeBuf& buf) const {
     buf.packScalar<bool>(hasFiles);
     flagsLastChanged.pack(buf);
 }
-void BlockServiceInfo::unpack(BincodeBuf& buf) {
+void BlockServiceDeprecatedInfo::unpack(BincodeBuf& buf) {
     id.unpack(buf);
     addrs.unpack(buf);
     storageClass = buf.unpackScalar<uint8_t>();
@@ -1291,7 +1291,7 @@ void BlockServiceInfo::unpack(BincodeBuf& buf) {
     hasFiles = buf.unpackScalar<bool>();
     flagsLastChanged.unpack(buf);
 }
-void BlockServiceInfo::clear() {
+void BlockServiceDeprecatedInfo::clear() {
     id = BlockServiceId(0);
     addrs.clear();
     storageClass = uint8_t(0);
@@ -1306,7 +1306,7 @@ void BlockServiceInfo::clear() {
     hasFiles = bool(0);
     flagsLastChanged = EggsTime();
 }
-bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
+bool BlockServiceDeprecatedInfo::operator==(const BlockServiceDeprecatedInfo& rhs) const {
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
     if (addrs != rhs.addrs) { return false; };
     if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
@@ -1322,8 +1322,8 @@ bool BlockServiceInfo::operator==(const BlockServiceInfo& rhs) const {
     if ((EggsTime)this->flagsLastChanged != (EggsTime)rhs.flagsLastChanged) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const BlockServiceInfo& x) {
-    out << "BlockServiceInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ", " << "FlagsLastChanged=" << x.flagsLastChanged << ")";
+std::ostream& operator<<(std::ostream& out, const BlockServiceDeprecatedInfo& x) {
+    out << "BlockServiceDeprecatedInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << (int)x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ", " << "FlagsLastChanged=" << x.flagsLastChanged << ")";
     return out;
 }
 
@@ -4790,10 +4790,10 @@ std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedReq&
 }
 
 void AllBlockServicesDeprecatedResp::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceInfo>(blockServices);
+    buf.packList<BlockServiceDeprecatedInfo>(blockServices);
 }
 void AllBlockServicesDeprecatedResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceInfo>(blockServices);
+    buf.unpackList<BlockServiceDeprecatedInfo>(blockServices);
 }
 void AllBlockServicesDeprecatedResp::clear() {
     blockServices.clear();

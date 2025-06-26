@@ -1552,7 +1552,7 @@ func main() {
 	// erase block requests for old block services safely.
 	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
-		var shuckleBlockServices []msgs.BlockServiceInfo
+		var shuckleBlockServices []msgs.BlockServiceDeprecatedInfo
 		{
 			alert := log.NewNCAlert(0)
 			log.RaiseNC(alert, "fetching block services")

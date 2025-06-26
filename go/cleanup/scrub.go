@@ -104,6 +104,7 @@ func scrubWorker(
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workerChan)))
 		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
+			continue
 		}
 		err := c.CheckBlock(log, &req.blockService, req.block, req.size, req.crc)
 		if badBlockError(err) {

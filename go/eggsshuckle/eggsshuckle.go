@@ -2975,6 +2975,8 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 	replaceDecommedAlert.SetAppType(lib.XMON_NEVER)
 	migrateDecommedAlert := log.NewNCAlert(0)
 	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
+	inactivePathPrefixAlert := log.NewNCAlert(0)
+	inactivePathPrefixAlert.SetAppType(lib.XMON_NEVER)
 	nonReadableFailureDomainsAlert := log.NewNCAlert(0)
 	appType := lib.XMON_NEVER
 	nonReadableFailureDomainsAlert.SetAppType(appType)
@@ -2987,22 +2989,48 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			continue
 		}
 		// collect non-decommissioned block services
-		// failure domain -> path
+		// path_prefix -> path
 		activeBlockServices := make(map[string]map[string]struct{})
+		allPathPrefixes := make(map[string]struct{})
 		for _, bs := range blockServices {
+			pathSegments := strings.Split(bs.Path, ":")
+			if len(pathSegments) != 2 {
+				log.RaiseAlert("invalid path %q for block service", bs.Path)
+				continue
+			}
+			pathPrefix := pathSegments[0]
+			allPathPrefixes[pathPrefix] = struct{}{}
 			if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
 				continue
 			}
-			fd := bs.FailureDomain.String()
-			if _, found := activeBlockServices[fd]; !found {
-				activeBlockServices[fd] = make(map[string]struct{})
+
+			if _, found := activeBlockServices[pathPrefix]; !found {
+				activeBlockServices[pathPrefix] = make(map[string]struct{})
 			}
-			if _, alreadyPresent := activeBlockServices[fd][bs.Path]; alreadyPresent {
-				log.RaiseAlert("found duplicate block service at path %q for failure domain %q", bs.Path, fd)
+			if _, alreadyPresent := activeBlockServices[pathPrefix][bs.Path]; alreadyPresent {
+				log.RaiseAlert("found duplicate block service at path %q", bs.Path)
 				continue
 			}
-			activeBlockServices[fd][bs.Path] = struct{}{}
+			activeBlockServices[pathPrefix][bs.Path] = struct{}{}
 		}
+		// collect non-replaced decommissioned path prefixes
+		var inactivePathPrefixes []string
+		for pathPrefix := range allPathPrefixes {
+			if _, found := activeBlockServices[pathPrefix]; !found {
+				inactivePathPrefixes = append(inactivePathPrefixes, pathPrefix)
+			}
+		}
+		if len(inactivePathPrefixes) == 0 {
+			log.ClearNC(inactivePathPrefixAlert)
+		} else {
+			sort.Strings(inactivePathPrefixes)
+			alertString := fmt.Sprintf("decomissioned path prefixes need to be replaced: %s", strings.Join(inactivePathPrefixes, " "))
+			if len(alertString) > 10000 {
+				alertString = alertString[:10000] + "...."
+			}
+			log.RaiseNC(inactivePathPrefixAlert, alertString)
+		}
+
 		// collect non-replaced decommissioned block services
 		missingBlockServices := make(map[string]struct{})
 		decommedWithFiles := make(map[string]struct{})
@@ -3013,7 +3041,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			fd := bs.FailureDomain.String()
 			// transient files should go away within 36 hours of decommissioning
 			if bs.HasFiles && bs.FlagsLastChanged < msgs.MakeEggsTime(time.Now().Add(-36*time.Hour)) {
-				decommedWithFiles[fmt.Sprintf("%v,%q,%q", bs.Id, fd, bs.Path)] = struct{}{}
+				decommedWithFiles[fmt.Sprintf("%v,%q", bs.Id, bs.Path)] = struct{}{}
 			}
 
 			if _, found := activeBlockServices[fd]; !found {
@@ -3023,10 +3051,11 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 
 			if _, found := activeBlockServices[fd][bs.Path]; !found {
 				if _, found := activeBlockServices[fd][fmt.Sprintf("%s:%s", fd, bs.Path)]; !found {
-					missingBlockServices[fmt.Sprintf("%q,%q", fd, bs.Path)] = struct{}{}
+					missingBlockServices[fmt.Sprintf("%q", bs.Path)] = struct{}{}
 				}
 			}
 		}
+
 		if len(missingBlockServices) == 0 {
 			log.ClearNC(replaceDecommedAlert)
 		} else {

@@ -740,6 +740,7 @@ func main() {
 	blockserviceFlagsCmd := flag.NewFlagSet("blockservice-flags", flag.ExitOnError)
 	blockserviceFlagsId := blockserviceFlagsCmd.Int64("id", 0, "Block service id")
 	blockserviceFlagsFailureDomain := blockserviceFlagsCmd.String("failure-domain", "", "Failure domain -- if this is used all block services in a given failure domain will be affected.")
+	blockserviceFlagsPathPrefix := blockserviceFlagsCmd.String("path-prefix", "", "Path prefix -- if this is used all block services with a given path prefix will be affected.")
 	blockserviceFlagsSet := blockserviceFlagsCmd.String("set", "", "Flag to set")
 	blockserviceFlagsUnset := blockserviceFlagsCmd.String("unset", "", "Flag to unset")
 	blockserviceFlagsRun := func() {
@@ -747,19 +748,25 @@ func main() {
 			fmt.Fprintf(os.Stderr, "cannot use -set and -unset at the same time\n")
 			os.Exit(2)
 		}
-		if *blockserviceFlagsId != 0 && *blockserviceFlagsFailureDomain != "" {
-			fmt.Fprintf(os.Stderr, "cannot use -id and -failure-domain at the same time\n")
-			os.Exit(2)
+		filterCount := 0
+		if *blockserviceFlagsId != 0 {
+			filterCount++
 		}
-		if *blockserviceFlagsId == 0 && *blockserviceFlagsFailureDomain == "" {
-			fmt.Fprintf(os.Stderr, "must provide one of -id and -failure-domain\n")
+		if *blockserviceFlagsFailureDomain != "" {
+			filterCount++
+		}
+		if *blockserviceFlagsPathPrefix != "" {
+			filterCount++
+		}
+		if filterCount != 1 {
+			fmt.Fprintf(os.Stderr, "must provide exactly one of -id, -failure-domain, or -path-prefix\n")
 			os.Exit(2)
 		}
 		blockServiceIds := []msgs.BlockServiceId{}
 		if *blockserviceFlagsId != 0 {
 			blockServiceIds = append(blockServiceIds, msgs.BlockServiceId(*blockserviceFlagsId))
 		}
-		if *blockserviceFlagsFailureDomain != "" {
+		if *blockserviceFlagsFailureDomain != "" || *blockserviceFlagsPathPrefix != "" {
 			log.Info("requesting block services")
 			blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 			if err != nil {
@@ -770,9 +777,16 @@ func main() {
 				if bs.FailureDomain.String() == *blockserviceFlagsFailureDomain {
 					blockServiceIds = append(blockServiceIds, bs.Id)
 				}
+				if strings.Split(bs.Path, ":")[0] == *blockserviceFlagsPathPrefix {
+					blockServiceIds = append(blockServiceIds, bs.Id)
+				}
 			}
 			if len(blockServiceIds) == 0 {
-				panic(fmt.Errorf("could not get any block service ids for failure domain %v", blockserviceFlagsFailureDomain))
+				if *blockserviceFlagsPathPrefix != "" {
+					panic(fmt.Errorf("could not get any block service ids for path prefix %v", blockserviceFlagsPathPrefix))
+				} else if *blockserviceFlagsFailureDomain != "" {
+					panic(fmt.Errorf("could not get any block service ids for failure domain %v or ", blockserviceFlagsFailureDomain))
+				}
 			}
 		}
 		var flag msgs.BlockServiceFlags

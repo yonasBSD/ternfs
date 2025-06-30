@@ -481,16 +481,21 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	if err != nil {
 		return err
 	}
+	preReadSize := fi.Size()
 	filePageCount := uint32(fi.Size()) / msgs.EGGS_PAGE_WITH_CRC_SIZE
 	if offsetPageCount+pageCount > filePageCount {
 		log.RaiseAlert("malformed request for block %v. requested read at [%d - %d] but stored block size is %d", blockId, offset, offset+count, filePageCount*msgs.EGGS_PAGE_SIZE)
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
+	}
+	if !env.readWholeFile {
+		preReadSize = int64(pageCount) * int64(msgs.EGGS_PAGE_WITH_CRC_SIZE)
 	}
 	var reader io.ReadSeeker = f
 
 	if withCrc {
 		offset = offsetPageCount * msgs.EGGS_PAGE_WITH_CRC_SIZE
 		count = pageCount * msgs.EGGS_PAGE_WITH_CRC_SIZE
+		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL | unix.FADV_WILLNEED)
 
 		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
@@ -507,22 +512,6 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 			R: reader,
 			N: int64(count),
 		}
-		if env.readWholeFile {
-			buf := env.bufPool.Get(int(fi.Size()) - int(offset))
-			defer env.bufPool.Put(buf)
-			readBuf := buf.Bytes()
-			for len(readBuf) > 0 {
-				read, err := reader.Read(readBuf)
-				if err != nil {
-					if err == io.EOF {
-						return msgs.BLOCK_IO_ERROR_FILE
-					}
-					return err
-				}
-				readBuf = readBuf[read:]
-			}
-			lf.R = bytes.NewReader(buf.Bytes())
-		}
 
 		read, err := conn.ReadFrom(&lf)
 		if err != nil {
@@ -535,6 +524,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	} else {
 		// the only remaining case is that we have a file in new format and client wants old format
 		offset = offsetPageCount * msgs.EGGS_PAGE_WITH_CRC_SIZE
+		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL | unix.FADV_WILLNEED)
 		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
 		}

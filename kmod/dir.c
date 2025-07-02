@@ -339,7 +339,7 @@ out_err_dirents:
     return ERR_PTR(err);
 };
 
-// vfs: exclusive inode.i_rwsem
+// vfs: shared inode.i_rwsem
 // vfs: mutex file.f_pos_lock
 static int eggsfs_dir_read(struct file* filp, struct dir_context* dctx) {
     struct eggsfs_readdir_ctx* ctx = filp->private_data;
@@ -547,7 +547,7 @@ static int eggsfs_dir_fsync(struct file* f, loff_t start, loff_t end, int datasy
 
 struct file_operations eggsfs_dir_operations = {
     .open = eggsfs_dir_open,
-    .iterate = eggsfs_dir_read,
+    .iterate_shared = eggsfs_dir_read,
     .release = eggsfs_dir_close,
     .llseek = eggsfs_dir_seek,
     .fsync = eggsfs_dir_fsync,

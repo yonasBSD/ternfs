@@ -2,8 +2,6 @@
 #define _EGGSFS_INODE_H
 
 #include <linux/fs.h>
-#include <linux/spinlock.h>
-#include <linux/xarray.h>
 
 #include "latch.h"
 #include "bincode.h"

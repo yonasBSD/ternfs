@@ -11,10 +11,10 @@
 #include "block.h"
 #include "metadata.h"
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
-#define __sysctl_buffer __kernel
-#else
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 #define __sysctl_buffer __user
+#else
+#define __sysctl_buffer __kernel
 #endif
 
 int eggsfs_debug_output = 0;

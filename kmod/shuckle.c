@@ -9,10 +9,7 @@
 #include "log.h"
 #include "err.h"
 #include "super.h"
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
-#define kernel_setsockopt(sock, level, optname, optval, optlen) sock_setsockopt(sock, level, optname, KERNEL_SOCKPTR(optval), optlen)
-#endif
+#include "net_compat.h"
 
 void eggsfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
     put_unaligned_le32(EGGSFS_SHUCKLE_REQ_PROTOCOL_VERSION, buf); buf += 4;
@@ -151,7 +148,7 @@ int eggsfs_create_shuckle_socket(struct eggsfs_shuckle_addr* saddr, struct socke
 
     struct sockaddr_in addrs[2];
     memset(&addrs, 0, sizeof(addrs));
-    
+
     err = eggsfs_process_shuckle_addr(saddr, &addrs[0], &addrs[1]);
     if (err) {
         return err;
@@ -167,19 +164,19 @@ int eggsfs_create_shuckle_socket(struct eggsfs_shuckle_addr* saddr, struct socke
     struct __kernel_sock_timeval tv;
     tv.tv_sec = 10;
     tv.tv_usec = 0;
-    err = kernel_setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&tv, sizeof(tv));
+    err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, &tv, sizeof(tv));
     if (err < 0) {
         eggsfs_warn("could not set receive timeout on shuckle socket: %d", err);
         goto out_sock;
     }
-    err = kernel_setsockopt(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&tv, sizeof(tv));
+    err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, &tv, sizeof(tv));
     if (err < 0) {
         eggsfs_warn("could not set send timeout on shuckle socket: %d", err);
         goto out_sock;
     }
 
     int syn_count = 3;
-    err = kernel_setsockopt(*sock, SOL_TCP, TCP_SYNCNT, (char *)&syn_count, sizeof(syn_count));
+    err = COMPAT_SET_SOCKOPT(*sock, SOL_TCP, TCP_SYNCNT, &syn_count, sizeof(syn_count));
     if (err < 0) {
         eggsfs_warn("could not set TCP_SYNCNT=%d on shuckle socket: %d", syn_count, err);
         goto out_sock;

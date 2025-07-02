@@ -1315,7 +1315,9 @@ out:
 }
 
 const struct address_space_operations eggsfs_mmap_operations = {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
     .readpages = file_readpages,
+#endif
     .readpage = file_readpage
 };
 

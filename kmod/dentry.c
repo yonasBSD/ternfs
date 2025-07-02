@@ -1,5 +1,6 @@
 #include "dentry.h"
 
+#include "inode_compat.h"
 #include "log.h"
 #include "dir.h"
 #include "err.h"
@@ -146,7 +147,7 @@ out_err:
 }
 
 // vfs: exclusive dir.i_rwsem, lockref dentry
-int eggsfs_mkdir(struct inode* dir, struct dentry* dentry, umode_t mode) {
+int COMPAT_FUNC_UNS_IMP(eggsfs_mkdir, struct inode* dir, struct dentry* dentry, umode_t mode) {
     int err;
 
     struct eggsfs_inode* dir_enode = EGGSFS_I(dir);
@@ -261,7 +262,7 @@ out_err:
 }
 
 // vfs: exclusive i_rwsem for all
-int eggsfs_rename(struct inode* old_dir, struct dentry* old_dentry, struct inode* new_dir, struct dentry* new_dentry, unsigned int flags) {
+int COMPAT_FUNC_UNS_IMP(eggsfs_rename, struct inode* old_dir, struct dentry* old_dentry, struct inode* new_dir, struct dentry* new_dentry, unsigned int flags) {
     int err;
 
     trace_eggsfs_vfs_rename_enter(old_dir, old_dentry, new_dir, new_dentry);

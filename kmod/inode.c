@@ -13,6 +13,7 @@
 #include "file.h"
 #include "wq.h"
 #include "span.h"
+#include "inode_compat.h"
 
 // Some services (samba) try to preallocate larger files, but can handle
 // the failure or absence of ftruncate().
@@ -427,7 +428,7 @@ out_err:
     return ERR_PTR(err);
 }
 
-static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
+static int COMPAT_FUNC_UNS_IMP(eggsfs_create, struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
     struct eggsfs_inode* enode = eggsfs_create_internal(parent, EGGSFS_INODE_FILE, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
 
@@ -439,7 +440,7 @@ static int eggsfs_create(struct inode* parent, struct dentry* dentry, umode_t mo
 }
 
 // vfs: refcount of path->dentry
-static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
+static int COMPAT_FUNC_UNS_IMP(eggsfs_getattr, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
     struct inode* inode = d_inode(path->dentry);
     struct eggsfs_inode* enode = EGGSFS_I(inode);
 
@@ -467,7 +468,7 @@ static int eggsfs_getattr(const struct path* path, struct kstat* stat, u32 reque
     }
 
 done:
-    generic_fillattr(inode, stat);
+    COMPAT_FUNC_UNS_CALL(generic_fillattr, inode, stat);
     trace_eggsfs_vfs_getattr_exit(inode, 0);
     return 0;
 }
@@ -508,7 +509,7 @@ static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     return 0;
 }
 
-static int eggsfs_setattr(struct dentry* dentry, struct iattr* attr) {
+static int COMPAT_FUNC_UNS_IMP(eggsfs_setattr, struct dentry* dentry, struct iattr* attr) {
     // https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L49 is the only
     // place where ATTR_SIZE is set, which means only when truncating.
     if (attr->ia_valid & ATTR_SIZE) {
@@ -564,7 +565,7 @@ static int eggsfs_setattr(struct dentry* dentry, struct iattr* attr) {
     return 0;
 }
 
-static int eggsfs_symlink(struct inode* dir, struct dentry* dentry, const char* path) {
+static int COMPAT_FUNC_UNS_IMP(eggsfs_symlink, struct inode* dir, struct dentry* dentry, const char* path) {
     struct eggsfs_inode* enode = eggsfs_create_internal(dir, EGGSFS_INODE_SYMLINK, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
 

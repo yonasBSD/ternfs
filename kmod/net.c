@@ -9,12 +9,9 @@
 #include "debugfs.h"
 #include "metadata.h"
 #include "inode.h"
+#include "net_compat.h"
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
-#define kernel_setsockopt(sock, level, optname, optval, optlen) sock_setsockopt(sock, level, optname, KERNEL_SOCKPTR(optval), optlen)
-#endif
 
 unsigned eggsfs_initial_shard_timeout_jiffies = MSECS_TO_JIFFIES(250);
 unsigned eggsfs_max_shard_timeout_jiffies = MSECS_TO_JIFFIES(2000);
@@ -89,7 +86,7 @@ static void sock_readable(struct sock* sk) {
     s = (struct eggsfs_metadata_socket*)sk->sk_user_data;
     BUG_ON(!s);
     for (;;) {
-        skb = skb_recv_udp(sk, 0, 1, &err);
+        skb = COMPAT_SKB_RECV_UDP(sk, MSG_DONTWAIT, &err);
         if (!skb) {
             read_unlock_bh(&sk->sk_callback_lock);
             return;
@@ -193,7 +190,7 @@ int eggsfs_init_shard_socket(struct eggsfs_metadata_socket* s) {
 
     int new_rcvbuf_size = 1024 * 1024;
     int optlen = sizeof(new_rcvbuf_size);
-    err = kernel_setsockopt(s->sock, SOL_SOCKET, SO_RCVBUF, (char *)&new_rcvbuf_size, optlen);
+    err = COMPAT_SET_SOCKOPT(s->sock, SOL_SOCKET, SO_RCVBUF, &new_rcvbuf_size, optlen);
     if (err) { goto out_socket; }
 
     write_lock_bh(&s->sock->sk->sk_callback_lock);

@@ -11,6 +11,12 @@ modules.order
 ternfs-client-*
 linux*
 *.img
-revision.c
 html
 Doxyfile
+revision.c
+crc32c.c
+gf_tables.c
+iscsi.h
+rs_core.c
+debian/debhelper-build-stamp
+debian/files

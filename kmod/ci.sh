@@ -34,7 +34,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
 # build kernel module
-make "KDIR=${SCRIPT_DIR}/linux" -j kmod
+make "KDIR=${SCRIPT_DIR}/linux" -j ternfs-client-local
 
 # start VM in the background
 function cleanup {
@@ -49,7 +49,7 @@ trap cleanup EXIT
 # Wait for VM to go up by trying to copy the kernel module to it
 chmod 0600 image-key
 scp_attempts=0
-while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key ternfs.ko fmazzol@localhost: ; do
+while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key ternfs-client.ko fmazzol@localhost: ; do
     sleep 1
     scp_attempts=$((scp_attempts + 1))
     if [ $scp_attempts -ge 20 ]; then
@@ -62,7 +62,7 @@ done
 ./vm_deploy.py
 
 # Insert module
-ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod ternfs.ko"
+ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod ternfs-client.ko"
 
 # Set up permissions to read kmsg
 ssh -p 2223 -i image-key fmazzol@localhost "sudo chmod 666 /dev/kmsg"

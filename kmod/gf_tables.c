@@ -1,1 +1,0 @@
-../cpp/rs/gf_tables.c

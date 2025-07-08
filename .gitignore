@@ -12,5 +12,6 @@ kmod/test-out
 kmod/trace
 kmod/vm-out
 linux-*.tar.gz
-eggs-integrationtest.*
+tern-integrationtest.*
 .go-cache
+ternfs-client*

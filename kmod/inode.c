@@ -23,6 +23,8 @@ static struct kmem_cache* eggsfs_inode_cachep;
 
 #define MSECS_TO_JIFFIES(_ms) (((u64)_ms * HZ) / 1000ull)
 
+#define POSIX_BLK_SIZE 512
+
 // This is very rarely needed to be up to date, set it to 1hr
 int eggsfs_dir_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
 int eggsfs_file_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
@@ -217,7 +219,7 @@ static void getattr_async_complete(struct work_struct* work) {
                 mtime = 0;
             } else if (err == 0) {
                 enode->inode.i_size = size;
-                enode->inode.i_blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+                enode->inode.i_blocks = DIV_ROUND_UP(size, POSIX_BLK_SIZE);
                 expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
             }
             err = eggsfs_error_to_linux(err);
@@ -326,7 +328,7 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
                         // This is not correct physical size, in order to calculate physical size we would need to get span information as
                         // our replication policy is per span. This is quite expensive to do for stat.
                         // We could keep this value calcualated and stored on shards but it's not worth it at this point.
-                        enode->inode.i_blocks = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+                        enode->inode.i_blocks = DIV_ROUND_UP(size, POSIX_BLK_SIZE);
                         expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
                     }
                 } else {

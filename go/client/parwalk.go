@@ -44,7 +44,7 @@ func (env *parwalkEnv) visit(
 		return nil
 	}
 	// if it's not owned, skip
-	if !owned {
+	if !owned && !env.snapshot {
 		return nil
 	}
 	fullPath := path.Join(parentPath, name)
@@ -81,7 +81,7 @@ func (env *parwalkEnv) process(
 		resp := &msgs.FullReadDirResp{}
 		for {
 			if err := env.client.ShardRequest(log, id.Shard(), req, resp); err != nil {
-				log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
+				log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
 				return nil
 			}
 			for _, e := range resp.Results {
@@ -109,7 +109,7 @@ func (env *parwalkEnv) process(
 		readResp := &msgs.ReadDirResp{}
 		for {
 			if err := env.client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
-				log.Info("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
+				log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, path, err)
 				return nil
 			}
 			for _, e := range readResp.Results {

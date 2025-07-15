@@ -938,6 +938,7 @@ func main() {
 	duPhysical := duCmd.Bool("physical", false, "Also measure physical space (slower)")
 	duSnapshot := duCmd.Bool("snapshot", false, "Also count snapshot files")
 	duWorkersPerSshard := duCmd.Int("workers-per-shard", 5, "")
+	duLocation := duCmd.Uint("location", 0, "Location for which to report size")
 	duRun := func() {
 		var numDirectories uint64
 		var numFiles uint64
@@ -996,11 +997,11 @@ func main() {
 				atomic.AddUint64(&histoCountBins[bin], 1)
 				atomic.AddUint64(&histoLogicalSizeBins[bin], resp.Size)
 				if *duPhysical {
-					fileSpansReq := msgs.LocalFileSpansReq{
+					fileSpansReq := msgs.FileSpansReq{
 						FileId:     id,
 						ByteOffset: 0,
 					}
-					fileSpansResp := msgs.LocalFileSpansResp{}
+					fileSpansResp := msgs.FileSpansResp{}
 					physicalSize := uint64(0)
 					for {
 						if err := c.ShardRequest(log, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
@@ -1008,11 +1009,16 @@ func main() {
 						}
 						for spanIx := range fileSpansResp.Spans {
 							span := &fileSpansResp.Spans[spanIx]
-							if span.Header.StorageClass == msgs.INLINE_STORAGE {
+							if span.Header.IsInline {
 								continue
 							}
-							body := span.Body.(*msgs.FetchedBlocksSpan)
-							physicalSize += uint64(body.CellSize) * uint64(body.Parity.Blocks()) * uint64(body.Stripes)
+							locBody := span.Body.(*msgs.FetchedLocations)
+							for _, loc := range locBody.Locations {
+								if uint(loc.LocationId) != *duLocation {
+									continue
+								}
+								physicalSize += uint64(loc.CellSize) * uint64(loc.Parity.Blocks()) * uint64(loc.Stripes)
+							}
 						}
 						if fileSpansResp.NextOffset == 0 {
 							break

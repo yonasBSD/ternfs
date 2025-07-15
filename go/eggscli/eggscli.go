@@ -939,7 +939,13 @@ func main() {
 	duSnapshot := duCmd.Bool("snapshot", false, "Also count snapshot files")
 	duWorkersPerSshard := duCmd.Int("workers-per-shard", 5, "")
 	duLocation := duCmd.Uint("location", 0, "Location for which to report size")
+	duPattern := duCmd.String("pattern", "", "If set only measure files matching this regex pattern")
 	duRun := func() {
+		re, err := regexp.Compile(*duPattern)
+    	if err != nil {
+        	fmt.Println("failed to compile regex pattern:", err)
+        	return
+    	}
 		var numDirectories uint64
 		var numFiles uint64
 		var totalLogicalSize uint64
@@ -968,7 +974,7 @@ func main() {
 				}
 			}
 		}
-		err := client.Parwalk(
+		err = client.Parwalk(
 			log,
 			c,
 			&client.ParwalkOptions{
@@ -984,6 +990,11 @@ func main() {
 					atomic.AddUint64(&numDirectories, 1)
 					return nil
 				}
+				fullPath := path.Join(parentPath, name)
+				if !re.MatchString(fullPath) {
+					return nil
+				}
+				atomic.AddUint64(&numFiles, 1)
 				resp := msgs.StatFileResp{}
 				if err := c.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
 					return err

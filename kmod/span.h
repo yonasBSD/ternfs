@@ -92,22 +92,6 @@ void ternfs_unlink_spans(struct ternfs_inode* enode);
 // even returning error aggressively is fine.
 int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_space* mapping, struct list_head *pages, unsigned nr_pages, struct list_head *extra_pages);
 
-// Callbacks for metadata
-void ternfs_file_spans_cb_span(
-    void* data, u64 offset, u32 size, u32 crc,
-    u8 storage_class, u8 parity, u8 stripes, u32 cell_size,
-    const uint32_t* stripes_crcs
-);
-
-void ternfs_file_spans_cb_block(
-    void* data, int block_ix,
-    // block service stuff
-    u64 bs_id, u32 ip1, u16 port1, u32 ip2, u16 port2, u8 flags,
-    // block stuff
-    u64 block_id, u32 crc
-);
-void ternfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body);
-
 int __init ternfs_span_init(void);
 void __cold ternfs_span_exit(void);
 

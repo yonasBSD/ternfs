@@ -818,7 +818,7 @@ struct get_span_ctx {
     int err;
 };
 
-void ternfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size, const uint32_t* stripes_crcs) {
+static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 storage_class, u8 parity, u8 stripes, u32 cell_size) {
     ternfs_debug("offset=%llu size=%u crc=%08x storage_class=%d parity=%d stripes=%d cell_size=%u", offset, size, crc, storage_class, parity, stripes, cell_size);
 
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
@@ -840,14 +840,13 @@ void ternfs_file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     span->span.storage_class = storage_class;
 
     span->cell_size = cell_size;
-    memcpy(span->stripes_crc, stripes_crcs, sizeof(uint32_t)*stripes);
     span->num_stripes = stripes;
     span->parity = parity;
     ternfs_debug("adding normal span");
     insert_span(&ctx->spans, &span->span);
 }
 
-void ternfs_file_spans_cb_block(
+static void file_spans_cb_block(
     void* data, int block_ix,
     u64 bs_id, u32 ip1, u16 port1, u32 ip2, u16 port2, u8 flags,
     u64 block_id, u32 crc
@@ -877,7 +876,7 @@ void ternfs_file_spans_cb_block(
     }
 }
 
-void ternfs_file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body) {
+static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body) {
     ternfs_debug("offset=%llu size=%u len=%u body=%*pE", offset, size, len, len, body);
 
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
@@ -936,7 +935,11 @@ retry:
     struct get_span_ctx ctx = { .err = 0, .enode = enode };
     ctx.spans = RB_ROOT;
     err = ternfs_error_to_linux(ternfs_shard_file_spans(
-        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, offset, &next_offset,&ctx
+        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, offset, &next_offset,
+        file_spans_cb_inline_span,
+        file_spans_cb_span,
+        file_spans_cb_block,
+        &ctx
     ));
     err = err ?: ctx.err;
     if (unlikely(err)) {

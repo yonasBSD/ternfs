@@ -11,7 +11,6 @@
 #include "crc.h"
 #include "rs.h"
 #include "file.h"
-#include "span.h"
 #include "dir.h"
 
 int ternfs_mtu = TERNFS_DEFAULT_MTU;
@@ -909,7 +908,14 @@ int ternfs_shard_add_span_certify(
     return 0;
 }
 
-int ternfs_shard_file_spans(struct ternfs_fs_info* info, u64 file, u64 offset, u64* next_offset, void* data) {
+int ternfs_shard_file_spans(
+    struct ternfs_fs_info* info,
+    u64 file, u64 offset,
+    u64* next_offset,
+    ternfs_file_spans_cb_inline_span inline_span_cb,
+    ternfs_file_spans_cb_span span_cb,
+    ternfs_file_spans_cb_block block_cb,
+    void* cb_data) {
     struct sk_buff* skb;
     u32 attempts;
 
@@ -959,7 +965,7 @@ int ternfs_shard_file_spans(struct ternfs_fs_info* info, u64 file, u64 offset, u
                 ternfs_bincode_get_finish_list_el(end);
                 if (likely(ctx.err == 0)) {
                     // TODO check CRC?
-                    ternfs_file_spans_cb_inline_span(data, byte_offset.x, size.x, body.str.len, body.str.buf);
+                    inline_span_cb(cb_data, byte_offset.x, size.x, body.str.len, body.str.buf);
                 }
             } else {
                 ternfs_fetched_blocks_span_get_start(&ctx, start);
@@ -972,15 +978,17 @@ int ternfs_shard_file_spans(struct ternfs_fs_info* info, u64 file, u64 offset, u
                     ctx.buf += TERNFS_FETCHED_BLOCK_SIZE*blocks.len;
                 }
                 blocks_ctx.end = ctx.buf;
+
+                // DEPRECATED stripes
                 ternfs_fetched_blocks_span_get_stripes_crc(&ctx, blocks, stripes_crc_resp);
-                uint32_t* stripes_crc = (uint32_t*)ctx.buf;
                 if (likely(ctx.err == 0)) {
                     ctx.buf += 4*stripes_crc_resp.len;
                 }
+                // DEPRECATED_END stripes
                 ternfs_fetched_blocks_span_get_end(&ctx, stripes_crc_resp, end);
                 ternfs_bincode_get_finish_list_el(end);
                 if (likely(ctx.err == 0)) {
-                    ternfs_file_spans_cb_span(data, byte_offset.x, size.x, crc.x, storage_class.x, parity.x, stripes.x, cell_size.x, stripes_crc);
+                    span_cb(cb_data, byte_offset.x, size.x, crc.x, storage_class.x, parity.x, stripes.x, cell_size.x);
                     blocks_ctx.err = ctx.err;
                     int j;
                     for (j = 0; j < blocks.len; j++) {
@@ -1015,7 +1023,7 @@ int ternfs_shard_file_spans(struct ternfs_fs_info* info, u64 file, u64 offset, u
                                 ternfs_block_service_get_end(&bs_ctx, bs_flags, end);
                                 ternfs_bincode_get_finish_list_el(end);
                                 if (likely(bs_ctx.err == 0)) {
-                                    ternfs_file_spans_cb_block(data, j, bs_id.x, ip1.x, port1.x, ip2.x, port2.x, bs_flags.x, block_id.x, crc.x);
+                                    block_cb(cb_data, j, bs_id.x, ip1.x, port1.x, ip2.x, port2.x, bs_flags.x, block_id.x, crc.x);
                                 }
                                 blocks_ctx.err = bs_ctx.err;
                             }

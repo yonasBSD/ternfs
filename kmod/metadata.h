@@ -43,7 +43,28 @@ int ternfs_shard_parse_getattr_dir(
     struct ternfs_policy_body* stripe_policy
 );
 int ternfs_shard_create_file(struct ternfs_fs_info* info, u8 shid, int itype, const char* name, int name_len, u64* ino, u64* cookie);
-int ternfs_shard_file_spans(struct ternfs_fs_info* info, u64 file, u64 offset, u64* next_offset, void* data);
+
+typedef void (*ternfs_file_spans_cb_inline_span)(void* data, u64 offset, u32 size, u8 len, const char* body);
+typedef void (*ternfs_file_spans_cb_span)(
+    void* data, u64 offset, u32 size, u32 crc,
+    u8 storage_class, u8 parity, u8 stripes, u32 cell_size
+);
+typedef void (*ternfs_file_spans_cb_block)(
+    void* data, int block_ix,
+    // block service stuff
+    u64 bs_id, u32 ip1, u16 port1, u32 ip2, u16 port2, u8 flags,
+    // block stuff
+    u64 block_id, u32 crc
+);
+
+int ternfs_shard_file_spans(
+    struct ternfs_fs_info* info,
+    u64 file, u64 offset,
+    u64* next_offset,
+    ternfs_file_spans_cb_inline_span inline_span_cb,
+    ternfs_file_spans_cb_span span_cb,
+    ternfs_file_spans_cb_block block_cb,
+    void* cb_data);
 int ternfs_shard_add_inline_span(struct ternfs_fs_info* info, u64 file, u64 cookie, u64 offset, u32 size, const char* data, u8 len);
 int ternfs_shard_set_time(struct ternfs_fs_info* info, u64 file, u64 mtime, u64 atime);
 // Shoots a set_time request, does not wait/retry etc.

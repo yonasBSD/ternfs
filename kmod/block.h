@@ -7,7 +7,6 @@
 #include <net/tcp.h>
 
 #include "bincode.h"
-#include "inode.h"
 
 #define TERNFS_MAX_BLOCK_SIZE (100 << 20) // 100MiB
 

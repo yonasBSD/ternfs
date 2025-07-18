@@ -1010,7 +1010,7 @@ char* ternfs_read_link(struct ternfs_inode* enode) {
 
     ternfs_debug("size=%lu", size);
 
-    struct ternfs_span* span = ternfs_get_span(enode, 0);
+    struct ternfs_span* span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, 0);
     if (span == NULL) {
         ternfs_debug("got no span, empty file?");
         return "";
@@ -1158,28 +1158,26 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
     ternfs_debug("enode=%p, ino=%ld, offset=%lld, nr_pages=%u", enode, inode->i_ino, off, nr_pages);
 
     struct ternfs_span* span = NULL;
+    struct page *page;
+    LIST_HEAD(extra_pages);
 
-    span = ternfs_get_span(enode, off);
+    if (off >= inode->i_size) { // out of bounds
+        list_for_each_entry(page, pages, lru) {
+            zero_user_segment(page, 0, PAGE_SIZE);
+        }
+        goto out;
+    }
+
+    span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
     if (IS_ERR(span)) {
         ternfs_warn("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
         goto out_err;
     }
-    if (span == NULL) { // out of bounds
-        err = -EIO;
-        goto out_err;
-    }
-    if (span->start%PAGE_SIZE != 0) {
-        ternfs_warn("span start is not a multiple of page size %llu", span->start);
-        span = NULL;
-        err = -EIO;
-        goto out_err;
-    }
 
-    LIST_HEAD(extra_pages);
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
         struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
-        struct page *page = lru_to_page(pages);
+        page = lru_to_page(pages);
         if (page == NULL) {
             err = -EIO;
             goto out_err;
@@ -1195,11 +1193,6 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         kunmap_atomic(dst);
     } else {
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
-        if (block_span->cell_size%PAGE_SIZE != 0) {
-            ternfs_warn("cell size not multiple of page size %u", block_span->cell_size);
-            err = -EIO;
-            goto out_err;
-        }
         err = ternfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
         if (err) {
             ternfs_warn("readahead of %d pages at off=%lld in file %016lx failed with error %d", nr_pages, off, enode->inode.i_ino, err);
@@ -1207,6 +1200,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
             goto out_err;
         }
     }
+out:
     process_file_pages(mapping, pages, nr_pages);
     process_file_pages(mapping, &extra_pages, 0);
     return 0;
@@ -1227,17 +1221,19 @@ static int file_readpage(struct file* filp, struct page* page) {
     struct timespec64 start_ts = ns_to_timespec64(ktime_get_real_ns());
     struct timespec64 last_span_refresh_ts = ns_to_timespec64(0);
 
+    if (off >= inode->i_size) { // out of bounds
+        zero_user_segment(page, 0, PAGE_SIZE);
+        goto out;
+    }
+
 retry:
-    span = ternfs_get_span(enode, off);
+    span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
     if (IS_ERR(span)) {
         ternfs_debug("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
         goto out;
     }
-    if (span == NULL) { // out of bounds
-        zero_user_segment(page, 0, PAGE_SIZE);
-        goto out;
-    }
+
     if (span->start%PAGE_SIZE != 0) {
         ternfs_warn("span start is not a multiple of page size %llu", span->start);
         span = NULL;
@@ -1285,7 +1281,7 @@ retry:
             }
             if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > ternfs_file_io_retry_refresh_span_interval_sec) {
                 ternfs_info("refreshing span %lld of file %016lx as the span structure or block service flags could have changed in the meantime", off, enode->inode.i_ino);
-                ternfs_unlink_span(enode, span);
+                ternfs_unlink_span(&enode->file.spans, span);
                 last_span_refresh_ts = end_ts;
             }
             goto retry;

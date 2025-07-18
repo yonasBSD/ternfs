@@ -3,10 +3,25 @@
 
 #include <linux/kernel.h>
 
-#include "inode.h"
 #include "counter.h"
 #include "block.h"
 #include "rs.h"
+#include "super.h"
+
+// span cache for specific inode
+struct ternfs_file_spans {
+    u64 __ino;
+    // Spans manipulation could be done in a lockless way on the read-side, but
+    // as of now we use a read/write semaphore for simplicity (we'd need to
+    // be careful when freeing spans).
+    struct rb_root __spans;
+    struct rw_semaphore __lock;    
+};
+
+void ternfs_init_file_spans(struct ternfs_file_spans* spans, u64 ino);
+
+void ternfs_free_file_spans(struct ternfs_file_spans* spans);
+
 struct ternfs_span {
     // All the spans operations are independent from `struct ternfs_inode`.
     // So we need the inode here.
@@ -56,15 +71,10 @@ struct ternfs_block_span {
 //
 // If the offset is out of bounds, NULL will be returned. Errors might
 // be returned if we fail to fetch the span.
-struct ternfs_span* ternfs_get_span(struct ternfs_inode* enode, u64 offset);
+struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternfs_file_spans* spans, u64 offset);
 
-// Remove the span from the inode tree, decrementing the refcount.
-void ternfs_unlink_span(struct ternfs_inode* enode, struct ternfs_span* span);
-
-// Drop all the spans in a specific file.
-// This function must be called before inode eviction, otherwise we'll
-// leak spans.
-void ternfs_unlink_spans(struct ternfs_inode* enode);
+// Remove the span from the inode tree and decrement the refcount.
+void ternfs_unlink_span(struct ternfs_file_spans* spans, struct ternfs_span* span);
 
 // Fetches pages from block services to fill the supplied list of pages.
 // @pages - original list of pages to be filled. The list is expected to

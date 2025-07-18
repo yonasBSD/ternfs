@@ -12,7 +12,6 @@
 #include "err.h"
 #include "file.h"
 #include "wq.h"
-#include "span.h"
 #include "inode_compat.h"
 
 // Some services (samba) try to preallocate larger files, but can handle
@@ -57,14 +56,15 @@ void ternfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         ternfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        ternfs_unlink_spans(enode);
+        // We need to clear the spans
+        ternfs_free_file_spans(&enode->file.spans);
     }
     truncate_inode_pages(&inode->i_data, 0);
     clear_inode(inode);
 }
 
 void ternfs_inode_free(struct inode* inode) {
-    // We need to clear the spans
+    
     struct ternfs_inode* enode = TERNFS_I(inode);
     ternfs_debug("enode=%p", enode);
     kmem_cache_free(ternfs_inode_cachep, enode);
@@ -685,13 +685,11 @@ struct inode* ternfs_get_inode(
             }
             inode->i_fop = &ternfs_file_operations;
             inode->i_mapping->a_ops = &ternfs_mmap_operations;
-
             enode->file.status = TERNFS_FILE_STATUS_NONE;
 
             // Init normal file stuff -- that's always there. The transient
             // file stuff is only filled in if needed.
-            enode->file.spans = RB_ROOT;
-            init_rwsem(&enode->file.spans_lock);
+            ternfs_init_file_spans(&enode->file.spans, ino);
         }
 
         inode->i_uid = fs_info->uid;

@@ -46,6 +46,12 @@ inline u32 ternfs_stripe_size(struct ternfs_block_span* span) {
     return span->cell_size * ternfs_data_blocks(span->parity);
 }
 
+void ternfs_init_file_spans(struct ternfs_file_spans* spans, u64 ino) {
+    spans->__spans = RB_ROOT;
+    init_rwsem(&spans->__lock);
+    spans->__ino = ino;
+}
+
 struct fetch_span_pages_state {
      struct ternfs_block_span* block_span;
     // Used to wait on every block being finished. Could be done faster with a wait_queue, but don't want to
@@ -813,7 +819,7 @@ static void put_span(struct ternfs_span* span) {
 }
 
 struct get_span_ctx {
-    struct ternfs_inode* enode;
+    u64 ino;
     struct rb_root spans;
     int err;
 };
@@ -823,6 +829,16 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
 
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
     if (ctx->err) { return; }
+    if (offset % PAGE_SIZE) {
+        ternfs_warn("span start is not a multiple of page size %llu", offset);
+        ctx->err = -EIO;
+        return;
+    }
+    if (cell_size % PAGE_SIZE) {
+        ternfs_warn("cell size not multiple of page size %u", cell_size);
+        ctx->err = -EIO;
+        return;
+    }
 
     struct ternfs_block_span* span = kmem_cache_alloc(ternfs_block_span_cachep, GFP_KERNEL);
     if (!span) { ctx->err = -ENOMEM; return; }
@@ -834,7 +850,7 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
         return;
     }
 
-    span->span.ino = ctx->enode->inode.i_ino;
+    span->span.ino = ctx->ino;
     span->span.start = offset;
     span->span.end = offset + size;
     span->span.storage_class = storage_class;
@@ -882,10 +898,16 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
     if (ctx->err) { return; }
 
+    if (offset % PAGE_SIZE) {
+        ternfs_warn("span start is not a multiple of page size %llu", offset);
+        ctx->err = -EIO;
+        return;
+    }
+
     struct ternfs_inline_span* span = kmem_cache_alloc(ternfs_inline_span_cachep, GFP_KERNEL);
     if (!span) { ctx->err = -ENOMEM; return; }
 
-    span->span.ino = ctx->enode->inode.i_ino;
+    span->span.ino = ctx->ino;
 
     span->span.start = offset;
     span->span.end = offset + size;
@@ -898,30 +920,26 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     insert_span(&ctx->spans, &span->span);
 }
 
-struct ternfs_span* ternfs_get_span(struct ternfs_inode* enode, u64 offset) {
-    struct ternfs_inode_file* file = &enode->file;
+struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternfs_file_spans* spans, u64 offset) {
     int err;
 
-    ternfs_debug("ino=%016lx, pid=%d, off=%llu getting span", enode->inode.i_ino, get_current()->pid, offset);
+    ternfs_debug("ino=%016llx, pid=%d, off=%llu getting span", spans->__ino, get_current()->pid, offset);
 
-    trace_eggsfs_get_span_enter(enode->inode.i_ino, offset);
+    trace_eggsfs_get_span_enter(spans->__ino, offset);
 
 #define GET_SPAN_EXIT(s) do { \
-        trace_eggsfs_get_span_exit(enode->inode.i_ino, offset, IS_ERR(s) ? PTR_ERR(s) : 0); \
+        trace_eggsfs_get_span_exit(spans->__ino, offset, IS_ERR(s) ? PTR_ERR(s) : 0); \
         return s; \
     } while(0)
-
-    // Exit early if we know we're out of bound.
-    if (offset >= enode->inode.i_size) { GET_SPAN_EXIT(NULL); }
 
     bool fetched = false;
 
 retry:
     // Check if we already have the span
     {
-        down_read(&enode->file.spans_lock);
-        struct ternfs_span* span = lookup_span(&enode->file.spans, offset);
-        up_read(&enode->file.spans_lock);
+        down_read(&spans->__lock);
+        struct ternfs_span* span = lookup_span(&spans->__spans, offset);
+        up_read(&spans->__lock);
         if (likely(span != NULL)) {
             return span;
         }
@@ -929,13 +947,13 @@ retry:
     }
 
     // We need to fetch the spans.
-    down_write(&enode->file.spans_lock);
+    down_write(&spans->__lock);
 
     u64 next_offset;
-    struct get_span_ctx ctx = { .err = 0, .enode = enode };
+    struct get_span_ctx ctx = { .err = 0, .ino = spans->__ino };
     ctx.spans = RB_ROOT;
     err = ternfs_error_to_linux(ternfs_shard_file_spans(
-        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, offset, &next_offset,
+        fs_info, spans->__ino, offset, &next_offset,
         file_spans_cb_inline_span,
         file_spans_cb_span,
         file_spans_cb_block,
@@ -950,7 +968,7 @@ retry:
             rb_erase(node, &ctx.spans);
             put_span(rb_entry(node, struct ternfs_span, node));
         }
-        up_write(&enode->file.spans_lock);
+        up_write(&spans->__lock);
         GET_SPAN_EXIT(ERR_PTR(err));
     }
     // add them to enode spans
@@ -959,12 +977,12 @@ retry:
         if (node == NULL) { break; }
         rb_erase(node, &ctx.spans);
         struct ternfs_span* span = rb_entry(node, struct ternfs_span, node);
-        if (!insert_span(&file->spans, span)) {
+        if (!insert_span(&spans->__spans, span)) {
             // Span is already cached
             put_span(span);
         }
     }
-    up_write(&file->spans_lock);
+    up_write(&spans->__lock);
 
     fetched = true;
     goto retry;
@@ -972,26 +990,26 @@ retry:
 #undef GET_SPAN_EXIT
 }
 
-void ternfs_unlink_span(struct ternfs_inode* enode, struct ternfs_span* span) {
-    down_write(&enode->file.spans_lock);
-    rb_erase(&span->node, &enode->file.spans);
+void ternfs_unlink_span(struct ternfs_file_spans* spans, struct ternfs_span* span) {
+    down_write(&spans->__lock);
+    rb_erase(&span->node, &spans->__spans);
     put_span(span);
-    up_write(&enode->file.spans_lock);
+    up_write(&spans->__lock);
 }
 
-void ternfs_unlink_spans(struct ternfs_inode* enode) {
-    down_write(&enode->file.spans_lock);
+void ternfs_free_file_spans(struct ternfs_file_spans* spans) {
+    down_write(&spans->__lock);
 
     for (;;) {
-        struct rb_node* node = rb_first(&enode->file.spans);
+        struct rb_node* node = rb_first(&spans->__spans);
         if (node == NULL) { break; }
 
         struct ternfs_span* span = rb_entry(node, struct ternfs_span, node);
-        rb_erase(&span->node, &enode->file.spans);
+        rb_erase(&span->node, &spans->__spans);
         put_span(span);
     }
 
-    up_write(&enode->file.spans_lock);
+    up_write(&spans->__lock);
 }
 
 //

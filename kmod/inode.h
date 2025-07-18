@@ -3,18 +3,18 @@
 
 #include <linux/fs.h>
 
-#include "latch.h"
 #include "bincode.h"
-#include "net.h"
-#include "rs.h"
-#include "policy.h"
+#include "latch.h"
 #include "log.h"
+#include "net.h"
+#include "policy.h"
+#include "rs.h"
+#include "span.h"
+
 
 #define TERNFS_ROOT_INODE 0x2000000000000000ull
 
 extern unsigned ternfs_disable_ftruncate;
-
-struct ternfs_file_span;
 
 struct ternfs_inode_policy {
     u64 fetched_at_jiffies;
@@ -65,11 +65,7 @@ struct ternfs_inode_file {
 
     // Normal file stuff
 
-    // Spans manipulation could be done in a lockless way on the read-side, but
-    // as of now we use a read/write semaphore for simplicity (we'd need to
-    // be careful when freeing spans).
-    struct rb_root spans;
-    struct rw_semaphore spans_lock;
+    struct ternfs_file_spans spans;
 
     // Transient file stuff. Only initialized on file creation (rather than opening),
     // otherwise it's garbage.

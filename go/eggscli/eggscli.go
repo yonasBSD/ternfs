@@ -609,20 +609,33 @@ func main() {
 
 	cpOutofCmd := flag.NewFlagSet("cp-outof", flag.ExitOnError)
 	cpOutofInput := cpOutofCmd.String("i", "", "What to copy from eggs.")
+	cpOutofId := cpOutofCmd.Uint64("id", 0, "The ID of the file to copy.") // 
 	cpOutofOut := cpOutofCmd.String("o", "", "Where to write the file to. Stdout if empty.")
 	cpOutofRun := func() {
 		out := os.Stdout
 		if *cpOutofOut != "" {
 			var err error
+			//os.MkdirAll(filepath.Dir(*cpOutofOut), 0755)
+			os.Remove(*cpOutofOut)
 			out, err = os.Create(*cpOutofOut)
 			if err != nil {
 				panic(err)
 			}
 		}
-		id, err := getClient().ResolvePath(log, *cpOutofInput)
-		if err != nil {
-			panic(err)
+		var id msgs.InodeId
+		if *cpOutofId != 0 && *cpOutofInput != "" {
+			panic("Cannot specify both -i and -id")
 		}
+		if *cpOutofId != 0 {
+			id = msgs.InodeId(*cpOutofId)
+		} else {
+			var err error
+			id, err = getClient().ResolvePath(log, *cpOutofInput)
+			if err != nil {
+				panic(err)
+			}
+		}
+
 		bufPool := lib.NewBufPool()
 		r, err := getClient().FetchFile(log, bufPool, id)
 		if err != nil {
@@ -631,6 +644,7 @@ func main() {
 		if _, err := out.Write(r.Bytes()); err != nil {
 			panic(err)
 		}
+		out.Close()
 	}
 	commands["cp-outof"] = commandSpec{
 		flags: cpOutofCmd,
@@ -1222,7 +1236,7 @@ func main() {
 						}
 					}
 				}
-				log.Info("%q", path.Join(parentPath, name))
+				log.Info("%v %q", id, path.Join(parentPath, name))
 				return nil
 			},
 		)

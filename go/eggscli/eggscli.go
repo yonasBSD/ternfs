@@ -1100,6 +1100,47 @@ func main() {
 		run:   duRun,
 	}
 
+	fileLocationsCmd := flag.NewFlagSet("file-locations", flag.ExitOnError)
+	fileLocationsId := fileLocationsCmd.Uint64("id", 0, "ID of the file to query")	
+	fileLocationsRun := func() {
+		id := msgs.InodeId(*fileLocationsId)
+		c := getClient()
+		fileSpansReq := msgs.FileSpansReq{
+			FileId:     id,
+			ByteOffset: 0,
+		}
+		fileSpansResp := msgs.FileSpansResp{}
+		locationSize := make(map[msgs.Location]uint64)
+
+		for {
+			if err := c.ShardRequest(log, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+				panic(err)
+			}
+			for spanIx := range fileSpansResp.Spans {
+				span := &fileSpansResp.Spans[spanIx]
+				if span.Header.IsInline {
+					continue
+				}
+				locBody := span.Body.(*msgs.FetchedLocations)
+				for _, loc := range locBody.Locations {
+					locationSize[loc.LocationId] +=uint64(loc.CellSize) * uint64(loc.Parity.Blocks()) * uint64(loc.Stripes)					
+				}
+			}
+			if fileSpansResp.NextOffset == 0 {
+				break
+			}
+			fileSpansReq.ByteOffset = fileSpansResp.NextOffset
+		}
+		log.Info("Done fetching locations for file %v", id)
+		for locId, size := range locationSize {
+			log.Info("Location %v has size %v", locId, size)
+		}
+	}
+	commands["file-locations"] = commandSpec{
+		flags: fileLocationsCmd,
+		run:   fileLocationsRun,
+	}
+
 	findCmd := flag.NewFlagSet("find", flag.ExitOnError)
 	findDir := findCmd.String("path", "/", "")
 	findName := findCmd.String("name", "", "Regex to match the name against.")

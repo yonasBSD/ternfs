@@ -704,6 +704,9 @@ struct ShardDBImpl {
     }
 
     EggsError _localFileSpans(rocksdb::ReadOptions& options, const LocalFileSpansReq& req, LocalFileSpansResp& resp) {
+        if (req.fileId.type() != InodeType::FILE) {
+            return EggsError::BLOCK_IO_ERROR_FILE;
+        }
         StaticValue<SpanKey> lowerKey;
         lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
         lowerKey().setOffset(~(uint64_t)0);
@@ -711,7 +714,7 @@ struct ShardDBImpl {
         options.iterate_lower_bound = &lowerKeySlice;
 
         StaticValue<SpanKey> upperKey;
-        upperKey().setFileId(InodeId::FromU64(req.fileId.u64 + 1));
+        upperKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 + 1));
         upperKey().setOffset(0);
         auto upperKeySlice = upperKey.toSlice();
         options.iterate_upper_bound = &upperKeySlice;
@@ -836,6 +839,9 @@ struct ShardDBImpl {
     }
 
     EggsError _fileSpans(rocksdb::ReadOptions& options, const FileSpansReq& req, FileSpansResp& resp) {
+        if (req.fileId.type() != InodeType::FILE) {
+            return EggsError::TYPE_IS_DIRECTORY;
+        }
         StaticValue<SpanKey> lowerKey;
         lowerKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 - 1));
         lowerKey().setOffset(~(uint64_t)0);
@@ -843,7 +849,7 @@ struct ShardDBImpl {
         options.iterate_lower_bound = &lowerKeySlice;
 
         StaticValue<SpanKey> upperKey;
-        upperKey().setFileId(InodeId::FromU64(req.fileId.u64 + 1));
+        upperKey().setFileId(InodeId::FromU64Unchecked(req.fileId.u64 + 1));
         upperKey().setOffset(0);
         auto upperKeySlice = upperKey.toSlice();
         options.iterate_upper_bound = &upperKeySlice;

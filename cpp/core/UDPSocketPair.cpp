@@ -69,11 +69,15 @@ void UDPSender::sendMessages(Env& env, const UDPSocketPair& socks) {
             sentMessages += ret;
         }
         if (unlikely(ret < 0)) {
-            // we get this when nf drops packets
-            if (errno != EPERM) {
-                throw SYSCALL_EXCEPTION("sendmmsg");
-            } else {
+            switch (errno) {
+            case EPERM: // we get this when nf drops packets
                 LOG_INFO(env, "dropping %s messages because of EPERM", _sendHdrs[i].size());
+                break;
+            case ENETUNREACH: // we get this when nic flaps
+                LOG_INFO(env, "dropping %s messages because of ENETUNREACH", _sendHdrs[i].size());
+                break;
+            default:
+                throw SYSCALL_EXCEPTION("sendmmsg");
             }
         } else if (unlikely(sentMessages < _sendHdrs[i].size())) {
             LOG_INFO(env, "dropping %s out of %s messages since `sendmmsg` could not send them all", _sendHdrs[i].size()-sentMessages, _sendHdrs[i].size());

@@ -450,7 +450,7 @@ struct MakeDirectoryStateMachine {
 
     void afterUnlockEdge(const ShardRespContainer& resp) {
         auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        if (err == EggsError::TIMEOUT || err == EggsError::MTIME_IS_TOO_RECENT) {
             // retry
             unlockEdge(true);
         } else {

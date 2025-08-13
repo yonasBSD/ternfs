@@ -430,7 +430,7 @@ public:
             cdcEntry.unpack(bbuf);
             cdcEntry.logIdx(logEntry.idx.u64);
             if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) && cdcEntry != _inFlightLogEntries[cdcEntry.logIdx()])) {
-                LOG_ERROR(_env, "Entry difference after deserialization cdcEntry(%s), original(%s)", std::move(cdcEntry), std::move(_inFlightLogEntries[cdcEntry.logIdx()]));
+                LOG_ERROR(_env, "Entry difference after deserialization cdcEntry(%s), original(%s)", cdcEntry, _inFlightLogEntries[cdcEntry.logIdx()]);
             }
             ALWAYS_ASSERT(!_shared.isLeader.load(std::memory_order_relaxed) || cdcEntry == _inFlightLogEntries[cdcEntry.logIdx()]);
             _inFlightLogEntries.erase(cdcEntry.logIdx());

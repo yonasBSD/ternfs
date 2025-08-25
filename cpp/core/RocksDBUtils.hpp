@@ -12,14 +12,14 @@
 
 #define ROCKS_DB_CHECKED_MSG(status, ...) \
     do { \
-        if (!status.ok()) { \
+        if (unlikely(!status.ok())) { \
             throw RocksDBException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), status, VALIDATE_FORMAT(__VA_ARGS__)); \
         } \
     } while (false)
 
 #define ROCKS_DB_CHECKED(status) \
     do { \
-        if (!status.ok()) { \
+        if (unlikely(!status.ok())) { \
             throw RocksDBException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), status); \
         } \
     } while (false)

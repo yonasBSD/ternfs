@@ -436,7 +436,7 @@ public:
             _inFlightLogEntries.erase(cdcEntry.logIdx());
             // process everything in a single batch
             _cdcReqsTxnIds.clear();
-            _shared.db.applyLogEntry(true, cdcEntry, _step, _cdcReqsTxnIds);
+            _shared.db.applyLogEntry(false, cdcEntry, _step, _cdcReqsTxnIds);
 
             if (_shared.isLeader.load(std::memory_order_relaxed)) {
                 // record txn ids etc. for newly received requests

@@ -15,6 +15,7 @@
 #include "trace.h"
 #include "wq.h"
 #include "file.h"
+#include "net_compat.h"
 
 // Static data
 // --------------------------------------------------------------------

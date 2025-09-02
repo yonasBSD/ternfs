@@ -229,13 +229,10 @@ static void getattr_async_complete(struct work_struct* work) {
             eggsfs_info("could not perform async stat to 0x%016lx: %d", enode->inode.i_ino, err);
         } else {
             WRITE_ONCE(enode->mtime, mtime);
-            enode->inode.i_mtime.tv_sec = mtime / 1000000000;
-            enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
-            enode->inode.i_ctime.tv_sec = mtime / 1000000000;
-            enode->inode.i_ctime.tv_nsec = mtime % 1000000000;
+            inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
+            inode_set_ctime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
             if (has_atime) {
-                enode->inode.i_atime.tv_sec = atime / 1000000000;
-                enode->inode.i_atime.tv_nsec = atime % 1000000000;
+                inode_set_atime(&enode->inode, atime / 1000000000, atime % 1000000000);
             }
             eggsfs_debug("id=%016lx new_expiry=%llu", enode->inode.i_ino, expiry);
             smp_store_release(&enode->getattr_expiry, expiry);
@@ -338,13 +335,10 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
             if (err) { err = eggsfs_error_to_linux(err); goto out; }
             else {
                 WRITE_ONCE(enode->mtime, mtime);
-                enode->inode.i_mtime.tv_sec = mtime / 1000000000;
-                enode->inode.i_mtime.tv_nsec = mtime % 1000000000;
-                enode->inode.i_ctime.tv_sec = mtime / 1000000000;
-                enode->inode.i_ctime.tv_nsec = mtime % 1000000000;
+                inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
+                inode_set_ctime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
                 if (has_atime) {
-                    enode->inode.i_atime.tv_sec = atime / 1000000000;
-                    enode->inode.i_atime.tv_nsec = atime % 1000000000;
+                    inode_set_atime(&enode->inode, atime / 1000000000, atime % 1000000000);
                 }
             }
 
@@ -470,7 +464,11 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_getattr, const struct path* path, struct k
     }
 
 done:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
     COMPAT_FUNC_UNS_CALL(generic_fillattr, inode, stat);
+#else
+    COMPAT_FUNC_UNS_CALL(generic_fillattr, request_mask, inode, stat);
+#endif
     trace_eggsfs_vfs_getattr_exit(inode, 0);
     return 0;
 }
@@ -663,12 +661,9 @@ struct inode* eggsfs_get_inode(
         inode->i_mode |= 0777 & ~(S_ISDIR(inode->i_mode) ? fs_info->dmask : fs_info->fmask);
         inode->i_blocks = 0;
         inode->i_size = 0;
-        inode->i_mtime.tv_nsec = 0;
-        inode->i_mtime.tv_sec = 0;
-        inode->i_ctime.tv_nsec = 0;
-        inode->i_ctime.tv_sec = 0;
-        inode->i_atime.tv_nsec = 0;
-        inode->i_atime.tv_sec = 0;
+        inode_set_mtime(inode, 0, 0);
+        inode_set_ctime(inode, 0, 0);
+        inode_set_atime(inode, 0, 0);
 
         inode->i_op = NULL;
         inode->i_fop = NULL;

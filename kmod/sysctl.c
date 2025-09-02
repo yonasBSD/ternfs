@@ -154,7 +154,9 @@ static struct ctl_table eggsfs_cb_sysctl_dir[] = {
     {
         .procname = "eggsfs",
         .mode = 0555,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
         .child = eggsfs_cb_sysctls,
+#endif
     },
     { }
 };
@@ -163,7 +165,9 @@ static struct ctl_table eggsfs_cb_sysctl_root[] = {
     {
         .procname = "fs",
         .mode = 0555,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
         .child = eggsfs_cb_sysctl_dir,
+#endif
     },
     { }
 };
@@ -171,7 +175,12 @@ static struct ctl_table eggsfs_cb_sysctl_root[] = {
 static struct ctl_table_header* eggsfs_callback_sysctl_table;
 
 int __init eggsfs_sysctl_init(void) {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
     eggsfs_callback_sysctl_table = register_sysctl_table(eggsfs_cb_sysctl_root);
+#else
+    eggsfs_callback_sysctl_table = register_sysctl("fs/eggsfs", eggsfs_cb_sysctls);
+#endif
+
     if (eggsfs_callback_sysctl_table == NULL) {
         return -ENOMEM;
     }

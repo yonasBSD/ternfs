@@ -18,6 +18,7 @@
 #include "wq.h"
 #include "bincode.h"
 #include "dir.h"
+#include "inode_compat.h"
 
 unsigned eggsfs_atime_update_interval_sec = 0;
 
@@ -86,7 +87,7 @@ static int file_open(struct inode* inode, struct file* filp) {
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();
             struct timespec64 atime_ts = ns_to_timespec64(atime_ns);
-            u64 diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            u64 diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
             if (diff < eggsfs_atime_update_interval_sec) {
                 // we don't think we should update
                 goto out;
@@ -101,15 +102,15 @@ static int file_open(struct inode* inode, struct file* filp) {
                 inode_unlock(inode);
                 return err;
             }
-            diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
             if (diff < eggsfs_atime_update_interval_sec) {
                 // out local time changed and we see we don't need to update
                 goto out;
             }
 
-            if ((enode->inode.i_atime.tv_sec > atime_ts.tv_sec) ||
-                (enode->inode.i_atime.tv_sec == atime_ts.tv_sec &&
-                 enode->inode.i_atime.tv_nsec == atime_ts.tv_nsec
+            if ((inode_get_atime_sec(&enode->inode) > atime_ts.tv_sec) ||
+                (inode_get_atime_sec(&enode->inode) == atime_ts.tv_sec &&
+                 inode_get_atime_nsec(&enode->inode) == atime_ts.tv_nsec
                 )
             ) {
                 // we don't want atime to go into the past don't update
@@ -194,7 +195,7 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
             FREE_PAGES(&span->blocks[b]);
         }
 #undef FREE_PAGES
-        atomic_long_add(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
+        add_mm_counter(span->enode->file.mm, MM_FILEPAGES, -num_pages);
         if (span->started_flushing) {
             up(&span->enode->file.flushing_span_sema);
         }
@@ -443,7 +444,7 @@ static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
     struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
     if (p == NULL) { return p; }
     // This contributes to OOM score.
-    atomic_long_inc_return(&file->mm->rss_stat.count[MM_FILEPAGES]);
+    inc_mm_counter(file->mm, MM_FILEPAGES);
     return p;
 }
 
@@ -782,7 +783,9 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
     struct eggsfs_transient_span* span = enode->file.writing_span;
 
     // Update mtime
-    ktime_get_real_ts64(&enode->inode.i_mtime);
+    struct timespec64 mtime;
+    ktime_get_real_ts64(&mtime);
+    inode_set_mtime_to_ts(&enode->inode, mtime);
 
     // We now start writing into the span, as much as we can anyway
     while (span->written < max_span_size && count) {
@@ -916,10 +919,8 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     if (err < 0) { goto out; }
 
     // finalize mtime
-    enode->inode.i_mtime.tv_sec = enode->edge_creation_time / 1000000000;
-    enode->inode.i_mtime.tv_nsec = enode->edge_creation_time % 1000000000;
-    enode->inode.i_ctime.tv_sec = enode->edge_creation_time / 1000000000;
-    enode->inode.i_ctime.tv_nsec = enode->edge_creation_time % 1000000000;
+    inode_set_mtime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
+    inode_set_ctime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
 
     // Switch the file to a normal file
     enode->file.status = EGGSFS_FILE_STATUS_READING;
@@ -1119,8 +1120,6 @@ const struct file_operations eggsfs_file_operations = {
     .write_iter = file_write_iter,
     .flush = file_flush_internal,
     .llseek = file_lseek,
-    .splice_read = generic_file_splice_read,
-    .splice_write = iter_file_splice_write,
     .mmap = generic_file_readonly_mmap,
     .fsync = file_fsync,
 };

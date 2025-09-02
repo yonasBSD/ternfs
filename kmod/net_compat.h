@@ -16,4 +16,28 @@
     #define COMPAT_SET_SOCKOPT(sock, level, op, optval, optlen) sock_setsockopt(sock, level, op, KERNEL_SOCKPTR(optval), optlen)
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0)
+
+static ssize_t kernel_sendpage(struct socket *sock, struct page *page,
+                                     int offset, size_t size, int flags)
+{
+    struct msghdr msg = {};
+    struct kvec iov = {};
+    ssize_t result;
+
+    void *page_addr = kmap(page);
+    iov.iov_base = page_addr + offset;
+    iov.iov_len = size;
+
+    msg.msg_flags = MSG_SPLICE_PAGES | flags;
+
+    result = kernel_sendmsg(sock, &msg, &iov, 1, size);
+
+    kunmap(page);
+    
+    return result;
+}
+#endif
+
+
 #endif /* _EGGSFS_NET_COMPAT_H */

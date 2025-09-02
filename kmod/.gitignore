@@ -8,7 +8,7 @@ modules.order
 *.ko
 *.mod
 *.mod.c
-eggsfs-client-*
+ternfs-client-*
 linux*
 *.img
 revision.c

@@ -9,7 +9,7 @@
 
 #include "log.h"
 
-struct eggsfs_policy {
+struct ternfs_policy {
     struct hlist_node hnode;
     spinlock_t lock;
     u64 inode;
@@ -28,8 +28,8 @@ static u64 policy_key(u64 inode, u8 tag) {
     return ((u64)tag << 48) ^ inode;
 }
 
-static struct eggsfs_policy* find_policy(u64 inode, u8 tag) {
-    struct eggsfs_policy* policy;
+static struct ternfs_policy* find_policy(u64 inode, u8 tag) {
+    struct ternfs_policy* policy;
     hash_for_each_possible_rcu(policies, policy, hnode, policy_key(inode, tag)) {
         if (likely(policy->inode && inode && policy->tag == tag)) {
             return policy;
@@ -38,10 +38,10 @@ static struct eggsfs_policy* find_policy(u64 inode, u8 tag) {
     return NULL;
 }
 
-struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int len) {
+struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int len) {
     BUG_ON(len < 0 || len > 255);
 
-    struct eggsfs_policy* policy = find_policy(inode, tag);
+    struct ternfs_policy* policy = find_policy(inode, tag);
     if (likely(policy != NULL)) {
         // We found one, check if we need to update.
         rcu_read_lock();
@@ -78,7 +78,7 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
     }
 
     // We need to add a new one. Allocate both struct and body
-    struct eggsfs_policy* new_policy = kmalloc(sizeof(struct eggsfs_policy), GFP_KERNEL);
+    struct ternfs_policy* new_policy = kmalloc(sizeof(struct ternfs_policy), GFP_KERNEL);
     if (new_policy == NULL) {
         return ERR_PTR(-ENOMEM);
     }
@@ -114,7 +114,7 @@ struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int le
     return new_policy;
 }
 
-void eggsfs_get_policy_body(struct eggsfs_policy* policy, struct eggsfs_policy_body* body_struct) {
+void ternfs_get_policy_body(struct ternfs_policy* policy, struct ternfs_policy_body* body_struct) {
     rcu_read_lock();
     char* body = rcu_dereference(policy->body);
     body_struct->len = *(u8*)body;
@@ -122,7 +122,7 @@ void eggsfs_get_policy_body(struct eggsfs_policy* policy, struct eggsfs_policy_b
     rcu_read_unlock();
 }
 
-int eggsfs_policy_init(void) {
+int ternfs_policy_init(void) {
     int i;
     for (i = 0; i < POLICY_BUCKETS; i++) {
         spin_lock_init(&policies_locks[i]);
@@ -130,10 +130,10 @@ int eggsfs_policy_init(void) {
     return 0;
 }
 
-void eggsfs_policy_exit(void) {
+void ternfs_policy_exit(void) {
     int bucket;
     struct hlist_node* tmp;
-    struct eggsfs_policy* policy;
+    struct ternfs_policy* policy;
     // While this pattern is not safe in general, at this point everything should be unmounted
     // and nothing should be accessing policies anyway
     rcu_read_lock();

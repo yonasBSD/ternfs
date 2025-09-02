@@ -29,7 +29,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Kills the current VM, starts it again, deploys to it and builds kmod, loads kmod, opens a tmux
-# session with dmesg in one pane and a console in ~/eggs in the other.
+# session with dmesg in one pane and a console in ~/tern in the other.
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
@@ -45,7 +45,7 @@ while [ $(pgrep -c qemu) -gt 0 ]; do echo old qemu still running; sleep 1; done 
 #
 # 0. dmesg
 # 1. free shell
-# 2. shell with eggsfs running
+# 2. shell with ternfs running
 # 3. trace_pipe
 # 4. qemu running
 
@@ -53,7 +53,7 @@ tmux new-session -d -s uovo
 tmux new-window -t uovo:4 './startvm.sh'
 
 # Wait for VM to go up, and build
-while ! scp -i image-key -P 2223 eggsfs.ko fmazzol@localhost: ; do sleep 1; done
+while ! scp -i image-key -P 2223 ternfs.ko fmazzol@localhost: ; do sleep 1; done
 
 # Start dmesg as soon as it's booted (before we insert module)
 tmux send-keys -t uovo:0 "ssh -i image-key -t fmazzol@localhost -p 2223 -i image-key dmesg -wHT | tee dmesg" Enter
@@ -62,7 +62,7 @@ tmux send-keys -t uovo:0 "ssh -i image-key -t fmazzol@localhost -p 2223 -i image
 tmux new-window -t uovo:3 'ssh -i image-key -t fmazzol@localhost -p 2223 sudo cat /sys/kernel/debug/tracing/trace_pipe'
 
 # Insert module
-ssh -i image-key -p 2223 fmazzol@localhost 'sudo insmod eggsfs.ko'
+ssh -i image-key -p 2223 fmazzol@localhost 'sudo insmod ternfs.ko'
 
 if [[ "$deploy" = true ]]; then
     # Deploy binaries
@@ -72,13 +72,13 @@ fi
 # Create shells
 tmux new-window -t uovo:1 'ssh -i image-key -t fmazzol@localhost -p 2223'
 if [[ "$run" = true ]]; then
-    tmux new-window -t uovo:2 'ssh -i image-key -t fmazzol@localhost -p 2223 "cd eggs && ./eggsrun -verbose -binaries-dir ~/eggs -data-dir ~/eggs-data/ -leader-only"'
+    tmux new-window -t uovo:2 'ssh -i image-key -t fmazzol@localhost -p 2223 "cd tern && ./ternrun -verbose -binaries-dir ~/tern -data-dir ~/tern-data/ -leader-only"'
 fi
 
 # Attach
 tmux attach-session -t uovo:1
 
-# ./eggs/eggstests -verbose -kmod -filter 'mounted|rsync|large' -short -binaries-dir $(pwd)/eggs
+# ./tern/terntests -verbose -kmod -filter 'mounted|rsync|large' -short -binaries-dir $(pwd)/tern
 
 # sudo sysctl fs.eggsfs.debug=1
-# ./eggs/eggstests -kmod -filter 'mounted' -cfg fsTest.checkThreads=4 -cfg fsTest.numDirs=1 -cfg fsTest.numFiles=100 -short -binaries-dir $(pwd)/eggs
+# ./tern/terntests -kmod -filter 'mounted' -cfg fsTest.checkThreads=4 -cfg fsTest.numDirs=1 -cfg fsTest.numFiles=100 -short -binaries-dir $(pwd)/tern

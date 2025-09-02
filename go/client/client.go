@@ -1,8 +1,8 @@
-// The client package provides a interface to the eggsfs cluster that should be
+// The client package provides a interface to the ternfs cluster that should be
 // sufficient for most user level operations (modifying metadata, reading and
 // writing blocks, etc).
 //
-// To use this library you still require an understanding of the way eggsfs
+// To use this library you still require an understanding of the way ternfs
 // operations, and you will still need to construct the request and reply
 // messages (defined in the [msgs] package), but all service discovery and
 // network communication is handled for you.
@@ -25,10 +25,10 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
-	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/crc32c"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/bincode"
+	"xtx/ternfs/crc32c"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type ReqCounters struct {
@@ -396,7 +396,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 			log.RaiseAlert("bad error response length %v, expected %v", rawResp.respLen, 4+8+1+2)
 			err = msgs.MALFORMED_RESPONSE
 		} else {
-			err = msgs.EggsError(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
+			err = msgs.TernError(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
 		}
 		req.respCh <- &metadataProcessorResponse{
 			requestId: req.requestId,
@@ -816,13 +816,13 @@ func (proc *blocksProcessor) processResponses(log *lib.Logger) {
 		}
 		if resp.resp.resp.BlocksResponseKind() == msgs.FETCH_BLOCK_WITH_CRC {
 			req := resp.resp.req.(*msgs.FetchBlockWithCrcReq)
-			pageCount := (req.Count / msgs.EGGS_PAGE_SIZE)
+			pageCount := (req.Count / msgs.TERN_PAGE_SIZE)
 			log.Debug("reading block body from %v->%v", connr.LocalAddr(), connr.RemoteAddr())
-			var page [msgs.EGGS_PAGE_WITH_CRC_SIZE]byte
+			var page [msgs.TERN_PAGE_WITH_CRC_SIZE]byte
 			pageFailed := false
 			for i := uint32(0); i < pageCount; i++ {
 				bytesRead := uint32(0)
-				for bytesRead < msgs.EGGS_PAGE_WITH_CRC_SIZE {
+				for bytesRead < msgs.TERN_PAGE_WITH_CRC_SIZE {
 					read, err := connr.Read(page[bytesRead:])
 					if err != nil {
 						resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
@@ -834,16 +834,16 @@ func (proc *blocksProcessor) processResponses(log *lib.Logger) {
 				if pageFailed {
 					break
 				}
-				crc := binary.LittleEndian.Uint32(page[msgs.EGGS_PAGE_SIZE:])
-				actualCrc := crc32c.Sum(0, page[:msgs.EGGS_PAGE_SIZE])
+				crc := binary.LittleEndian.Uint32(page[msgs.TERN_PAGE_SIZE:])
+				actualCrc := crc32c.Sum(0, page[:msgs.TERN_PAGE_SIZE])
 				if crc != actualCrc {
 					resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, msgs.BAD_BLOCK_CRC)
 					pageFailed = true
 					break
 				}
 
-				readBytes, err := resp.resp.additionalBodyWriter.ReadFrom(bytes.NewReader(page[:msgs.EGGS_PAGE_SIZE]))
-				if err != nil || uint32(readBytes) < msgs.EGGS_PAGE_SIZE {
+				readBytes, err := resp.resp.additionalBodyWriter.ReadFrom(bytes.NewReader(page[:msgs.TERN_PAGE_SIZE]))
+				if err != nil || uint32(readBytes) < msgs.TERN_PAGE_SIZE {
 					if err == nil {
 						err = io.EOF
 					}
@@ -1341,7 +1341,7 @@ TraverseDirectories:
 }
 
 // High-level helper function to take a string path and return the inode and parent inode
-func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.InodeId, creationTime msgs.EggsTime, parent msgs.InodeId, err error) {
+func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.InodeId, creationTime msgs.TernTime, parent msgs.InodeId, err error) {
 	if !filepath.IsAbs(path) {
 		return msgs.NULL_INODE_ID, 0, msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
 	}

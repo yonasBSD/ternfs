@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 func BlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) [8]byte {

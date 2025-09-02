@@ -51,7 +51,7 @@ public:
         fieldRaw(name, ss.str());
     }
 
-    void timestamp(EggsTime t);
+    void timestamp(TernTime t);
 };
 
 // error string on error

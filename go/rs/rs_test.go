@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
-	"xtx/eggsfs/assert"
+	"xtx/ternfs/assert"
 )
 
 func TestGet(t *testing.T) {

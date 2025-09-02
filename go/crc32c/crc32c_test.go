@@ -3,7 +3,7 @@ package crc32c
 import (
 	"math/rand"
 	"testing"
-	"xtx/eggsfs/assert"
+	"xtx/ternfs/assert"
 )
 
 func TestBasic(t *testing.T) {

@@ -12,7 +12,7 @@ public:
     AssertiveLocked(std::atomic<bool>& held): _held(held) {
         bool expected = false;
         if (!_held.compare_exchange_strong(expected, true)) {
-            throw EGGS_EXCEPTION("could not aquire lock, are you using this function concurrently?");
+            throw TERN_EXCEPTION("could not aquire lock, are you using this function concurrently?");
         }
     }
 

@@ -229,7 +229,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
         auto dummyCurrentDirectory = InodeId::FromU64Unchecked(1ull << 63);
         auto thisDir = dummyCurrentDirectory;
         bool thisDirHasCurrentEdges = false;
-        EggsTime thisDirMaxTime = 0;
+        TernTime thisDirMaxTime = 0;
         std::string thisDirMaxTimeEdge;
         // the last edge for a given name, in a given directory
         std::unordered_map<std::string, std::pair<StaticValue<EdgeKey>, StaticValue<SnapshotEdgeBody>>> thisDirLastEdges;
@@ -276,7 +276,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
                 ERROR("Edge %s has mismatch between name and nameHash", edgeK());
             }
             InodeId ownedTargetId = NULL_INODE_ID;
-            EggsTime creationTime;
+            TernTime creationTime;
             std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
             std::optional<ExternalValue<SnapshotEdgeBody>> snapshotEdge;
             if (edgeK().current()) {
@@ -329,7 +329,7 @@ void ShardDBTools::fsck(const std::string& dbPath) {
             {
                 auto prevEdge = thisDirLastEdges.find(name);
                 if (prevEdge != thisDirLastEdges.end()) {
-                    EggsTime prevCreationTime = prevEdge->second.first().creationTime();
+                    TernTime prevCreationTime = prevEdge->second.first().creationTime();
                     // The edge must be newer than every non-current edge before it, with the exception of deletion edges
                     // (when we override the deletion edge)
                     if (
@@ -504,8 +504,8 @@ struct SizePerStorageClass {
 };
 
 struct FileInfo {
-    EggsTime mTime;
-    EggsTime aTime;
+    TernTime mTime;
+    TernTime aTime;
     SizePerStorageClass size;
     uint64_t size_weight;
 };
@@ -604,7 +604,7 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
         auto dummyCurrentDirectory = InodeId::FromU64Unchecked(1ull << 63);
         auto thisDir = dummyCurrentDirectory;
         bool thisDirHasCurrentEdges = false;
-        EggsTime thisDirMaxTime = 0;
+        TernTime thisDirMaxTime = 0;
         std::string thisDirMaxTimeEdge;
         std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(options, edgesCf));
         for (it->SeekToFirst(); it->Valid(); it->Next())
@@ -615,8 +615,8 @@ void ShardDBTools::sampleFiles(const std::string& dbPath, const std::string& out
             std::optional<ExternalValue<CurrentEdgeBody>> currentEdge;
             std::optional<ExternalValue<SnapshotEdgeBody>> snapshotEdge;
             bool current = false;
-            EggsTime creationTime = 0;
-            EggsTime deletionTime = 0;
+            TernTime creationTime = 0;
+            TernTime deletionTime = 0;
             if (edgeK().current()) {
                 currentEdge = ExternalValue<CurrentEdgeBody>::FromSlice(it->value());
                 ownedTargetId = (*currentEdge)().targetId();

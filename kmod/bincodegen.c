@@ -1,4 +1,4 @@
-const char* eggsfs_err_str(int err) {
+const char* ternfs_err_str(int err) {
     switch (err) {
     case 10: return "INTERNAL_ERROR";
     case 11: return "FATAL_ERROR";
@@ -96,7 +96,7 @@ const char* eggsfs_err_str(int err) {
     }
 }
 
-const char* eggsfs_shard_kind_str(int kind) {
+const char* ternfs_shard_kind_str(int kind) {
     switch (kind) {
     case 1: return "LOOKUP";
     case 2: return "STAT_FILE";
@@ -119,7 +119,7 @@ const char* eggsfs_shard_kind_str(int kind) {
     }
 }
 
-const char* eggsfs_cdc_kind_str(int kind) {
+const char* ternfs_cdc_kind_str(int kind) {
     switch (kind) {
     case 1: return "MAKE_DIRECTORY";
     case 2: return "RENAME_FILE";
@@ -129,7 +129,7 @@ const char* eggsfs_cdc_kind_str(int kind) {
     }
 }
 
-const char* eggsfs_shuckle_kind_str(int kind) {
+const char* ternfs_shuckle_kind_str(int kind) {
     switch (kind) {
     case 3: return "LOCAL_SHARDS";
     case 7: return "LOCAL_CDC";
@@ -140,7 +140,7 @@ const char* eggsfs_shuckle_kind_str(int kind) {
     }
 }
 
-const char* eggsfs_blocks_kind_str(int kind) {
+const char* ternfs_blocks_kind_str(int kind) {
     switch (kind) {
     case 2: return "FETCH_BLOCK";
     case 3: return "WRITE_BLOCK";

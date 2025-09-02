@@ -21,12 +21,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/eggsfs/cleanup/scratch"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/crc32c"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
-	"xtx/eggsfs/rs"
+	"xtx/ternfs/cleanup/scratch"
+	"xtx/ternfs/client"
+	"xtx/ternfs/crc32c"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
+	"xtx/ternfs/rs"
 )
 
 type MigrateStats struct {
@@ -660,7 +660,7 @@ OUT:
 					continue
 				}
 
-				if bs.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
+				if bs.Flags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) && bs.HasFiles {
 					m.ScheduleBlockService(bs.Id)
 				} else {
 					m.blockServicesLock.Lock()

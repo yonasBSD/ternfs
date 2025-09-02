@@ -3,8 +3,8 @@ package client
 import (
 	"fmt"
 	"net"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 func (c *Client) checkDeletedEdge(
@@ -12,7 +12,7 @@ func (c *Client) checkDeletedEdge(
 	dirId msgs.InodeId,
 	targetId msgs.InodeId,
 	name string,
-	creationTime msgs.EggsTime,
+	creationTime msgs.TernTime,
 	owned bool,
 ) bool {
 	// First we check the edge we expect to have moved away
@@ -50,7 +50,7 @@ func (c *Client) checkNewEdgeAfterRename(
 	dirId msgs.InodeId,
 	targetId msgs.InodeId,
 	name string,
-	creationTime *msgs.EggsTime,
+	creationTime *msgs.TernTime,
 ) bool {
 	// Then we check the target edge
 	lookupResp := msgs.LookupResp{}
@@ -72,8 +72,8 @@ func (c *Client) checkRepeatedShardRequestError(
 	// these are already filled in by now
 	reqBody msgs.ShardRequest,
 	resp msgs.ShardResponse,
-	respErr msgs.EggsError,
-) msgs.EggsError {
+	respErr msgs.TernError,
+) msgs.TernError {
 	switch reqBody := reqBody.(type) {
 	case *msgs.SameDirectoryRenameReq:
 		if respErr == msgs.EDGE_NOT_FOUND {

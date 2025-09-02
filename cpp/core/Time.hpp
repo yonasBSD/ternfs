@@ -67,29 +67,29 @@ constexpr Duration operator "" _hours(unsigned long long t) { return Duration(t*
 
 std::ostream& operator<<(std::ostream& out, Duration d);
 
-struct EggsTime {
+struct TernTime {
     uint64_t ns;
 
-    EggsTime(): ns(0) {}
-    EggsTime(uint64_t ns_): ns(ns_) {}
+    TernTime(): ns(0) {}
+    TernTime(uint64_t ns_): ns(ns_) {}
 
-    bool operator==(EggsTime rhs) const {
+    bool operator==(TernTime rhs) const {
         return ns == rhs.ns;
     }
 
-    bool operator>(EggsTime rhs) const {
+    bool operator>(TernTime rhs) const {
         return ns > rhs.ns;
     }
 
-    bool operator>=(EggsTime rhs) const {
+    bool operator>=(TernTime rhs) const {
         return ns >= rhs.ns;
     }
 
-    bool operator<=(EggsTime rhs) const {
+    bool operator<=(TernTime rhs) const {
         return ns <= rhs.ns;
     }
 
-    bool operator<(EggsTime rhs) const {
+    bool operator<(TernTime rhs) const {
         return ns < rhs.ns;
     }
 
@@ -101,18 +101,18 @@ struct EggsTime {
         ns = buf.unpackScalar<uint64_t>();
     }
 
-    EggsTime operator+(Duration d) const {
-        return EggsTime(ns + d.ns);
+    TernTime operator+(Duration d) const {
+        return TernTime(ns + d.ns);
     }
 
-    EggsTime operator-(Duration d) const {
+    TernTime operator-(Duration d) const {
         if (unlikely(d.ns > ns)) {
             return 0;
         }
-        return EggsTime(ns - d.ns);
+        return TernTime(ns - d.ns);
     }
 
-    Duration operator-(EggsTime t) const {
+    Duration operator-(TernTime t) const {
         if (unlikely(t.ns > ns)) {
             return 0;
         }
@@ -124,14 +124,14 @@ struct EggsTime {
     #ifdef __clang__
     __attribute__((no_sanitize("integer")))
     #endif
-    Duration operator-(EggsTime d) {
+    Duration operator-(TernTime d) {
         return Duration(ns - d.ns);
     }
 };
 
-std::ostream& operator<<(std::ostream& out, EggsTime t);
+std::ostream& operator<<(std::ostream& out, TernTime t);
 
 // DO NOT USE UNLESS TESTING TIME SENSITIVE BEHAVIOR
-void _setCurrentTime(EggsTime time);
+void _setCurrentTime(TernTime time);
 
-EggsTime eggsNow();
+TernTime ternNow();

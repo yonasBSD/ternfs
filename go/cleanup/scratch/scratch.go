@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/client"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type ScratchFile interface {
@@ -156,7 +156,7 @@ func (s *scratchFile) Lock() (*lockedScratchFile, error) {
 		s.id = resp.Id
 		s.cookie = resp.Cookie
 		s.size = 0
-		s.deadline = msgs.MakeEggsTime(time.Now().Add(3 * time.Hour))
+		s.deadline = msgs.MakeTernTime(time.Now().Add(3 * time.Hour))
 	}
 
 	return &lockedScratchFile{s, true}, nil
@@ -193,7 +193,7 @@ type scratchFile struct {
 
 	clearOnUnlock bool
 	clearReason   string
-	deadline      msgs.EggsTime
+	deadline      msgs.TernTime
 	done          chan struct{}
 
 	mu     sync.Mutex

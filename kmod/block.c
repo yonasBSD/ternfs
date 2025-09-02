@@ -20,16 +20,16 @@
 // Static data
 // --------------------------------------------------------------------
 
-#define EGGSFS_BLOCKS_REQ_HEADER_SIZE (4 + 8 + 1) // protocol + block service id + kind
-#define EGGSFS_BLOCKS_RESP_HEADER_SIZE (4 + 1) // protocol + kind
+#define TERNFS_BLOCKS_REQ_HEADER_SIZE (4 + 8 + 1) // protocol + block service id + kind
+#define TERNFS_BLOCKS_RESP_HEADER_SIZE (4 + 1) // protocol + kind
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
 #define PAGE_CRC_BYTES 4
 
-int eggsfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
-int eggsfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
-int eggsfs_block_service_connect_timeout_jiffies = MSECS_TO_JIFFIES(4 * 1000);
+int ternfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
+int ternfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
+int ternfs_block_service_connect_timeout_jiffies = MSECS_TO_JIFFIES(4 * 1000);
 
 static u64 WHICH_BLOCK_IP = 0;
 
@@ -81,7 +81,7 @@ static struct block_ops fetch_block_pages_witch_crc_ops = {
     .cleanup_work = fetch_block_pages_with_crc_cleanup_work,
     .write_req = fetch_block_pages_with_crc_write_req,
     .receive_req = fetch_block_pages_with_crc_receive_req,
-    .timeout_jiffies = &eggsfs_fetch_block_timeout_jiffies,
+    .timeout_jiffies = &ternfs_fetch_block_timeout_jiffies,
 };
 
 static void write_block_sk_data_ready(struct sock *sk);
@@ -97,7 +97,7 @@ static struct block_ops write_block_ops = {
     .cleanup_work = write_block_cleanup_work,
     .write_req = write_block_write_req,
     .receive_req = write_block_receive_req,
-    .timeout_jiffies = &eggsfs_write_block_timeout_jiffies,
+    .timeout_jiffies = &ternfs_write_block_timeout_jiffies,
 };
 
 static void do_timeout_sockets(struct work_struct* w);
@@ -106,7 +106,7 @@ static DECLARE_DELAYED_WORK(timeout_work, do_timeout_sockets);
 // Utils
 // --------------------------------------------------------------------
 
-static u32 eggsfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len) {
+static u32 ternfs_skb_copy(void* dstp, struct sk_buff* skb, u32 offset, u32 len) {
     struct skb_seq_state seq;
     u32 consumed = 0;
     char* dst = dstp;
@@ -164,9 +164,9 @@ struct block_socket {
     struct list_head write;
     spinlock_t list_lock;
     // We schedule write work as kernel is unhappy if we write from sk_write_space callback
-    // write work is scheduled on eggsfs_fast_wq and we yield after at most 10ms of writing
+    // write work is scheduled on ternfs_fast_wq and we yield after at most 10ms of writing
     struct work_struct write_work;
-    // We schedule cleanup work on eggsfs_fast_wq when we error out socket or if there was no activity for block_ops->timeout_jiffies
+    // We schedule cleanup work on ternfs_fast_wq when we error out socket or if there was no activity for block_ops->timeout_jiffies
     struct work_struct cleanup_work;
     // There could be multiple cleanup items scheduled, we only want first one to remove socket from hash, wake up waiters, remove requests
     bool terminal;
@@ -183,29 +183,29 @@ struct block_socket {
 };
 
 // Needs to be called with read lock on socket->sock->sock->sk_callback_lock
-// or from workqueue context (eggsfs_fast_wq)
+// or from workqueue context (ternfs_fast_wq)
 // Errors socket if not already in error state and schedules cleanup
 inline void error_socket(struct block_socket* socket, int err) {
     if (atomic_cmpxchg(&socket->err, 0, err) == 0) {
-        queue_work(eggsfs_fast_wq, &socket->cleanup_work);
+        queue_work(ternfs_fast_wq, &socket->cleanup_work);
     }
 }
 
 static void block_ops_exit(struct block_ops* ops) {
-    eggsfs_debug("waiting for all sockets to be done");
+    ternfs_debug("waiting for all sockets to be done");
 
     struct block_socket* sock;
     int bucket;
     rcu_read_lock();
     hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
-        eggsfs_debug("scheduling winddown for %d", ntohs(sock->addr.sin_port));
+        ternfs_debug("scheduling winddown for %d", ntohs(sock->addr.sin_port));
         error_socket(sock, -ECONNABORTED);
     }
     rcu_read_unlock();
 
     // wait for all of them to be freed by work
     for (bucket = 0; bucket < BLOCK_SOCKET_BUCKETS; bucket++) {
-        eggsfs_debug("waiting for bucket %d (len %d)", bucket, atomic_read(&ops->len[bucket]));
+        ternfs_debug("waiting for bucket %d (len %d)", bucket, atomic_read(&ops->len[bucket]));
         wait_event(ops->wqs[bucket], atomic_read(&ops->len[bucket]) == 0);
     }
 }
@@ -233,7 +233,7 @@ struct block_request {
     atomic_t state;
     atomic64_t timings[BR_ST_MAX];
 
-    // work that gets scheduled on eggsfs_wq to call complete callback on request
+    // work that gets scheduled on ternfs_wq to call complete callback on request
     struct work_struct complete_work;
 
     // How much is left to write (including the block body if writing)
@@ -264,7 +264,7 @@ static void block_socket_log_req_completion(struct block_socket* socket, struct 
     u64 waiting = reading_started - waiting_started;
     u64 reading = completed - reading_started;
 
-    eggsfs_warn("dropped block request to %pI4:%d (err=%d) last_state=%d left_to_read=%d left_to_write=%d elapsed=%llums [queued=%llums, writing=%llums, waiting=%llums, reading=%llums]",
+    ternfs_warn("dropped block request to %pI4:%d (err=%d) last_state=%d left_to_read=%d left_to_write=%d elapsed=%llums [queued=%llums, writing=%llums, waiting=%llums, reading=%llums]",
         &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err, state, req->left_to_read, req->left_to_write, jiffies64_to_msecs(total),
         jiffies64_to_msecs(queued), jiffies64_to_msecs(writing), jiffies64_to_msecs(waiting), jiffies64_to_msecs(reading));
 }
@@ -276,7 +276,7 @@ static void block_socket_state_check_locked(struct sock* sk) {
 
     // Right now we connect beforehand, so every change is trouble. Just
     // kill the socket.
-    eggsfs_debug("socket state check triggered: %d, will fail reqs", sk->sk_state);
+    ternfs_debug("socket state check triggered: %d, will fail reqs", sk->sk_state);
     error_socket(socket, -ECONNABORTED); // TODO we could have nicer errors
 }
 
@@ -316,11 +316,11 @@ static void block_socket_write_work(
     struct block_socket* socket
 ) {
 
-    eggsfs_debug("%pI4:%d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
+    ternfs_debug("%pI4:%d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
     // if socked failed, exit immediately
     if (atomic_read(&socket->err)) {
         if (socket->terminal) {
-            queue_work(eggsfs_fast_wq, &socket->cleanup_work);
+            queue_work(ternfs_fast_wq, &socket->cleanup_work);
         }
         return;
     }
@@ -334,7 +334,7 @@ static void block_socket_write_work(
 
     while (req != NULL) {
         if (get_jiffies_64() - start > MSECS_TO_JIFFIES(10)) {
-            queue_work(eggsfs_fast_wq, &socket->write_work);
+            queue_work(ternfs_fast_wq, &socket->write_work);
             //yield to other sockets
             break;
         }
@@ -377,7 +377,7 @@ static void block_socket_write_work(
         spin_unlock_bh(&socket->list_lock);
         if (scheduledCompletion) {
             block_socket_log_req_completion(socket, completed_req);
-            queue_work(eggsfs_wq, &completed_req->complete_work);
+            queue_work(ternfs_wq, &completed_req->complete_work);
         }
     }
 }
@@ -387,7 +387,7 @@ static void block_socket_sk_write_space(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     struct block_socket* socket = (struct block_socket*)sk->sk_user_data;
     if (socket != NULL) {
-        queue_work(eggsfs_fast_wq, &socket->write_work);
+        queue_work(ternfs_fast_wq, &socket->write_work);
         old_write_space = socket->saved_write_space;
     } else {
         old_write_space = sk->sk_write_space;
@@ -415,7 +415,7 @@ static struct block_socket* __acquires(RCU) get_block_socket(
     }
     rcu_read_unlock();
 
-    eggsfs_debug("socket to %pI4:%d not found, will create", &addr->sin_addr, ntohs(addr->sin_port));
+    ternfs_debug("socket to %pI4:%d not found, will create", &addr->sin_addr, ntohs(addr->sin_port));
 
     sock = kmalloc(sizeof(struct block_socket), GFP_KERNEL);
     int err = 0;
@@ -456,15 +456,15 @@ static struct block_socket* __acquires(RCU) get_block_socket(
     err = kernel_connect(sock->sock, (struct sockaddr*)&sock->addr, sizeof(sock->addr), O_NONBLOCK);
     if (err < 0) {
         if (unlikely(err != -EINPROGRESS)) {
-            eggsfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
+            ternfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
             sock_release(sock->sock);
             goto out_err_sock;
         } else {
             if (likely(sock->sock->sk->sk_state != TCP_ESTABLISHED)) {
-                eggsfs_debug("waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
-                err = wait_for_completion_timeout(&sock->sock_wait, eggsfs_block_service_connect_timeout_jiffies);
+                ternfs_debug("waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
+                err = wait_for_completion_timeout(&sock->sock_wait, ternfs_block_service_connect_timeout_jiffies);
                 if (err <= 0) {
-                    eggsfs_warn("timed out waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
+                    ternfs_warn("timed out waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
                     sock_release(sock->sock);
                     err = -ETIMEDOUT;
                     goto out_err_sock;
@@ -515,7 +515,7 @@ static struct block_socket* __acquires(RCU) get_block_socket(
             rcu_read_unlock();
             spin_unlock(&ops->locks[bucket]);
             write_unlock(&sock->sock->sk->sk_callback_lock);
-            eggsfs_debug("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
+            ternfs_debug("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
             // call again rather than trying to `sock_release` with the
             // RCU read lock held, this might not be safe in atomic context.
             sock_release(sock->sock);
@@ -589,7 +589,7 @@ static void block_socket_cleanup_work(
     socket->sock->sk->sk_user_data = NULL;
     write_unlock_bh(&socket->sock->sk->sk_callback_lock);
 
-    eggsfs_debug("winding down socket to %pI4:%d due to %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
+    ternfs_debug("winding down socket to %pI4:%d due to %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
 
     u64 key = block_socket_key(&socket->addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
@@ -639,10 +639,10 @@ static void block_socket_cleanup_work(
 
         list_for_each_entry_safe(req, tmp, &all_reqs, write_list) {
             atomic_cmpxchg(&req->err, 0, err);
-            eggsfs_debug("completing request because of a socket winddown");
+            ternfs_debug("completing request because of a socket winddown");
             list_del(&req->write_list);
             block_socket_log_req_completion(socket, req);
-            queue_work(eggsfs_wq, &req->complete_work);
+            queue_work(ternfs_wq, &req->complete_work);
         }
     }
 
@@ -668,7 +668,7 @@ static int block_socket_receive_req_locked(
 ) {
     struct block_socket* socket = rd_desc->arg.data;
 
-    eggsfs_debug("%pI4:%d offset=%u len=%lu", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), offset, len);
+    ternfs_debug("%pI4:%d offset=%u len=%lu", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), offset, len);
 
     size_t len0 = len;
 
@@ -699,7 +699,7 @@ static int block_socket_receive_req_locked(
         }
         BUG_ON(consumed > req->left_to_read);
         req->left_to_read -= consumed;
-        eggsfs_debug("left_to_read=%u consumed=%d", req->left_to_read, consumed);
+        ternfs_debug("left_to_read=%u consumed=%d", req->left_to_read, consumed);
         len -= consumed;
         offset += consumed;
         if (req->left_to_read == 0 || atomic_read(&req->err)) {
@@ -715,7 +715,7 @@ static int block_socket_receive_req_locked(
             spin_unlock_bh(&socket->list_lock);
             if (scheduleCompletion) {
                 block_socket_log_req_completion(socket, completed_req);
-                queue_work(eggsfs_wq, &completed_req->complete_work);
+                queue_work(ternfs_wq, &completed_req->complete_work);
             }
         }
     }
@@ -744,7 +744,7 @@ static void block_socket_sk_data_ready(
 
 static struct block_socket* __acquires(RCU) get_blockservice_socket(
     struct block_ops* ops,
-    struct eggsfs_block_service* bs
+    struct ternfs_block_service* bs
 )   {
     int i, block_ip;
     struct sockaddr_in addr;
@@ -776,7 +776,7 @@ out:
 static int block_socket_start_req(
     struct block_ops* ops,
     struct block_request* req,
-    struct eggsfs_block_service* bs,
+    struct ternfs_block_service* bs,
     u32 left_to_write,
     u32 left_to_read
 ) {
@@ -838,11 +838,11 @@ retry_get_socket:
         bool last_waiter = --sock->waiters == 0;
         spin_unlock_bh(&sock->list_lock);
         if (last_waiter) {
-            queue_work(eggsfs_fast_wq, &sock->cleanup_work);
+            queue_work(ternfs_fast_wq, &sock->cleanup_work);
         }
 
         if (err <= 0) {
-            eggsfs_warn("timed out waiting for socked to bs=%016llx  to be cleaned up", bs->id);
+            ternfs_warn("timed out waiting for socked to bs=%016llx  to be cleaned up", bs->id);
             err = -ETIMEDOUT;
             goto out_err;
         }
@@ -851,7 +851,7 @@ retry_get_socket:
 
     // We are first request in write queue, schedule writing
     if (is_first) {
-        queue_work(eggsfs_fast_wq, &sock->write_work);
+        queue_work(ternfs_fast_wq, &sock->write_work);
     }
 
     // we're done
@@ -859,7 +859,7 @@ retry_get_socket:
     return 0;
 
 out_err:
-    eggsfs_info("couldn't start block request, err=%d", err);
+    ternfs_info("couldn't start block request, err=%d", err);
     return err;
 }
 
@@ -874,7 +874,7 @@ static void timeout_sockets(struct block_ops* ops) {
         if (block_socket_check_timeout(sock, now, *ops->timeout_jiffies, false)) {
             // We can't clean up here as timing out involves removing from hash and needs
             // synchronization through rcu_synchronize
-            queue_work(eggsfs_fast_wq, &sock->cleanup_work);
+            queue_work(ternfs_fast_wq, &sock->cleanup_work);
         }
     }
     rcu_read_unlock();
@@ -895,7 +895,7 @@ static int drop_sockets(struct block_ops* ops) {
     }
     rcu_read_unlock();
 
-    eggsfs_info("dropped %d sockets", dropped);
+    ternfs_info("dropped %d sockets", dropped);
 
     return dropped;
 }
@@ -927,9 +927,9 @@ struct fetch_request {
     u16 page_offset;
     // How much we've read of the header.
     u8 header_read;
-    static_assert(EGGSFS_FETCH_BLOCK_RESP_SIZE == 0);
+    static_assert(TERNFS_FETCH_BLOCK_RESP_SIZE == 0);
     union {
-        char buf[EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2];
+        char buf[TERNFS_BLOCKS_RESP_HEADER_SIZE + 2];
         struct {
             __le32 protocol;
             u8 kind;
@@ -950,7 +950,7 @@ static void fetch_complete(struct block_request* breq) {
     struct page* last_page = list_last_entry(&req->pages, struct page, lru);
     while(last_page->index < first_page->index || first_page->index == (unsigned long)-1) {
         list_rotate_left(&req->pages);
-        eggsfs_debug("rotating list left: %d %d, first_page:%ld, last_page:%ld", req->count, req->bytes_fetched, first_page->index, last_page->index);
+        ternfs_debug("rotating list left: %d %d, first_page:%ld, last_page:%ld", req->count, req->bytes_fetched, first_page->index, last_page->index);
         first_page = list_first_entry(&req->pages, struct page, lru);
         last_page = list_last_entry(&req->pages, struct page, lru);
         if (first_page == first_seen) {
@@ -959,10 +959,10 @@ static void fetch_complete(struct block_request* breq) {
             break;
         }
     }
-    eggsfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
+    ternfs_debug("block fetch complete block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
     req->callback(req->data, req->block_id, &req->pages, atomic_read(&req->breq.err));
 
-    eggsfs_debug("block released socket block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
+    ternfs_debug("block released socket block_id=%016llx err=%d", req->block_id, atomic_read(&req->breq.err));
     put_pages_list(&req->pages);
     kmem_cache_free(fetch_request_cachep, req);
 }
@@ -978,7 +978,7 @@ static void fetch_request_constructor(void* ptr) {
     INIT_WORK(&req->breq.complete_work, fetch_complete_work);
 }
 
-int eggsfs_drop_fetch_block_sockets(void) {
+int ternfs_drop_fetch_block_sockets(void) {
     return drop_sockets(&fetch_block_pages_witch_crc_ops);
 }
 
@@ -1001,7 +1001,7 @@ static int fetch_receive_single_req(
         BUG_ON(req->breq.left_to_read == 0);
 
 #define HEADER_COPY(buf, count) ({ \
-        int read = count > 0 ? eggsfs_skb_copy(buf, skb, offset, count) : 0; \
+        int read = count > 0 ? ternfs_skb_copy(buf, skb, offset, count) : 0; \
         offset += read; \
         len -= read; \
         req->header_read += read; \
@@ -1010,26 +1010,26 @@ static int fetch_receive_single_req(
 
         // Header
         {
-            int header_left = EGGSFS_BLOCKS_RESP_HEADER_SIZE - (int)req->header_read;
+            int header_left = TERNFS_BLOCKS_RESP_HEADER_SIZE - (int)req->header_read;
             int read = HEADER_COPY(req->header.buf + req->header_read, header_left);
             header_left -= read;
             if (header_left > 0) { return len0-len; }
         }
 
         // Protocol check
-        if (unlikely(le32_to_cpu(req->header.data.protocol) != EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
-            eggsfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->header.data.protocol);
-            return eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE);
+        if (unlikely(le32_to_cpu(req->header.data.protocol) != TERNFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
+            ternfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &TERNFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->header.data.protocol);
+            return ternfs_error_to_linux(TERNFS_ERR_MALFORMED_RESPONSE);
         }
 
         // Error check
         if (unlikely(req->header.data.kind == 0)) {
-            int error_left = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)req->header_read;
+            int error_left = (TERNFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)req->header_read;
             int read = HEADER_COPY(req->header.buf + req->header_read, error_left);
             error_left -= read;
             if (error_left > 0) { return len0-len; }
             // we got an error "nicely", the socket can carry on living.
-            atomic_cmpxchg(&req->breq.err, 0, eggsfs_error_to_linux(le16_to_cpu(req->header.data.error)));
+            atomic_cmpxchg(&req->breq.err, 0, ternfs_error_to_linux(le16_to_cpu(req->header.data.error)));
             return len0-len;
         }
 
@@ -1058,7 +1058,7 @@ static int fetch_receive_single_req(
 
         while (avail) {
             u32 this_len = min3(avail, (u32)req->next_read_size - req->page_offset, req->breq.left_to_read - block_bytes_read);
-            eggsfs_debug("read %d bytes of %d", this_len, req->next_read_size);
+            ternfs_debug("read %d bytes of %d", this_len, req->next_read_size);
             if (req->next_read_size == PAGE_SIZE) {
                 req->bytes_fetched += this_len;
                 memcpy(page_ptr + req->page_offset, data, this_len);
@@ -1113,33 +1113,33 @@ static int fetch_receive_single_req(
 static int fetch_block_pages_with_crc_write_req(struct block_socket* socket, struct block_request* breq) {
     struct fetch_request* req = get_fetch_request(breq);
 
-    char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE];
+    char req_msg_buf[TERNFS_BLOCKS_REQ_HEADER_SIZE + TERNFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE];
     BUG_ON(breq->left_to_write > sizeof(req_msg_buf));
 
     // we're not done, fill in the req
     char* req_msg = req_msg_buf;
-    put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
+    put_unaligned_le32(TERNFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
     put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
-    *(u8*)req_msg = EGGSFS_BLOCKS_FETCH_BLOCK_WITH_CRC; req_msg += 1;
+    *(u8*)req_msg = TERNFS_BLOCKS_FETCH_BLOCK_WITH_CRC; req_msg += 1;
     {
-        struct eggsfs_bincode_put_ctx ctx = {
+        struct ternfs_bincode_put_ctx ctx = {
             .start = req_msg,
             .cursor = req_msg,
             .end = req_msg_buf + sizeof(req_msg_buf),
         };
-        eggsfs_fetch_block_with_crc_req_put_start(&ctx, start);
-        eggsfs_fetch_block_with_crc_req_put_file_id(&ctx, start, req_file_id, req->file_id);
-        eggsfs_fetch_block_with_crc_req_put_block_id(&ctx, req_file_id, req_block_id, req->block_id);
-        eggsfs_fetch_block_with_crc_req_put_block_crc(&ctx, req_block_id, req_block_crc, req->block_crc);
-        eggsfs_fetch_block_with_crc_req_put_offset(&ctx, req_block_crc, req_offset, req->offset);
-        eggsfs_fetch_block_with_crc_req_put_count(&ctx, req_offset, req_count, req->count);
-        eggsfs_fetch_block_with_crc_req_put_end(ctx, req_count, end);
+        ternfs_fetch_block_with_crc_req_put_start(&ctx, start);
+        ternfs_fetch_block_with_crc_req_put_file_id(&ctx, start, req_file_id, req->file_id);
+        ternfs_fetch_block_with_crc_req_put_block_id(&ctx, req_file_id, req_block_id, req->block_id);
+        ternfs_fetch_block_with_crc_req_put_block_crc(&ctx, req_block_id, req_block_crc, req->block_crc);
+        ternfs_fetch_block_with_crc_req_put_offset(&ctx, req_block_crc, req_offset, req->offset);
+        ternfs_fetch_block_with_crc_req_put_count(&ctx, req_offset, req_count, req->count);
+        ternfs_fetch_block_with_crc_req_put_end(ctx, req_count, end);
         BUG_ON(ctx.cursor != ctx.end);
     }
 
     // send message
     struct msghdr msg = { .msg_flags = MSG_DONTWAIT };
-    eggsfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
+    ternfs_debug("sending fetch block req to %pI4:%d, bs=%016llx block_id=%016llx", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), req->block_service_id, req->block_id);
     struct kvec iov = {
         .iov_base = req_msg_buf + (sizeof(req_msg_buf) - breq->left_to_write),
         .iov_len = breq->left_to_write,
@@ -1165,10 +1165,10 @@ static void fetch_block_pages_with_crc_sk_data_ready(struct sock* sk) {
     block_socket_sk_data_ready(&fetch_block_pages_witch_crc_ops, sk);
 }
 
-int eggsfs_fetch_block_pages_with_crc(
+int ternfs_fetch_block_pages_with_crc(
     void (*callback)(void* data, u64 block_id, struct list_head* pages, int err),
     void* data,
-    struct eggsfs_block_service* bs,
+    struct ternfs_block_service* bs,
     struct list_head* pages,
     u64 file_id,
     u64 block_id,
@@ -1181,13 +1181,13 @@ int eggsfs_fetch_block_pages_with_crc(
     if (count%PAGE_SIZE) {
         // we rely on the pages being filled neatly in the block fetch code
         // (we could change this easily, but not needed for now)
-        eggsfs_warn("cannot read not page-sized block segment: %u", count);
+        ternfs_warn("cannot read not page-sized block segment: %u", count);
         return -EIO;
     }
 
     // can't read
-    if (unlikely(bs->flags & EGGSFS_BLOCK_SERVICE_DONT_READ)) {
-        eggsfs_debug("could not fetch block given block flags %02x", bs->flags);
+    if (unlikely(bs->flags & TERNFS_BLOCK_SERVICE_DONT_READ)) {
+        ternfs_debug("could not fetch block given block flags %02x", bs->flags);
         return -EIO;
     }
 
@@ -1220,8 +1220,8 @@ int eggsfs_fetch_block_pages_with_crc(
         &fetch_block_pages_witch_crc_ops,
         &req->breq,
         bs,
-        EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE,
-        EGGSFS_BLOCKS_RESP_HEADER_SIZE + EGGSFS_FETCH_BLOCK_WITH_CRC_RESP_SIZE + count + (count / PAGE_SIZE) * PAGE_CRC_BYTES
+        TERNFS_BLOCKS_REQ_HEADER_SIZE + TERNFS_FETCH_BLOCK_WITH_CRC_REQ_SIZE,
+        TERNFS_BLOCKS_RESP_HEADER_SIZE + TERNFS_FETCH_BLOCK_WITH_CRC_RESP_SIZE + count + (count / PAGE_SIZE) * PAGE_CRC_BYTES
     );
     if (err) {
         goto out_err_pages;
@@ -1240,7 +1240,7 @@ out_err_pages:
     }
     kmem_cache_free(fetch_request_cachep, req);
 out_err:
-    eggsfs_info("couldn't start fetch block request, err=%d", err);
+    ternfs_info("couldn't start fetch block request, err=%d", err);
     return err;
 }
 
@@ -1263,9 +1263,9 @@ struct write_request {
     u32 size;
     u64 certificate;
 
-    static_assert(EGGSFS_WRITE_BLOCK_RESP_SIZE > 2);
+    static_assert(TERNFS_WRITE_BLOCK_RESP_SIZE > 2);
     union {
-        char buf[EGGSFS_BLOCKS_RESP_HEADER_SIZE+EGGSFS_WRITE_BLOCK_RESP_SIZE];
+        char buf[TERNFS_BLOCKS_RESP_HEADER_SIZE+TERNFS_WRITE_BLOCK_RESP_SIZE];
         struct {
             __le32 protocol;
             u8 kind;
@@ -1295,9 +1295,9 @@ static void write_block_complete(struct block_request* breq) {
     // that and the free here.
     //
     // This function is called in three ways:
-    // * `block_socket_receive_req_locked` enqueues the write complete work on eggsfs_wq
-    // * `block_socket_write_req_locked` enqueues the write complete work on eggsfs_wq
-    // * `cleanup_work` enqueues the write complete on eggsfs_wq
+    // * `block_socket_receive_req_locked` enqueues the write complete work on ternfs_wq
+    // * `block_socket_write_req_locked` enqueues the write complete work on ternfs_wq
+    // * `cleanup_work` enqueues the write complete on ternfs_wq
     //
     // `cleanup_work` changes the callbacks, so that by the time
     // we get to call this function all the callbacks s must be done.
@@ -1319,7 +1319,7 @@ static void write_request_constructor(void* ptr) {
     INIT_WORK(&req->breq.complete_work, write_block_complete_work);
 }
 
-int eggsfs_drop_write_block_sockets(void) {
+int ternfs_drop_write_block_sockets(void) {
     return drop_sockets(&write_block_ops);
 }
 
@@ -1327,31 +1327,31 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
     struct write_request* req = get_write_request(breq);
     int err = 0;
 
-    u32 write_size = EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_WRITE_BLOCK_REQ_SIZE + req->size;
+    u32 write_size = TERNFS_BLOCKS_REQ_HEADER_SIZE + TERNFS_WRITE_BLOCK_REQ_SIZE + req->size;
     u32 write_req_written0 = write_size - breq->left_to_write;
     u32 write_req_written = write_req_written0;
 
 #define BLOCK_WRITE_EXIT return write_req_written - write_req_written0;
 
     // Still writing request -- we just serialize the buffer each time and send it out
-    while (write_req_written < EGGSFS_BLOCKS_REQ_HEADER_SIZE+EGGSFS_WRITE_BLOCK_REQ_SIZE) {
-        char req_msg_buf[EGGSFS_BLOCKS_REQ_HEADER_SIZE+EGGSFS_WRITE_BLOCK_REQ_SIZE];
+    while (write_req_written < TERNFS_BLOCKS_REQ_HEADER_SIZE+TERNFS_WRITE_BLOCK_REQ_SIZE) {
+        char req_msg_buf[TERNFS_BLOCKS_REQ_HEADER_SIZE+TERNFS_WRITE_BLOCK_REQ_SIZE];
         char* req_msg = req_msg_buf;
-        put_unaligned_le32(EGGSFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
+        put_unaligned_le32(TERNFS_BLOCKS_REQ_PROTOCOL_VERSION, req_msg); req_msg += 4;
         put_unaligned_le64(req->block_service_id, req_msg); req_msg += 8;
-        *(u8*)req_msg = EGGSFS_BLOCKS_WRITE_BLOCK; req_msg += 1;
+        *(u8*)req_msg = TERNFS_BLOCKS_WRITE_BLOCK; req_msg += 1;
         {
-            struct eggsfs_bincode_put_ctx ctx = {
+            struct ternfs_bincode_put_ctx ctx = {
                 .start = req_msg,
                 .cursor = req_msg,
                 .end = req_msg_buf + sizeof(req_msg_buf),
             };
-            eggsfs_write_block_req_put_start(&ctx, start);
-            eggsfs_write_block_req_put_block_id(&ctx, start, req_block_id, req->block_id);
-            eggsfs_write_block_req_put_crc(&ctx, req_block_id, req_crc, req->crc);
-            eggsfs_write_block_req_put_size(&ctx, req_crc, req_size, req->size);
-            eggsfs_write_block_req_put_certificate(&ctx, req_size, req_certificate, req->certificate);
-            eggsfs_write_block_req_put_end(ctx, req_certificate, end);
+            ternfs_write_block_req_put_start(&ctx, start);
+            ternfs_write_block_req_put_block_id(&ctx, start, req_block_id, req->block_id);
+            ternfs_write_block_req_put_crc(&ctx, req_block_id, req_crc, req->crc);
+            ternfs_write_block_req_put_size(&ctx, req_crc, req_size, req->size);
+            ternfs_write_block_req_put_certificate(&ctx, req_size, req_certificate, req->certificate);
+            ternfs_write_block_req_put_end(ctx, req_certificate, end);
             BUILD_BUG_ON(ctx.cursor != ctx.end);
         }
 
@@ -1359,7 +1359,7 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
         struct msghdr msg = {
             .msg_flags = MSG_MORE | MSG_DONTWAIT,
         };
-        eggsfs_debug("sending write block req to %pI4:%d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
+        ternfs_debug("sending write block req to %pI4:%d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
         struct kvec iov = {
             .iov_base = req_msg_buf + write_req_written,
             .iov_len = sizeof(req_msg_buf) - write_req_written,
@@ -1398,7 +1398,7 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
     BLOCK_WRITE_EXIT;
 
 out_err:
-    eggsfs_debug("block write failed err=%d", err);
+    ternfs_debug("block write failed err=%d", err);
     BUG_ON(err == 0);
     atomic_cmpxchg(&breq->err, 0, err);
     return err;
@@ -1424,7 +1424,7 @@ static int write_block_receive_single_req(
 ) {
     struct write_request* req = get_write_request(breq);
     size_t len = len0;
-    u32 write_resp_read = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + EGGSFS_WRITE_BLOCK_RESP_SIZE) - req->breq.left_to_read;
+    u32 write_resp_read = (TERNFS_BLOCKS_RESP_HEADER_SIZE + TERNFS_WRITE_BLOCK_RESP_SIZE) - req->breq.left_to_read;
 
 #define BLOCK_WRITE_EXIT(i) do { \
         if (i < 0) { \
@@ -1436,7 +1436,7 @@ static int write_block_receive_single_req(
     // Write resp
 
 #define HEADER_COPY(buf, count) ({ \
-        int read = count > 0 ? eggsfs_skb_copy(buf, skb, offset, count) : 0; \
+        int read = count > 0 ? ternfs_skb_copy(buf, skb, offset, count) : 0; \
         offset += read; \
         len -= read; \
         write_resp_read += read; \
@@ -1445,33 +1445,33 @@ static int write_block_receive_single_req(
 
     // Header
     {
-        int header_left = EGGSFS_BLOCKS_RESP_HEADER_SIZE - (int)write_resp_read;
+        int header_left = TERNFS_BLOCKS_RESP_HEADER_SIZE - (int)write_resp_read;
         int read = HEADER_COPY(req->write_resp.buf + write_resp_read, header_left);
         header_left -= read;
         if (header_left > 0) { BLOCK_WRITE_EXIT(len0-len); }
     }
 
     // Protocol check
-    if (unlikely(le32_to_cpu(req->write_resp.data.protocol) != EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
-        eggsfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &EGGSFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->write_resp.data.protocol);
-        BLOCK_WRITE_EXIT(eggsfs_error_to_linux(EGGSFS_ERR_MALFORMED_RESPONSE));
+    if (unlikely(le32_to_cpu(req->write_resp.data.protocol) != TERNFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
+        ternfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &TERNFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->write_resp.data.protocol);
+        BLOCK_WRITE_EXIT(ternfs_error_to_linux(TERNFS_ERR_MALFORMED_RESPONSE));
     }
 
     // Error check
     if (unlikely(req->write_resp.data.kind == 0)) {
-        int error_left = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)write_resp_read;
+        int error_left = (TERNFS_BLOCKS_RESP_HEADER_SIZE + 2) - (int)write_resp_read;
         int read = HEADER_COPY(req->write_resp.buf + write_resp_read, error_left);
         error_left -= read;
         if (error_left > 0) { BLOCK_WRITE_EXIT(len0-len); }
-        eggsfs_info("writing block to bs=%016llx block_id=%016llx failed=%u", req->block_service_id, req->block_id, req->write_resp.data.error);
+        ternfs_info("writing block to bs=%016llx block_id=%016llx failed=%u", req->block_service_id, req->block_id, req->write_resp.data.error);
         // We immediately start writing, so any error here means that the socket is kaput
-        int err = eggsfs_error_to_linux(le16_to_cpu(req->write_resp.data.error));
+        int err = ternfs_error_to_linux(le16_to_cpu(req->write_resp.data.error));
         BLOCK_WRITE_EXIT(err);
     }
 
     // We can finally get the proof
     {
-        int proof_left = (EGGSFS_BLOCKS_RESP_HEADER_SIZE + 8) - (int)write_resp_read;
+        int proof_left = (TERNFS_BLOCKS_RESP_HEADER_SIZE + 8) - (int)write_resp_read;
         int read = HEADER_COPY(req->write_resp.buf + write_resp_read, proof_left);
         proof_left -= read;
         if (proof_left > 0) {
@@ -1494,10 +1494,10 @@ static void write_block_sk_data_ready(struct sock* sk) {
     block_socket_sk_data_ready(&write_block_ops, sk);
 }
 
-int eggsfs_write_block(
+int ternfs_write_block(
     void (*callback)(void* data, struct list_head* pages, u64 block_id, u64 proof, int err),
     void* data,
-    struct eggsfs_block_service* bs,
+    struct ternfs_block_service* bs,
     u64 block_id,
     u64 certificate,
     u32 size,
@@ -1509,8 +1509,8 @@ int eggsfs_write_block(
     BUG_ON(list_empty(pages));
 
     // can't write
-    if (unlikely(bs->flags & EGGSFS_BLOCK_SERVICE_DONT_WRITE)) {
-        eggsfs_debug("could not write block given block flags %02x", bs->flags);
+    if (unlikely(bs->flags & TERNFS_BLOCK_SERVICE_DONT_WRITE)) {
+        ternfs_debug("could not write block given block flags %02x", bs->flags);
         return -EIO;
     }
 
@@ -1533,8 +1533,8 @@ int eggsfs_write_block(
         &write_block_ops,
         &req->breq,
         bs,
-        EGGSFS_BLOCKS_REQ_HEADER_SIZE + EGGSFS_WRITE_BLOCK_REQ_SIZE + size,
-        EGGSFS_BLOCKS_RESP_HEADER_SIZE + EGGSFS_WRITE_BLOCK_RESP_SIZE
+        TERNFS_BLOCKS_REQ_HEADER_SIZE + TERNFS_WRITE_BLOCK_REQ_SIZE + size,
+        TERNFS_BLOCKS_RESP_HEADER_SIZE + TERNFS_WRITE_BLOCK_RESP_SIZE
     );
     if (err) {
         goto out_err_req;
@@ -1546,7 +1546,7 @@ out_err_req:
     list_replace_init(&req->pages, pages);
     kmem_cache_free(write_request_cachep, req);
 out_err:
-    eggsfs_info("couldn't start write block request, err=%d", err);
+    ternfs_info("couldn't start write block request, err=%d", err);
     return err;
 }
 
@@ -1561,18 +1561,18 @@ static void do_timeout_sockets(struct work_struct* w) {
     u64 end = get_jiffies_64();
     u64 dt = end - start;
     if (dt > MSECS_TO_JIFFIES(100)) {
-        eggsfs_warn("SLOW checking for socket timeouts %llums", jiffies64_to_msecs(dt));
+        ternfs_warn("SLOW checking for socket timeouts %llums", jiffies64_to_msecs(dt));
     }
-    queue_delayed_work(eggsfs_fast_wq, &timeout_work, MSECS_TO_JIFFIES(1000));
+    queue_delayed_work(ternfs_fast_wq, &timeout_work, MSECS_TO_JIFFIES(1000));
 }
 
 // init/exit
 // --------------------------------------------------------------------
 
-int __init eggsfs_block_init(void) {
+int __init ternfs_block_init(void) {
     int err;
     fetch_request_cachep = kmem_cache_create(
-        "eggsfs_fetch_block_request_cache",
+        "ternfs_fetch_block_request_cache",
         sizeof(struct fetch_request),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
@@ -1581,7 +1581,7 @@ int __init eggsfs_block_init(void) {
     if (!fetch_request_cachep) { err = -ENOMEM; goto out_err; }
 
     write_request_cachep = kmem_cache_create(
-        "eggsfs_write_block_request_cache",
+        "ternfs_write_block_request_cache",
         sizeof(struct write_request),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
@@ -1592,7 +1592,7 @@ int __init eggsfs_block_init(void) {
     block_ops_init(&fetch_block_pages_witch_crc_ops);
     block_ops_init(&write_block_ops);
 
-    queue_work(eggsfs_fast_wq, &timeout_work.work);
+    queue_work(ternfs_fast_wq, &timeout_work.work);
 
     return 0;
 
@@ -1602,8 +1602,8 @@ out_err:
     return err;
 }
 
-void __cold eggsfs_block_exit(void) {
-    eggsfs_debug("block exit");
+void __cold ternfs_block_exit(void) {
+    ternfs_debug("block exit");
 
     // stop timing out sockets
     cancel_delayed_work_sync(&timeout_work);

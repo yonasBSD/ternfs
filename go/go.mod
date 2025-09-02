@@ -1,4 +1,4 @@
-module xtx/eggsfs
+module xtx/ternfs
 
 go 1.22
 

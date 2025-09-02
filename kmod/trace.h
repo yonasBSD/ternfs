@@ -2,7 +2,7 @@
 #define TRACE_SYSTEM eggsfs
 
 #if !defined(_TRACE_EGGFS_H) || defined(TRACE_HEADER_MULTI_READ)
-#define _TRACE_EGGSFS_H
+#define _TRACE_TERNFS_H
 
 #include <linux/version.h>
 #include <linux/tracepoint.h>
@@ -68,7 +68,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
 			{ LOOKUP_DOWN, "DOWN" })
 #endif
 
-#define EGGSFS_TRACE_EVENT_inode(_name) \
+#define TERNFS_TRACE_EVENT_inode(_name) \
     TRACE_EVENT(eggsfs_##_name, \
         TP_PROTO(struct inode* inode), \
         TP_ARGS(inode), \
@@ -81,7 +81,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         TP_printk("enode=%#llx", __entry->ino) \
     )
 
-#define EGGSFS_TRACE_EVENT_inode_ret(_name) \
+#define TERNFS_TRACE_EVENT_inode_ret(_name) \
     TRACE_EVENT(eggsfs_##_name, \
         TP_PROTO(struct inode* inode, int err), \
         TP_ARGS(inode, err), \
@@ -96,7 +96,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         TP_printk("enode=%#llx err=%d", __entry->ino, __entry->err) \
     )
 
-#define EGGSFS_TRACE_EVENT_dir_dentry(_name) \
+#define TERNFS_TRACE_EVENT_dir_dentry(_name) \
     TRACE_EVENT(eggsfs_##_name, \
         TP_PROTO(struct inode* dir, struct dentry* dentry), \
         TP_ARGS(dir, dentry), \
@@ -111,7 +111,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         TP_printk("dir=%#llx name=%s", __entry->dir, __get_str(name)) \
     )
 
-#define EGGSFS_TRACE_EVENT_dir_dentry_ret(_name) \
+#define TERNFS_TRACE_EVENT_dir_dentry_ret(_name) \
     TRACE_EVENT(eggsfs_##_name, \
         TP_PROTO(struct inode* dir, struct dentry* dentry, int err), \
         TP_ARGS(dir, dentry, err), \
@@ -128,7 +128,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         TP_printk("dir=%llx name=%s err=%d", __entry->dir, __get_str(name), __entry->err) \
     )
 
-#define EGGSFS_TRACE_EVENT_dir_dentry_inode(_name) \
+#define TERNFS_TRACE_EVENT_dir_dentry_inode(_name) \
     TRACE_EVENT(eggsfs_##_name, \
         TP_PROTO(struct inode* dir, struct dentry* dentry, struct inode* inode), \
         TP_ARGS(dir, dentry, inode), \
@@ -146,7 +146,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
     )
 
 
-#define EGGSFS_TRACE_EVENT_dir_dentry_inode_ret(_name) \
+#define TERNFS_TRACE_EVENT_dir_dentry_inode_ret(_name) \
     TRACE_EVENT(eggsfs_##_name, \
         TP_PROTO(struct inode* dir, struct dentry* dentry, struct inode* inode, int err), \
         TP_ARGS(dir, dentry, inode, err), \
@@ -166,36 +166,36 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
     )
 
 // dcache
-EGGSFS_TRACE_EVENT_inode(dcache_delete_inode);
-EGGSFS_TRACE_EVENT_inode(dcache_invalidate_dir);
-EGGSFS_TRACE_EVENT_dir_dentry(dcache_invalidate_neg_entry);
-EGGSFS_TRACE_EVENT_dir_dentry_inode(dcache_delete_entry);
-EGGSFS_TRACE_EVENT_dir_dentry_inode(dcache_invalidate_entry);
+TERNFS_TRACE_EVENT_inode(dcache_delete_inode);
+TERNFS_TRACE_EVENT_inode(dcache_invalidate_dir);
+TERNFS_TRACE_EVENT_dir_dentry(dcache_invalidate_neg_entry);
+TERNFS_TRACE_EVENT_dir_dentry_inode(dcache_delete_entry);
+TERNFS_TRACE_EVENT_dir_dentry_inode(dcache_invalidate_entry);
 
 // inode.c
-EGGSFS_TRACE_EVENT_inode(vfs_getattr_enter);
-EGGSFS_TRACE_EVENT_inode(vfs_getattr_lock);
-EGGSFS_TRACE_EVENT_inode_ret(vfs_getattr_exit);
+TERNFS_TRACE_EVENT_inode(vfs_getattr_enter);
+TERNFS_TRACE_EVENT_inode(vfs_getattr_lock);
+TERNFS_TRACE_EVENT_inode_ret(vfs_getattr_exit);
 
 // dir.c
-EGGSFS_TRACE_EVENT_inode(vfs_opendir_enter);
-EGGSFS_TRACE_EVENT_inode_ret(vfs_opendir_exit);
+TERNFS_TRACE_EVENT_inode(vfs_opendir_enter);
+TERNFS_TRACE_EVENT_inode_ret(vfs_opendir_exit);
 
-EGGSFS_TRACE_EVENT_inode(vfs_closedir_enter);
-EGGSFS_TRACE_EVENT_inode_ret(vfs_closedir_exit);
+TERNFS_TRACE_EVENT_inode(vfs_closedir_enter);
+TERNFS_TRACE_EVENT_inode_ret(vfs_closedir_exit);
 
 // dentry.c
-EGGSFS_TRACE_EVENT_dir_dentry(vfs_lookup_enter);
-EGGSFS_TRACE_EVENT_dir_dentry_inode_ret(vfs_lookup_exit);
+TERNFS_TRACE_EVENT_dir_dentry(vfs_lookup_enter);
+TERNFS_TRACE_EVENT_dir_dentry_inode_ret(vfs_lookup_exit);
 
-EGGSFS_TRACE_EVENT_dir_dentry(vfs_mkdir_enter);
-EGGSFS_TRACE_EVENT_dir_dentry_inode_ret(vfs_mkdir_exit);
+TERNFS_TRACE_EVENT_dir_dentry(vfs_mkdir_enter);
+TERNFS_TRACE_EVENT_dir_dentry_inode_ret(vfs_mkdir_exit);
 
-EGGSFS_TRACE_EVENT_dir_dentry_inode(vfs_rmdir_enter);
-EGGSFS_TRACE_EVENT_dir_dentry_ret(vfs_rmdir_exit);
+TERNFS_TRACE_EVENT_dir_dentry_inode(vfs_rmdir_enter);
+TERNFS_TRACE_EVENT_dir_dentry_ret(vfs_rmdir_exit);
 
-EGGSFS_TRACE_EVENT_dir_dentry_inode(vfs_unlink_enter);
-EGGSFS_TRACE_EVENT_dir_dentry_ret(vfs_unlink_exit);
+TERNFS_TRACE_EVENT_dir_dentry_inode(vfs_unlink_enter);
+TERNFS_TRACE_EVENT_dir_dentry_ret(vfs_unlink_exit);
 
 TRACE_EVENT(eggsfs_vfs_rename_enter,
     TP_PROTO(struct inode* old_dir, struct dentry* old_dentry, struct inode* new_dir, struct dentry* new_dentry),
@@ -249,8 +249,8 @@ TRACE_EVENT(eggsfs_vfs_rename_exit,
     TP_printk("ino=%lld old_dir=%lld old_name=%s/%s -> new_dir=%lld new_name=%s/%s err=%d", __entry->ino, __entry->old_dir_ino, __get_str(old_parent), __get_str(old_name), __entry->new_dir_ino, __get_str(new_parent), __get_str(new_name), __entry->err)
 );
 
-#define EGGSFS_METADATA_REQUEST_ATTEMPT 0
-#define EGGSFS_METADATA_REQUEST_DONE 1
+#define TERNFS_METADATA_REQUEST_ATTEMPT 0
+#define TERNFS_METADATA_REQUEST_DONE 1
 
 TRACE_EVENT(eggsfs_metadata_request,
     TP_PROTO(struct sockaddr_in* addr, u64 req_id, u32 len, s16 shard_id, u8 kind, u32 n_attempts, u32 resp_len, u8 event, int error),
@@ -288,8 +288,8 @@ TRACE_EVENT(eggsfs_metadata_request,
         ),
         __entry->shard_id,
         __entry->shard_id >= 0 ?
-            __print_eggsfs_shard_kind(__entry->kind) :
-            __print_eggsfs_cdc_kind(__entry->kind),
+            __print_ternfs_shard_kind(__entry->kind) :
+            __print_ternfs_cdc_kind(__entry->kind),
         __entry->len, __entry->n_attempts, __entry->resp_len,
         __entry->error
     )
@@ -344,15 +344,15 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
     TP_printk("ino=%lld name=%s/%s", __entry->ino, __get_str(parent), __get_str(name))
 );
 
-#define EGGSFS_BLOCK_WRITE_START 7
-#define EGGSFS_BLOCK_WRITE_QUEUED 0
-#define EGGSFS_BLOCK_WRITE_RECV_ENTER 1
-#define EGGSFS_BLOCK_WRITE_RECV_EXIT 2
-#define EGGSFS_BLOCK_WRITE_WRITE_ENTER 3
-#define EGGSFS_BLOCK_WRITE_WRITE_EXIT 4
-#define EGGSFS_BLOCK_WRITE_WRITE_QUEUED 5
-#define EGGSFS_BLOCK_WRITE_DONE 6
-#define EGGSFS_BLOCK_WRITE_COMPLETE_QUEUED 8
+#define TERNFS_BLOCK_WRITE_START 7
+#define TERNFS_BLOCK_WRITE_QUEUED 0
+#define TERNFS_BLOCK_WRITE_RECV_ENTER 1
+#define TERNFS_BLOCK_WRITE_RECV_EXIT 2
+#define TERNFS_BLOCK_WRITE_WRITE_ENTER 3
+#define TERNFS_BLOCK_WRITE_WRITE_EXIT 4
+#define TERNFS_BLOCK_WRITE_WRITE_QUEUED 5
+#define TERNFS_BLOCK_WRITE_DONE 6
+#define TERNFS_BLOCK_WRITE_COMPLETE_QUEUED 8
 
 TRACE_EVENT(eggsfs_block_write,
     TP_PROTO(u64 block_service_id, u64 block_id, u8 event, u32 block_size, u8 req_written, u32 block_written, u8 resp_read, int err),
@@ -417,7 +417,7 @@ TRACE_EVENT(eggsfs_span_flush_enter,
         __entry->stripes = stripes;
         __entry->storage_class = storage_class;
     ),
-    TP_printk("file_id=%016llx offset=%llu size=%u parity=RS(%u,%u) stripes=%u, storage_class=%u", __entry->file_id, __entry->offset, __entry->size, eggsfs_data_blocks(__entry->parity), eggsfs_parity_blocks(__entry->parity), (int)__entry->stripes, (int)__entry->storage_class)
+    TP_printk("file_id=%016llx offset=%llu size=%u parity=RS(%u,%u) stripes=%u, storage_class=%u", __entry->file_id, __entry->offset, __entry->size, ternfs_data_blocks(__entry->parity), ternfs_parity_blocks(__entry->parity), (int)__entry->stripes, (int)__entry->storage_class)
 );
 
 TRACE_EVENT(eggsfs_span_flush_exit,
@@ -485,9 +485,9 @@ TRACE_EVENT(eggsfs_get_span_exit,
     TP_printk("file_id=%016llx offset=%llu, err=%d", __entry->file_id, __entry->offset, __entry->err)
 );
 
-#define EGGSFS_UPSERT_BLOCKSERVICE_MATCH 0
-#define EGGSFS_UPSERT_BLOCKSERVICE_NOMATCH 1
-#define EGGSFS_UPSERT_BLOCKSERVICE_NEW 2
+#define TERNFS_UPSERT_BLOCKSERVICE_MATCH 0
+#define TERNFS_UPSERT_BLOCKSERVICE_NOMATCH 1
+#define TERNFS_UPSERT_BLOCKSERVICE_NEW 2
 
 TRACE_EVENT(eggsfs_upsert_block_service,
     TP_PROTO(u64 bs_id, u8 event),
@@ -504,19 +504,19 @@ TRACE_EVENT(eggsfs_upsert_block_service,
         "bs_id=%016llx event=%s", __entry->bs_id,
         __print_symbolic(
             __entry->event,
-            { EGGSFS_UPSERT_BLOCKSERVICE_MATCH, "match" },
-            { EGGSFS_UPSERT_BLOCKSERVICE_NOMATCH, "nomatch" },
-            { EGGSFS_UPSERT_BLOCKSERVICE_NEW, "new" }
+            { TERNFS_UPSERT_BLOCKSERVICE_MATCH, "match" },
+            { TERNFS_UPSERT_BLOCKSERVICE_NOMATCH, "nomatch" },
+            { TERNFS_UPSERT_BLOCKSERVICE_NEW, "new" }
         )
     )
 );
 
 #if 0
-#define EGGSFS_FETCH_BLOCK_SOCKET_START 0
-#define EGGSFS_FETCH_BLOCK_SOCKET_BLOCK_START 1
-#define EGGSFS_FETCH_BLOCK_SOCKET_BLOCK_DONE 2
-#define EGGSFS_FETCH_BLOCK_SOCKET_END 3
-#define EGGSFS_FETCH_BLOCK_SOCKET_FREE 4
+#define TERNFS_FETCH_BLOCK_SOCKET_START 0
+#define TERNFS_FETCH_BLOCK_SOCKET_BLOCK_START 1
+#define TERNFS_FETCH_BLOCK_SOCKET_BLOCK_DONE 2
+#define TERNFS_FETCH_BLOCK_SOCKET_END 3
+#define TERNFS_FETCH_BLOCK_SOCKET_FREE 4
 
 TRACE_EVENT(eggsfs_fetch_block_socket,
     TP_PROTO(u32 ip, u16 port, u8 event, int err),
@@ -539,11 +539,11 @@ TRACE_EVENT(eggsfs_fetch_block_socket,
         __entry->ip, __entry->port,
         __print_symbolic(
             __entry->event,
-            { EGGSFS_FETCH_STRIPE_START, "start" },
-            { EGGSFS_FETCH_STRIPE_BLOCK_START, "block_start" },
-            { EGGSFS_FETCH_STRIPE_BLOCK_DONE, "block_done" },
-            { EGGSFS_FETCH_STRIPE_END, "end" },
-            { EGGSFS_FETCH_STRIPE_FREE, "free" }
+            { TERNFS_FETCH_STRIPE_START, "start" },
+            { TERNFS_FETCH_STRIPE_BLOCK_START, "block_start" },
+            { TERNFS_FETCH_STRIPE_BLOCK_DONE, "block_done" },
+            { TERNFS_FETCH_STRIPE_END, "end" },
+            { TERNFS_FETCH_STRIPE_FREE, "free" }
         ),
         __entry->block, __entry->err
     )

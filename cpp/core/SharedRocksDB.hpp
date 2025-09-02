@@ -35,7 +35,7 @@ public:
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
     void dumpRocksDBStatistics();
 
-    EggsError snapshot(const std::string& path);
+    TernError snapshot(const std::string& path);
 
 private:
     Env _env;

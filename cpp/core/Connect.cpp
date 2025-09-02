@@ -41,7 +41,7 @@ std::pair<Sock, std::string> connectToHost(
             if (res == EAI_ADDRFAMILY || res == EAI_AGAIN || res == EAI_NONAME) { // things that might be worth retrying
                 return {Sock::SockError(EIO), explicitGenerateErrString(prefix, res, gai_strerror(res))};
             }
-            throw EGGS_EXCEPTION("%s: %s/%s", prefix, res, gai_strerror(res)); // we're probably hosed
+            throw TERN_EXCEPTION("%s: %s/%s", prefix, res, gai_strerror(res)); // we're probably hosed
         }
         infos.reset(infosRaw);
     }

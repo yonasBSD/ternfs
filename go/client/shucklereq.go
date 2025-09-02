@@ -8,9 +8,9 @@ import (
 	"os"
 	"syscall"
 	"time"
-	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/bincode"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 func writeShuckleRequest(log *lib.Logger, w io.Writer, req msgs.ShuckleRequest) error {
@@ -58,7 +58,7 @@ func readShuckleResponse(
 		if err := binary.Read(r, binary.LittleEndian, &err); err != nil {
 			return nil, fmt.Errorf("could not read error: %w", err)
 		}
-		return nil, msgs.EggsError(err)
+		return nil, msgs.TernError(err)
 	}
 	kind := msgs.ShuckleMessageKind(data[0])
 	var resp msgs.ShuckleResponse
@@ -244,7 +244,7 @@ func (c *ShuckleConn) requestHandler() {
 		conn.SetReadDeadline(reqDeadline)
 		resp, err := readShuckleResponse(c.log, conn)
 		if err != nil {
-			if _, isEggsErr := err.(msgs.EggsError); !isEggsErr {
+			if _, isTernErr := err.(msgs.TernError); !isTernErr {
 				conn.Close()
 				conn = nil
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

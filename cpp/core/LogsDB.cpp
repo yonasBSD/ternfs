@@ -71,11 +71,11 @@ struct LogPartition {
     std::string name;
     LogsDBMetadataKey firstWriteKey;
     rocksdb::ColumnFamilyHandle* cf;
-    EggsTime firstWriteTime{0};
+    TernTime firstWriteTime{0};
     LogIdx minKey{0};
     LogIdx maxKey{0};
 
-    void reset(rocksdb::ColumnFamilyHandle* cf_, LogIdx minMaxKey, EggsTime firstWriteTime_) {
+    void reset(rocksdb::ColumnFamilyHandle* cf_, LogIdx minMaxKey, TernTime firstWriteTime_) {
         cf = cf_;
         minKey = maxKey = minMaxKey;
         firstWriteTime = firstWriteTime_;
@@ -236,22 +236,22 @@ public:
         return Iterator(*this);
     }
 
-    EggsError readLogEntry(LogIdx logIdx, LogsDBLogEntry& entry) const {
+    TernError readLogEntry(LogIdx logIdx, LogsDBLogEntry& entry) const {
         auto& partition = _getPartitionForIdx(logIdx);
         if (unlikely(logIdx < partition.minKey)) {
-            return EggsError::LOG_ENTRY_TRIMMED;
+            return TernError::LOG_ENTRY_TRIMMED;
         }
 
         auto key = U64Key::Static(logIdx.u64);
         rocksdb::PinnableSlice value;
         auto status = _sharedDb.db()->Get({}, partition.cf, key.toSlice(), &value);
         if (status.IsNotFound()) {
-            return EggsError::LOG_ENTRY_MISSING;
+            return TernError::LOG_ENTRY_MISSING;
         }
         ROCKS_DB_CHECKED(status);
         entry.idx = logIdx;
         entry.value.assign((const uint8_t*)value.data(), (const uint8_t*)value.data() + value.size());
-        return EggsError::NO_ERROR;
+        return TernError::NO_ERROR;
     }
 
     void readIndexedEntries(const std::vector<LogIdx>& indices, std::vector<LogsDBLogEntry>& entries) const {
@@ -263,7 +263,7 @@ public:
         entries.reserve(indices.size());
         for (auto idx : indices) {
             LogsDBLogEntry& entry = entries.emplace_back();
-            if (readLogEntry(idx, entry) != EggsError::NO_ERROR) {
+            if (readLogEntry(idx, entry) != TernError::NO_ERROR) {
                 entry.idx = 0;
             }
         }
@@ -308,7 +308,7 @@ public:
     }
 
 private:
-    void _updatePartitionFirstWriteTime(LogPartition& partition, EggsTime time) {
+    void _updatePartitionFirstWriteTime(LogPartition& partition, TernTime time) {
         ROCKS_DB_CHECKED(_sharedDb.db()->Put({}, _sharedDb.getCF(METADATA_CF_NAME), logsDBMetadataKey(partition.firstWriteKey), U64Value::Static(time.ns).toSlice()));
         partition.firstWriteTime = time;
     }
@@ -327,7 +327,7 @@ private:
 
     void _maybeRotate() {
         auto& partition = _getPartitionForIdx(MAX_LOG_IDX);
-        if (likely(partition.firstWriteTime == 0 || (partition.firstWriteTime + LogsDB::PARTITION_TIME_SPAN > eggsNow()))) {
+        if (likely(partition.firstWriteTime == 0 || (partition.firstWriteTime + LogsDB::PARTITION_TIME_SPAN > ternNow()))) {
             return;
         }
         // we only need to drop older partition and reset it's info.
@@ -380,7 +380,7 @@ private:
     void _partitionKeyInserted(LogPartition& partition, LogIdx idx) {
         if (unlikely(partition.minKey == 0)) {
             partition.minKey = idx;
-            _updatePartitionFirstWriteTime(partition, eggsNow());
+            _updatePartitionFirstWriteTime(partition, ternNow());
         }
         partition.minKey = std::min(partition.minKey, idx);
         partition.maxKey = std::max(partition.maxKey, idx);
@@ -460,12 +460,12 @@ public:
         return _leaderToken;
     }
 
-    EggsError updateLeaderToken(LeaderToken token) {
+    TernError updateLeaderToken(LeaderToken token) {
         if (unlikely(token < _leaderToken || token < _nomineeToken)) {
-            return EggsError::LEADER_PREEMPTED;
+            return TernError::LEADER_PREEMPTED;
         }
         if (likely(token == _leaderToken)) {
-            return EggsError::NO_ERROR;
+            return TernError::NO_ERROR;
         }
         _data.dropEntriesAfterIdx(_lastReleased);
         ROCKS_DB_CHECKED(_sharedDb.db()->Put({}, _cf, logsDBMetadataKey(LEADER_TOKEN_KEY), U64Value::Static(token.u64).toSlice()));
@@ -476,7 +476,7 @@ public:
         _leaderToken = token;
         _stats.currentEpoch.store(_leaderToken.idx().u64, std::memory_order_relaxed);
         _nomineeToken = LeaderToken(0,0);
-        return EggsError::NO_ERROR;
+        return TernError::NO_ERROR;
     }
 
     LeaderToken getNomineeToken() const {
@@ -500,13 +500,13 @@ public:
         return _lastReleased;
     }
 
-    EggsTime getLastReleasedTime() const {
+    TernTime getLastReleasedTime() const {
         return _lastReleasedTime;
     }
 
     void setLastReleased(LogIdx lastReleased) {
         ALWAYS_ASSERT(_lastReleased <= lastReleased, "Moving release point backwards is not possible. It would cause data inconsistency");
-        auto now = eggsNow();
+        auto now = ternNow();
         rocksdb::WriteBatch batch;
         batch.Put(_cf, logsDBMetadataKey(LAST_RELEASED_IDX_KEY), U64Value::Static(lastReleased.u64).toSlice());
         batch.Put(_cf, logsDBMetadataKey(LAST_RELEASED_TIME_KEY),U64Value::Static(now.ns).toSlice());
@@ -530,7 +530,7 @@ private:
 
     LogIdx _lastAssigned;
     LogIdx _lastReleased;
-    EggsTime _lastReleasedTime;
+    TernTime _lastReleasedTime;
     LeaderToken _leaderToken;
     LeaderToken _nomineeToken;
 };
@@ -574,7 +574,7 @@ class ReqResp {
         }
 
         void resendTimedOutRequests() {
-            auto now = eggsNow();
+            auto now = ternNow();
             auto defaultCutoffTime = now - LogsDB::RESPONSE_TIMEOUT;
             auto releaseCutoffTime = now - LogsDB::SEND_RELEASE_INTERVAL;
             auto readCutoffTime = now - LogsDB::READ_TIMEOUT;
@@ -700,7 +700,7 @@ public:
         _data(data),
         _reqResp(reqResp),
         _state(LeadershipState::FOLLOWER),
-        _leaderLastActive(_noReplication ? 0 :eggsNow()) {}
+        _leaderLastActive(_noReplication ? 0 :ternNow()) {}
 
     bool isLeader() const {
         return _state == LeadershipState::LEADER;
@@ -710,7 +710,7 @@ public:
         if (unlikely(_avoidBeingLeader)) {
             return;
         }
-        auto now = eggsNow();
+        auto now = ternNow();
         if (_state != LeadershipState::FOLLOWER ||
             (_leaderLastActive + LogsDB::LEADER_INACTIVE_TIMEOUT > now)) {
             update_atomic_stat_ema(_stats.leaderLastActive, now - _leaderLastActive);
@@ -751,15 +751,15 @@ public:
         ALWAYS_ASSERT(_state == LeadershipState::BECOMING_NOMINEE, "In state %s Received NEW_LEADER response %s", _state, response);
         auto& state = *_electionState;
         ALWAYS_ASSERT(_electionState->requestIds[fromReplicaId.u8] == request.msg.id);
-        auto result = EggsError(response.result);
+        auto result = TernError(response.result);
         switch (result) {
-            case EggsError::NO_ERROR:
+            case TernError::NO_ERROR:
                 _electionState->requestIds[request.replicaId.u8] = ReqResp::CONFIRMED_REQ_ID;
                 _electionState->lastReleased = std::max(_electionState->lastReleased, response.lastReleased);
                 _reqResp.eraseRequest(request.msg.id);
                 _tryProgressToDigest();
                 break;
-            case EggsError::LEADER_PREEMPTED:
+            case TernError::LEADER_PREEMPTED:
                 resetLeaderElection();
                 break;
             default:
@@ -772,15 +772,15 @@ public:
         ALWAYS_ASSERT(_state == LeadershipState::CONFIRMING_LEADERSHIP, "In state %s Received NEW_LEADER_CONFIRM response %s", _state, response);
         ALWAYS_ASSERT(_electionState->requestIds[fromReplicaId.u8] == request.msg.id);
 
-        auto result = EggsError(response.result);
+        auto result = TernError(response.result);
         switch (result) {
-        case EggsError::NO_ERROR:
+        case TernError::NO_ERROR:
             _electionState->requestIds[request.replicaId.u8] = 0;
             _reqResp.eraseRequest(request.msg.id);
             LOG_DEBUG(_env,"trying to become leader");
             _tryBecomeLeader();
             break;
-        case EggsError::LEADER_PREEMPTED:
+        case TernError::LEADER_PREEMPTED:
             resetLeaderElection();
             break;
         default:
@@ -792,10 +792,10 @@ public:
     void proccessRecoveryReadResponse(ReplicaId fromReplicaId, LogsDBRequest& request, const LogRecoveryReadResp& response) {
         ALWAYS_ASSERT(_state == LeadershipState::DIGESTING_ENTRIES, "In state %s Received LOG_RECOVERY_READ response %s", _state, response);
         auto& state = *_electionState;
-        auto result = EggsError(response.result);
+        auto result = TernError(response.result);
         switch (result) {
-            case EggsError::NO_ERROR:
-            case EggsError::LOG_ENTRY_MISSING:
+            case TernError::NO_ERROR:
+            case TernError::LOG_ENTRY_MISSING:
             {
                 ALWAYS_ASSERT(state.lastReleased < request.msg.body.getLogRecoveryRead().idx);
                 auto entryOffset = request.msg.body.getLogRecoveryRead().idx.u64 - state.lastReleased.u64 - 1;
@@ -813,7 +813,7 @@ public:
                 _tryProgressToReplication();
                 break;
             }
-            case EggsError::LEADER_PREEMPTED:
+            case TernError::LEADER_PREEMPTED:
                 LOG_DEBUG(_env, "Got preempted during recovery by replica %s",fromReplicaId);
                 resetLeaderElection();
                 break;
@@ -826,9 +826,9 @@ public:
     void proccessRecoveryWriteResponse(ReplicaId fromReplicaId, LogsDBRequest& request, const LogRecoveryWriteResp& response) {
         ALWAYS_ASSERT(_state == LeadershipState::CONFIRMING_REPLICATION, "In state %s Received LOG_RECOVERY_WRITE response %s", _state, response);
         auto& state = *_electionState;
-        auto result = EggsError(response.result);
+        auto result = TernError(response.result);
         switch (result) {
-            case EggsError::NO_ERROR:
+            case TernError::NO_ERROR:
             {
                 ALWAYS_ASSERT(state.lastReleased < request.msg.body.getLogRecoveryWrite().idx);
                 auto entryOffset = request.msg.body.getLogRecoveryWrite().idx.u64 - state.lastReleased.u64 - 1;
@@ -839,7 +839,7 @@ public:
                 _tryProgressToLeaderConfirm();
                 break;
             }
-            case EggsError::LEADER_PREEMPTED:
+            case TernError::LEADER_PREEMPTED:
                 resetLeaderElection();
                 break;
             default:
@@ -857,13 +857,13 @@ public:
         auto& newLeaderResponse = response.msg.body.setNewLeader();
 
         if (request.nomineeToken.idx() <= _metadata.getLeaderToken().idx() || request.nomineeToken < _metadata.getNomineeToken()) {
-            newLeaderResponse.result = EggsError::LEADER_PREEMPTED;
+            newLeaderResponse.result = TernError::LEADER_PREEMPTED;
             return;
         }
 
-        newLeaderResponse.result = EggsError::NO_ERROR;
+        newLeaderResponse.result = TernError::NO_ERROR;
         newLeaderResponse.lastReleased = _metadata.getLastReleased();
-        _leaderLastActive = eggsNow();
+        _leaderLastActive = ternNow();
 
         if (_metadata.getNomineeToken() == request.nomineeToken) {
             return;
@@ -886,8 +886,8 @@ public:
 
         auto err = _metadata.updateLeaderToken(request.nomineeToken);
         newLeaderConfirmResponse.result = err;
-        if (err == EggsError::NO_ERROR) {
-            _leaderLastActive = eggsNow();
+        if (err == TernError::NO_ERROR) {
+            _leaderLastActive = ternNow();
             resetLeaderElection();
         }
     }
@@ -900,14 +900,14 @@ public:
         auto& response = _reqResp.newResponse(fromReplicaId, requestId);
         auto& recoveryReadResponse = response.msg.body.setLogRecoveryRead();
         if (request.nomineeToken != _metadata.getNomineeToken()) {
-            recoveryReadResponse.result = EggsError::LEADER_PREEMPTED;
+            recoveryReadResponse.result = TernError::LEADER_PREEMPTED;
             return;
         }
-        _leaderLastActive = eggsNow();
+        _leaderLastActive = ternNow();
         LogsDBLogEntry entry;
         auto err = _data.readLogEntry(request.idx, entry);
         recoveryReadResponse.result = err;
-        if (err == EggsError::NO_ERROR) {
+        if (err == TernError::NO_ERROR) {
             recoveryReadResponse.value.els = entry.value;
         }
     }
@@ -920,20 +920,20 @@ public:
         auto& response = _reqResp.newResponse(fromReplicaId, requestId);
         auto& recoveryWriteResponse = response.msg.body.setLogRecoveryWrite();
         if (request.nomineeToken != _metadata.getNomineeToken()) {
-            recoveryWriteResponse.result = EggsError::LEADER_PREEMPTED;
+            recoveryWriteResponse.result = TernError::LEADER_PREEMPTED;
             return;
         }
-        _leaderLastActive = eggsNow();
+        _leaderLastActive = ternNow();
         LogsDBLogEntry entry;
         entry.idx = request.idx;
         entry.value = request.value.els;
         _data.writeLogEntry(entry);
-        recoveryWriteResponse.result = EggsError::NO_ERROR;
+        recoveryWriteResponse.result = TernError::NO_ERROR;
     }
 
-    EggsError writeLogEntries(LeaderToken token, LogIdx newlastReleased, std::vector<LogsDBLogEntry>& entries) {
+    TernError writeLogEntries(LeaderToken token, LogIdx newlastReleased, std::vector<LogsDBLogEntry>& entries) {
         auto err = _metadata.updateLeaderToken(token);
-        if (err != EggsError::NO_ERROR) {
+        if (err != TernError::NO_ERROR) {
             return err;
         }
         _clearElectionState();
@@ -941,7 +941,7 @@ public:
         if (_metadata.getLastReleased() < newlastReleased) {
             _metadata.setLastReleased(newlastReleased);
         }
-        return EggsError::NO_ERROR;
+        return TernError::NO_ERROR;
     }
 
     void resetLeaderElection() {
@@ -951,7 +951,7 @@ public:
             LOG_INFO(_env,"Reseting leader election. Becoming follower of leader with token %s", _metadata.getLeaderToken());
         }
         _state = LeadershipState::FOLLOWER;
-        _leaderLastActive = eggsNow();
+        _leaderLastActive = ternNow();
         _metadata.setNomineeToken(LeaderToken(0,0));
         _clearElectionState();
     }
@@ -1117,12 +1117,12 @@ private:
         ALWAYS_ASSERT(nomineeToken.replica() == _replicaId);
         LOG_INFO(_env,"Became leader with token %s", nomineeToken);
         _state = LeadershipState::LEADER;
-        ALWAYS_ASSERT(_metadata.updateLeaderToken(nomineeToken) == EggsError::NO_ERROR);
+        ALWAYS_ASSERT(_metadata.updateLeaderToken(nomineeToken) == TernError::NO_ERROR);
         _clearElectionState();
     }
 
     void _clearElectionState() {
-        _leaderLastActive = eggsNow();
+        _leaderLastActive = ternNow();
         if (!_electionState) {
             return;
         }
@@ -1148,7 +1148,7 @@ private:
 
     LeadershipState _state;
     std::unique_ptr<LeaderElectionState> _electionState;
-    EggsTime _leaderLastActive;
+    TernTime _leaderLastActive;
 };
 
 class BatchWriter {
@@ -1170,7 +1170,7 @@ public:
         if (unlikely(writeRequest.token < _token)) {
             auto& resp = _reqResp.newResponse(request.replicaId, request.msg.id);
             auto& writeResponse = resp.msg.body.setLogWrite();
-            writeResponse.result = EggsError::LEADER_PREEMPTED;
+            writeResponse.result = TernError::LEADER_PREEMPTED;
             return;
         }
         if (unlikely(_token < writeRequest.token )) {
@@ -1296,19 +1296,19 @@ public:
         auto& response = _reqResp.newResponse(fromReplicaId, requestId);
         auto& readResponse = response.msg.body.setLogRead();
         if (_metadata.getLastReleased() < request.idx) {
-            readResponse.result = EggsError::LOG_ENTRY_UNRELEASED;
+            readResponse.result = TernError::LOG_ENTRY_UNRELEASED;
             return;
         }
         LogsDBLogEntry entry;
         auto err =_data.readLogEntry(request.idx, entry);
         readResponse.result = err;
-        if (err == EggsError::NO_ERROR) {
+        if (err == TernError::NO_ERROR) {
             readResponse.value.els = entry.value;
         }
     }
 
     void proccessLogReadResponse(ReplicaId fromReplicaId, LogsDBRequest& request, const LogReadResp& response) {
-        if (response.result != EggsError::NO_ERROR) {
+        if (response.result != TernError::NO_ERROR) {
             return;
         }
 
@@ -1447,7 +1447,7 @@ public:
         }
 
         auto err = _leaderElection.writeLogEntries(_metadata.getLeaderToken(), newRelease, entriesToWrite);
-        ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+        ALWAYS_ASSERT(err == TernError::NO_ERROR);
         for (auto reqId : _releaseRequests) {
             if (reqId == 0) {
                 continue;
@@ -1460,9 +1460,9 @@ public:
         }
     }
 
-    EggsError appendEntries(std::vector<LogsDBLogEntry>& entries) {
+    TernError appendEntries(std::vector<LogsDBLogEntry>& entries) {
         if (!_leaderElection.isLeader()) {
-            return EggsError::LEADER_PREEMPTED;
+            return TernError::LEADER_PREEMPTED;
         }
         auto availableSpace = LogsDB::IN_FLIGHT_APPEND_WINDOW - entriesInFlight();
         auto countToAppend = std::min(entries.size(), availableSpace);
@@ -1493,17 +1493,17 @@ public:
             entries[i].idx = 0;
         }
         _entriesEnd += countToAppend;
-        return EggsError::NO_ERROR;
+        return TernError::NO_ERROR;
     }
 
     void proccessLogWriteResponse(ReplicaId fromReplicaId, LogsDBRequest& request, const LogWriteResp& response) {
         if (!_leaderElection.isLeader()) {
             return;
         }
-        switch ((EggsError)response.result) {
-            case EggsError::NO_ERROR:
+        switch ((TernError)response.result) {
+            case TernError::NO_ERROR:
                 break;
-            case EggsError::LEADER_PREEMPTED:
+            case TernError::LEADER_PREEMPTED:
                 _leaderElection.resetLeaderElection();
                 return;
             default:
@@ -1605,7 +1605,7 @@ public:
         auto initSuccess = _metadata.init(initialStart);
         initSuccess = _partitions.init(initialStart) && initSuccess;
 
-        auto now = eggsNow();
+        auto now = ternNow();
         if ((now - _metadata.getLastReleasedTime()) * 2 > (LogsDB::PARTITION_TIME_SPAN * 3)) {
             initSuccess = false;
             LOG_ERROR(_env,"Time when we last released record (%s) is far in the past. There is a high risk we will not be able to catch up!", _metadata.getLastReleasedTime());
@@ -1616,8 +1616,8 @@ public:
         _catchupReader.init();
 
         LOG_INFO(_env,"LogsDB opened, leaderToken(%s), lastReleased(%s), lastRead(%s)",_metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
-        _infoLoggedTime = eggsNow();
-        _lastLoopFinished = eggsNow();
+        _infoLoggedTime = ternNow();
+        _lastLoopFinished = ternNow();
     }
 
     ~LogsDBImpl() {
@@ -1648,7 +1648,7 @@ public:
     }
 
     void processIncomingMessages(std::vector<LogsDBRequest>& requests, std::vector<LogsDBResponse>& responses) {
-        auto processingStarted = eggsNow();
+        auto processingStarted = ternNow();
         _maybeLogStatus(processingStarted);
         for(auto& resp : responses) {
             auto request = _reqResp.getRequest(resp.msg.id);
@@ -1742,7 +1742,7 @@ public:
         responses.clear();
         requests.clear();
         update_atomic_stat_ema(_stats.idleTime, processingStarted - _lastLoopFinished);
-        _lastLoopFinished = eggsNow();
+        _lastLoopFinished = ternNow();
         update_atomic_stat_ema(_stats.processingTime, _lastLoopFinished - processingStarted);
     }
 
@@ -1755,7 +1755,7 @@ public:
         return _leaderElection.isLeader();
     }
 
-    EggsError appendEntries(std::vector<LogsDBLogEntry>& entries) {
+    TernError appendEntries(std::vector<LogsDBLogEntry>& entries) {
         return _appender.appendEntries(entries);
     }
 
@@ -1785,7 +1785,7 @@ public:
 
 private:
 
-    void _maybeLogStatus(EggsTime now) {
+    void _maybeLogStatus(TernTime now) {
         if (now - _infoLoggedTime > 1_mins) {
             LOG_INFO(_env,"LogsDB status: leaderToken(%s), lastReleased(%s), lastRead(%s)",_metadata.getLeaderToken(), _metadata.getLastReleased(), _catchupReader.lastRead());
             _infoLoggedTime = now;
@@ -1803,8 +1803,8 @@ private:
     BatchWriter _batchWriter;
     CatchupReader _catchupReader;
     Appender _appender;
-    EggsTime _infoLoggedTime;
-    EggsTime _lastLoopFinished;
+    TernTime _infoLoggedTime;
+    TernTime _lastLoopFinished;
 };
 
 LogsDB::LogsDB(
@@ -1844,7 +1844,7 @@ bool LogsDB::isLeader() const {
     return _impl->isLeader();
 }
 
-EggsError LogsDB::appendEntries(std::vector<LogsDBLogEntry>& entries) {
+TernError LogsDB::appendEntries(std::vector<LogsDBLogEntry>& entries) {
     return _impl->appendEntries(entries);
 }
 

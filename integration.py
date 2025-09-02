@@ -44,13 +44,13 @@ leader_only = ['-leader-only'] if args.leader_only else []
 # -block-service-killer does not work with FUSE driver (the duplicated FDs
 # of the child processes confuse the FUSE driver).
 tests = [
-    ['./go/eggstests/eggstests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short + leader_only,
-    ['./go/eggstests/eggstests', '-binaries-dir', build_release, '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short + leader_only,
+    ['./go/terntests/terntests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-filter', fuse_tests, '-outgoing-packet-drop', '0.02'] + short + leader_only,
+    ['./go/terntests/terntests', '-binaries-dir', build_release, '-preserve-data-dir', '-verbose', '-block-service-killer', '-filter', 'direct', '-repo-dir', '.', '-tmp-dir', '.'] + short + leader_only,
 ]
 if not args.short:
     # valgrind is super slow, it still surfaced bugs in the past but run the short
     # versions only in the long tests.
-    tests.append(['./go/eggstests/eggstests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', fuse_tests] + leader_only)
+    tests.append(['./go/terntests/terntests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', fuse_tests] + leader_only)
 # we need three free ports, we get them here upfront rather than in shuckle to reduce
 # the chance of races -- if we got it from the integration tests it'll be while
 # tons of things are started in another integration test

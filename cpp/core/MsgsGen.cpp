@@ -2,289 +2,289 @@
 // Run `go generate ./...` from the go/ directory to regenerate it.
 #include "MsgsGen.hpp"
 
-std::ostream& operator<<(std::ostream& out, EggsError err) {
+std::ostream& operator<<(std::ostream& out, TernError err) {
     switch (err) {
-    case EggsError::NO_ERROR:
+    case TernError::NO_ERROR:
         out << "NO_ERROR";
         break;
-    case EggsError::INTERNAL_ERROR:
+    case TernError::INTERNAL_ERROR:
         out << "INTERNAL_ERROR";
         break;
-    case EggsError::FATAL_ERROR:
+    case TernError::FATAL_ERROR:
         out << "FATAL_ERROR";
         break;
-    case EggsError::TIMEOUT:
+    case TernError::TIMEOUT:
         out << "TIMEOUT";
         break;
-    case EggsError::MALFORMED_REQUEST:
+    case TernError::MALFORMED_REQUEST:
         out << "MALFORMED_REQUEST";
         break;
-    case EggsError::MALFORMED_RESPONSE:
+    case TernError::MALFORMED_RESPONSE:
         out << "MALFORMED_RESPONSE";
         break;
-    case EggsError::NOT_AUTHORISED:
+    case TernError::NOT_AUTHORISED:
         out << "NOT_AUTHORISED";
         break;
-    case EggsError::UNRECOGNIZED_REQUEST:
+    case TernError::UNRECOGNIZED_REQUEST:
         out << "UNRECOGNIZED_REQUEST";
         break;
-    case EggsError::FILE_NOT_FOUND:
+    case TernError::FILE_NOT_FOUND:
         out << "FILE_NOT_FOUND";
         break;
-    case EggsError::DIRECTORY_NOT_FOUND:
+    case TernError::DIRECTORY_NOT_FOUND:
         out << "DIRECTORY_NOT_FOUND";
         break;
-    case EggsError::NAME_NOT_FOUND:
+    case TernError::NAME_NOT_FOUND:
         out << "NAME_NOT_FOUND";
         break;
-    case EggsError::EDGE_NOT_FOUND:
+    case TernError::EDGE_NOT_FOUND:
         out << "EDGE_NOT_FOUND";
         break;
-    case EggsError::EDGE_IS_LOCKED:
+    case TernError::EDGE_IS_LOCKED:
         out << "EDGE_IS_LOCKED";
         break;
-    case EggsError::TYPE_IS_DIRECTORY:
+    case TernError::TYPE_IS_DIRECTORY:
         out << "TYPE_IS_DIRECTORY";
         break;
-    case EggsError::TYPE_IS_NOT_DIRECTORY:
+    case TernError::TYPE_IS_NOT_DIRECTORY:
         out << "TYPE_IS_NOT_DIRECTORY";
         break;
-    case EggsError::BAD_COOKIE:
+    case TernError::BAD_COOKIE:
         out << "BAD_COOKIE";
         break;
-    case EggsError::INCONSISTENT_STORAGE_CLASS_PARITY:
+    case TernError::INCONSISTENT_STORAGE_CLASS_PARITY:
         out << "INCONSISTENT_STORAGE_CLASS_PARITY";
         break;
-    case EggsError::LAST_SPAN_STATE_NOT_CLEAN:
+    case TernError::LAST_SPAN_STATE_NOT_CLEAN:
         out << "LAST_SPAN_STATE_NOT_CLEAN";
         break;
-    case EggsError::COULD_NOT_PICK_BLOCK_SERVICES:
+    case TernError::COULD_NOT_PICK_BLOCK_SERVICES:
         out << "COULD_NOT_PICK_BLOCK_SERVICES";
         break;
-    case EggsError::BAD_SPAN_BODY:
+    case TernError::BAD_SPAN_BODY:
         out << "BAD_SPAN_BODY";
         break;
-    case EggsError::SPAN_NOT_FOUND:
+    case TernError::SPAN_NOT_FOUND:
         out << "SPAN_NOT_FOUND";
         break;
-    case EggsError::BLOCK_SERVICE_NOT_FOUND:
+    case TernError::BLOCK_SERVICE_NOT_FOUND:
         out << "BLOCK_SERVICE_NOT_FOUND";
         break;
-    case EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN:
+    case TernError::CANNOT_CERTIFY_BLOCKLESS_SPAN:
         out << "CANNOT_CERTIFY_BLOCKLESS_SPAN";
         break;
-    case EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS:
+    case TernError::BAD_NUMBER_OF_BLOCKS_PROOFS:
         out << "BAD_NUMBER_OF_BLOCKS_PROOFS";
         break;
-    case EggsError::BAD_BLOCK_PROOF:
+    case TernError::BAD_BLOCK_PROOF:
         out << "BAD_BLOCK_PROOF";
         break;
-    case EggsError::CANNOT_OVERRIDE_NAME:
+    case TernError::CANNOT_OVERRIDE_NAME:
         out << "CANNOT_OVERRIDE_NAME";
         break;
-    case EggsError::NAME_IS_LOCKED:
+    case TernError::NAME_IS_LOCKED:
         out << "NAME_IS_LOCKED";
         break;
-    case EggsError::MTIME_IS_TOO_RECENT:
+    case TernError::MTIME_IS_TOO_RECENT:
         out << "MTIME_IS_TOO_RECENT";
         break;
-    case EggsError::MISMATCHING_TARGET:
+    case TernError::MISMATCHING_TARGET:
         out << "MISMATCHING_TARGET";
         break;
-    case EggsError::MISMATCHING_OWNER:
+    case TernError::MISMATCHING_OWNER:
         out << "MISMATCHING_OWNER";
         break;
-    case EggsError::MISMATCHING_CREATION_TIME:
+    case TernError::MISMATCHING_CREATION_TIME:
         out << "MISMATCHING_CREATION_TIME";
         break;
-    case EggsError::DIRECTORY_NOT_EMPTY:
+    case TernError::DIRECTORY_NOT_EMPTY:
         out << "DIRECTORY_NOT_EMPTY";
         break;
-    case EggsError::FILE_IS_TRANSIENT:
+    case TernError::FILE_IS_TRANSIENT:
         out << "FILE_IS_TRANSIENT";
         break;
-    case EggsError::OLD_DIRECTORY_NOT_FOUND:
+    case TernError::OLD_DIRECTORY_NOT_FOUND:
         out << "OLD_DIRECTORY_NOT_FOUND";
         break;
-    case EggsError::NEW_DIRECTORY_NOT_FOUND:
+    case TernError::NEW_DIRECTORY_NOT_FOUND:
         out << "NEW_DIRECTORY_NOT_FOUND";
         break;
-    case EggsError::LOOP_IN_DIRECTORY_RENAME:
+    case TernError::LOOP_IN_DIRECTORY_RENAME:
         out << "LOOP_IN_DIRECTORY_RENAME";
         break;
-    case EggsError::DIRECTORY_HAS_OWNER:
+    case TernError::DIRECTORY_HAS_OWNER:
         out << "DIRECTORY_HAS_OWNER";
         break;
-    case EggsError::FILE_IS_NOT_TRANSIENT:
+    case TernError::FILE_IS_NOT_TRANSIENT:
         out << "FILE_IS_NOT_TRANSIENT";
         break;
-    case EggsError::FILE_NOT_EMPTY:
+    case TernError::FILE_NOT_EMPTY:
         out << "FILE_NOT_EMPTY";
         break;
-    case EggsError::CANNOT_REMOVE_ROOT_DIRECTORY:
+    case TernError::CANNOT_REMOVE_ROOT_DIRECTORY:
         out << "CANNOT_REMOVE_ROOT_DIRECTORY";
         break;
-    case EggsError::FILE_EMPTY:
+    case TernError::FILE_EMPTY:
         out << "FILE_EMPTY";
         break;
-    case EggsError::CANNOT_REMOVE_DIRTY_SPAN:
+    case TernError::CANNOT_REMOVE_DIRTY_SPAN:
         out << "CANNOT_REMOVE_DIRTY_SPAN";
         break;
-    case EggsError::BAD_SHARD:
+    case TernError::BAD_SHARD:
         out << "BAD_SHARD";
         break;
-    case EggsError::BAD_NAME:
+    case TernError::BAD_NAME:
         out << "BAD_NAME";
         break;
-    case EggsError::MORE_RECENT_SNAPSHOT_EDGE:
+    case TernError::MORE_RECENT_SNAPSHOT_EDGE:
         out << "MORE_RECENT_SNAPSHOT_EDGE";
         break;
-    case EggsError::MORE_RECENT_CURRENT_EDGE:
+    case TernError::MORE_RECENT_CURRENT_EDGE:
         out << "MORE_RECENT_CURRENT_EDGE";
         break;
-    case EggsError::BAD_DIRECTORY_INFO:
+    case TernError::BAD_DIRECTORY_INFO:
         out << "BAD_DIRECTORY_INFO";
         break;
-    case EggsError::DEADLINE_NOT_PASSED:
+    case TernError::DEADLINE_NOT_PASSED:
         out << "DEADLINE_NOT_PASSED";
         break;
-    case EggsError::SAME_SOURCE_AND_DESTINATION:
+    case TernError::SAME_SOURCE_AND_DESTINATION:
         out << "SAME_SOURCE_AND_DESTINATION";
         break;
-    case EggsError::SAME_DIRECTORIES:
+    case TernError::SAME_DIRECTORIES:
         out << "SAME_DIRECTORIES";
         break;
-    case EggsError::SAME_SHARD:
+    case TernError::SAME_SHARD:
         out << "SAME_SHARD";
         break;
-    case EggsError::BAD_PROTOCOL_VERSION:
+    case TernError::BAD_PROTOCOL_VERSION:
         out << "BAD_PROTOCOL_VERSION";
         break;
-    case EggsError::BAD_CERTIFICATE:
+    case TernError::BAD_CERTIFICATE:
         out << "BAD_CERTIFICATE";
         break;
-    case EggsError::BLOCK_TOO_RECENT_FOR_DELETION:
+    case TernError::BLOCK_TOO_RECENT_FOR_DELETION:
         out << "BLOCK_TOO_RECENT_FOR_DELETION";
         break;
-    case EggsError::BLOCK_FETCH_OUT_OF_BOUNDS:
+    case TernError::BLOCK_FETCH_OUT_OF_BOUNDS:
         out << "BLOCK_FETCH_OUT_OF_BOUNDS";
         break;
-    case EggsError::BAD_BLOCK_CRC:
+    case TernError::BAD_BLOCK_CRC:
         out << "BAD_BLOCK_CRC";
         break;
-    case EggsError::BLOCK_TOO_BIG:
+    case TernError::BLOCK_TOO_BIG:
         out << "BLOCK_TOO_BIG";
         break;
-    case EggsError::BLOCK_NOT_FOUND:
+    case TernError::BLOCK_NOT_FOUND:
         out << "BLOCK_NOT_FOUND";
         break;
-    case EggsError::CANNOT_UNSET_DECOMMISSIONED:
+    case TernError::CANNOT_UNSET_DECOMMISSIONED:
         out << "CANNOT_UNSET_DECOMMISSIONED";
         break;
-    case EggsError::CANNOT_REGISTER_DECOMMISSIONED_OR_STALE:
+    case TernError::CANNOT_REGISTER_DECOMMISSIONED_OR_STALE:
         out << "CANNOT_REGISTER_DECOMMISSIONED_OR_STALE";
         break;
-    case EggsError::BLOCK_TOO_OLD_FOR_WRITE:
+    case TernError::BLOCK_TOO_OLD_FOR_WRITE:
         out << "BLOCK_TOO_OLD_FOR_WRITE";
         break;
-    case EggsError::BLOCK_IO_ERROR_DEVICE:
+    case TernError::BLOCK_IO_ERROR_DEVICE:
         out << "BLOCK_IO_ERROR_DEVICE";
         break;
-    case EggsError::BLOCK_IO_ERROR_FILE:
+    case TernError::BLOCK_IO_ERROR_FILE:
         out << "BLOCK_IO_ERROR_FILE";
         break;
-    case EggsError::INVALID_REPLICA:
+    case TernError::INVALID_REPLICA:
         out << "INVALID_REPLICA";
         break;
-    case EggsError::DIFFERENT_ADDRS_INFO:
+    case TernError::DIFFERENT_ADDRS_INFO:
         out << "DIFFERENT_ADDRS_INFO";
         break;
-    case EggsError::LEADER_PREEMPTED:
+    case TernError::LEADER_PREEMPTED:
         out << "LEADER_PREEMPTED";
         break;
-    case EggsError::LOG_ENTRY_MISSING:
+    case TernError::LOG_ENTRY_MISSING:
         out << "LOG_ENTRY_MISSING";
         break;
-    case EggsError::LOG_ENTRY_TRIMMED:
+    case TernError::LOG_ENTRY_TRIMMED:
         out << "LOG_ENTRY_TRIMMED";
         break;
-    case EggsError::LOG_ENTRY_UNRELEASED:
+    case TernError::LOG_ENTRY_UNRELEASED:
         out << "LOG_ENTRY_UNRELEASED";
         break;
-    case EggsError::LOG_ENTRY_RELEASED:
+    case TernError::LOG_ENTRY_RELEASED:
         out << "LOG_ENTRY_RELEASED";
         break;
-    case EggsError::AUTO_DECOMMISSION_FORBIDDEN:
+    case TernError::AUTO_DECOMMISSION_FORBIDDEN:
         out << "AUTO_DECOMMISSION_FORBIDDEN";
         break;
-    case EggsError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION:
+    case TernError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION:
         out << "INCONSISTENT_BLOCK_SERVICE_REGISTRATION";
         break;
-    case EggsError::SWAP_BLOCKS_INLINE_STORAGE:
+    case TernError::SWAP_BLOCKS_INLINE_STORAGE:
         out << "SWAP_BLOCKS_INLINE_STORAGE";
         break;
-    case EggsError::SWAP_BLOCKS_MISMATCHING_SIZE:
+    case TernError::SWAP_BLOCKS_MISMATCHING_SIZE:
         out << "SWAP_BLOCKS_MISMATCHING_SIZE";
         break;
-    case EggsError::SWAP_BLOCKS_MISMATCHING_STATE:
+    case TernError::SWAP_BLOCKS_MISMATCHING_STATE:
         out << "SWAP_BLOCKS_MISMATCHING_STATE";
         break;
-    case EggsError::SWAP_BLOCKS_MISMATCHING_CRC:
+    case TernError::SWAP_BLOCKS_MISMATCHING_CRC:
         out << "SWAP_BLOCKS_MISMATCHING_CRC";
         break;
-    case EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE:
+    case TernError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE:
         out << "SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE";
         break;
-    case EggsError::SWAP_SPANS_INLINE_STORAGE:
+    case TernError::SWAP_SPANS_INLINE_STORAGE:
         out << "SWAP_SPANS_INLINE_STORAGE";
         break;
-    case EggsError::SWAP_SPANS_MISMATCHING_SIZE:
+    case TernError::SWAP_SPANS_MISMATCHING_SIZE:
         out << "SWAP_SPANS_MISMATCHING_SIZE";
         break;
-    case EggsError::SWAP_SPANS_NOT_CLEAN:
+    case TernError::SWAP_SPANS_NOT_CLEAN:
         out << "SWAP_SPANS_NOT_CLEAN";
         break;
-    case EggsError::SWAP_SPANS_MISMATCHING_CRC:
+    case TernError::SWAP_SPANS_MISMATCHING_CRC:
         out << "SWAP_SPANS_MISMATCHING_CRC";
         break;
-    case EggsError::SWAP_SPANS_MISMATCHING_BLOCKS:
+    case TernError::SWAP_SPANS_MISMATCHING_BLOCKS:
         out << "SWAP_SPANS_MISMATCHING_BLOCKS";
         break;
-    case EggsError::EDGE_NOT_OWNED:
+    case TernError::EDGE_NOT_OWNED:
         out << "EDGE_NOT_OWNED";
         break;
-    case EggsError::CANNOT_CREATE_DB_SNAPSHOT:
+    case TernError::CANNOT_CREATE_DB_SNAPSHOT:
         out << "CANNOT_CREATE_DB_SNAPSHOT";
         break;
-    case EggsError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE:
+    case TernError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE:
         out << "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE";
         break;
-    case EggsError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN:
+    case TernError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN:
         out << "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN";
         break;
-    case EggsError::TRANSIENT_LOCATION_COUNT:
+    case TernError::TRANSIENT_LOCATION_COUNT:
         out << "TRANSIENT_LOCATION_COUNT";
         break;
-    case EggsError::ADD_SPAN_LOCATION_INLINE_STORAGE:
+    case TernError::ADD_SPAN_LOCATION_INLINE_STORAGE:
         out << "ADD_SPAN_LOCATION_INLINE_STORAGE";
         break;
-    case EggsError::ADD_SPAN_LOCATION_MISMATCHING_SIZE:
+    case TernError::ADD_SPAN_LOCATION_MISMATCHING_SIZE:
         out << "ADD_SPAN_LOCATION_MISMATCHING_SIZE";
         break;
-    case EggsError::ADD_SPAN_LOCATION_NOT_CLEAN:
+    case TernError::ADD_SPAN_LOCATION_NOT_CLEAN:
         out << "ADD_SPAN_LOCATION_NOT_CLEAN";
         break;
-    case EggsError::ADD_SPAN_LOCATION_MISMATCHING_CRC:
+    case TernError::ADD_SPAN_LOCATION_MISMATCHING_CRC:
         out << "ADD_SPAN_LOCATION_MISMATCHING_CRC";
         break;
-    case EggsError::ADD_SPAN_LOCATION_EXISTS:
+    case TernError::ADD_SPAN_LOCATION_EXISTS:
         out << "ADD_SPAN_LOCATION_EXISTS";
         break;
-    case EggsError::SWAP_BLOCKS_MISMATCHING_LOCATION:
+    case TernError::SWAP_BLOCKS_MISMATCHING_LOCATION:
         out << "SWAP_BLOCKS_MISMATCHING_LOCATION";
         break;
     default:
-        out << "EggsError(" << ((int)err) << ")";
+        out << "TernError(" << ((int)err) << ")";
         break;
     }
     return out;
@@ -715,13 +715,13 @@ void CurrentEdge::clear() {
     targetId = InodeId();
     nameHash = uint64_t(0);
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool CurrentEdge::operator==(const CurrentEdge& rhs) const {
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((uint64_t)this->nameHash != (uint64_t)rhs.nameHash) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CurrentEdge& x) {
@@ -859,11 +859,11 @@ void ShardInfo::unpack(BincodeBuf& buf) {
 }
 void ShardInfo::clear() {
     addrs.clear();
-    lastSeen = EggsTime();
+    lastSeen = TernTime();
 }
 bool ShardInfo::operator==(const ShardInfo& rhs) const {
     if (addrs != rhs.addrs) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ShardInfo& x) {
@@ -1172,14 +1172,14 @@ void Edge::clear() {
     targetId = InodeIdExtra();
     nameHash = uint64_t(0);
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool Edge::operator==(const Edge& rhs) const {
     if ((bool)this->current != (bool)rhs.current) { return false; };
     if ((InodeIdExtra)this->targetId != (InodeIdExtra)rhs.targetId) { return false; };
     if ((uint64_t)this->nameHash != (uint64_t)rhs.nameHash) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const Edge& x) {
@@ -1200,12 +1200,12 @@ void FullReadDirCursor::unpack(BincodeBuf& buf) {
 void FullReadDirCursor::clear() {
     current = bool(0);
     startName.clear();
-    startTime = EggsTime();
+    startTime = TernTime();
 }
 bool FullReadDirCursor::operator==(const FullReadDirCursor& rhs) const {
     if ((bool)this->current != (bool)rhs.current) { return false; };
     if (startName != rhs.startName) { return false; };
-    if ((EggsTime)this->startTime != (EggsTime)rhs.startTime) { return false; };
+    if ((TernTime)this->startTime != (TernTime)rhs.startTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x) {
@@ -1226,12 +1226,12 @@ void TransientFile::unpack(BincodeBuf& buf) {
 void TransientFile::clear() {
     id = InodeId();
     cookie.clear();
-    deadlineTime = EggsTime();
+    deadlineTime = TernTime();
 }
 bool TransientFile::operator==(const TransientFile& rhs) const {
     if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
     if (cookie != rhs.cookie) { return false; };
-    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    if ((TernTime)this->deadlineTime != (TernTime)rhs.deadlineTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const TransientFile& x) {
@@ -1302,9 +1302,9 @@ void BlockServiceDeprecatedInfo::clear() {
     availableBytes = uint64_t(0);
     blocks = uint64_t(0);
     path.clear();
-    lastSeen = EggsTime();
+    lastSeen = TernTime();
     hasFiles = bool(0);
-    flagsLastChanged = EggsTime();
+    flagsLastChanged = TernTime();
 }
 bool BlockServiceDeprecatedInfo::operator==(const BlockServiceDeprecatedInfo& rhs) const {
     if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
@@ -1317,9 +1317,9 @@ bool BlockServiceDeprecatedInfo::operator==(const BlockServiceDeprecatedInfo& rh
     if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
     if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
     if (path != rhs.path) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
     if ((bool)this->hasFiles != (bool)rhs.hasFiles) { return false; };
-    if ((EggsTime)this->flagsLastChanged != (EggsTime)rhs.flagsLastChanged) { return false; };
+    if ((TernTime)this->flagsLastChanged != (TernTime)rhs.flagsLastChanged) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const BlockServiceDeprecatedInfo& x) {
@@ -1433,14 +1433,14 @@ void FullShardInfo::clear() {
     id = ShardReplicaId();
     isLeader = bool(0);
     addrs.clear();
-    lastSeen = EggsTime();
+    lastSeen = TernTime();
     locationId = uint8_t(0);
 }
 bool FullShardInfo::operator==(const FullShardInfo& rhs) const {
     if ((ShardReplicaId)this->id != (ShardReplicaId)rhs.id) { return false; };
     if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
     if (addrs != rhs.addrs) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
     if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
     return true;
 }
@@ -1530,14 +1530,14 @@ void CdcInfo::clear() {
     locationId = uint8_t(0);
     isLeader = bool(0);
     addrs.clear();
-    lastSeen = EggsTime();
+    lastSeen = TernTime();
 }
 bool CdcInfo::operator==(const CdcInfo& rhs) const {
     if ((ReplicaId)this->replicaId != (ReplicaId)rhs.replicaId) { return false; };
     if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
     if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
     if (addrs != rhs.addrs) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CdcInfo& x) {
@@ -1599,11 +1599,11 @@ void LookupResp::unpack(BincodeBuf& buf) {
 }
 void LookupResp::clear() {
     targetId = InodeId();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool LookupResp::operator==(const LookupResp& rhs) const {
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LookupResp& x) {
@@ -1640,13 +1640,13 @@ void StatFileResp::unpack(BincodeBuf& buf) {
     size = buf.unpackScalar<uint64_t>();
 }
 void StatFileResp::clear() {
-    mtime = EggsTime();
-    atime = EggsTime();
+    mtime = TernTime();
+    atime = TernTime();
     size = uint64_t(0);
 }
 bool StatFileResp::operator==(const StatFileResp& rhs) const {
-    if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
-    if ((EggsTime)this->atime != (EggsTime)rhs.atime) { return false; };
+    if ((TernTime)this->mtime != (TernTime)rhs.mtime) { return false; };
+    if ((TernTime)this->atime != (TernTime)rhs.atime) { return false; };
     if ((uint64_t)this->size != (uint64_t)rhs.size) { return false; };
     return true;
 }
@@ -1684,12 +1684,12 @@ void StatDirectoryResp::unpack(BincodeBuf& buf) {
     info.unpack(buf);
 }
 void StatDirectoryResp::clear() {
-    mtime = EggsTime();
+    mtime = TernTime();
     owner = InodeId();
     info.clear();
 }
 bool StatDirectoryResp::operator==(const StatDirectoryResp& rhs) const {
-    if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
+    if ((TernTime)this->mtime != (TernTime)rhs.mtime) { return false; };
     if ((InodeId)this->owner != (InodeId)rhs.owner) { return false; };
     if (info != rhs.info) { return false; };
     return true;
@@ -1948,10 +1948,10 @@ void LinkFileResp::unpack(BincodeBuf& buf) {
     creationTime.unpack(buf);
 }
 void LinkFileResp::clear() {
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool LinkFileResp::operator==(const LinkFileResp& rhs) const {
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LinkFileResp& x) {
@@ -1975,13 +1975,13 @@ void SoftUnlinkFileReq::clear() {
     ownerId = InodeId();
     fileId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool SoftUnlinkFileReq::operator==(const SoftUnlinkFileReq& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileReq& x) {
@@ -1996,10 +1996,10 @@ void SoftUnlinkFileResp::unpack(BincodeBuf& buf) {
     deleteCreationTime.unpack(buf);
 }
 void SoftUnlinkFileResp::clear() {
-    deleteCreationTime = EggsTime();
+    deleteCreationTime = TernTime();
 }
 bool SoftUnlinkFileResp::operator==(const SoftUnlinkFileResp& rhs) const {
-    if ((EggsTime)this->deleteCreationTime != (EggsTime)rhs.deleteCreationTime) { return false; };
+    if ((TernTime)this->deleteCreationTime != (TernTime)rhs.deleteCreationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileResp& x) {
@@ -2081,14 +2081,14 @@ void SameDirectoryRenameReq::clear() {
     targetId = InodeId();
     dirId = InodeId();
     oldName.clear();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
     newName.clear();
 }
 bool SameDirectoryRenameReq::operator==(const SameDirectoryRenameReq& rhs) const {
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (oldName != rhs.oldName) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     if (newName != rhs.newName) { return false; };
     return true;
 }
@@ -2104,10 +2104,10 @@ void SameDirectoryRenameResp::unpack(BincodeBuf& buf) {
     newCreationTime.unpack(buf);
 }
 void SameDirectoryRenameResp::clear() {
-    newCreationTime = EggsTime();
+    newCreationTime = TernTime();
 }
 bool SameDirectoryRenameResp::operator==(const SameDirectoryRenameResp& rhs) const {
-    if ((EggsTime)this->newCreationTime != (EggsTime)rhs.newCreationTime) { return false; };
+    if ((TernTime)this->newCreationTime != (TernTime)rhs.newCreationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameResp& x) {
@@ -2231,7 +2231,7 @@ void FullReadDirReq::clear() {
     dirId = InodeId();
     flags = uint8_t(0);
     startName.clear();
-    startTime = EggsTime();
+    startTime = TernTime();
     limit = uint16_t(0);
     mtu = uint16_t(0);
 }
@@ -2239,7 +2239,7 @@ bool FullReadDirReq::operator==(const FullReadDirReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((uint8_t)this->flags != (uint8_t)rhs.flags) { return false; };
     if (startName != rhs.startName) { return false; };
-    if ((EggsTime)this->startTime != (EggsTime)rhs.startTime) { return false; };
+    if ((TernTime)this->startTime != (TernTime)rhs.startTime) { return false; };
     if ((uint16_t)this->limit != (uint16_t)rhs.limit) { return false; };
     if ((uint16_t)this->mtu != (uint16_t)rhs.mtu) { return false; };
     return true;
@@ -2343,13 +2343,13 @@ void RemoveNonOwnedEdgeReq::clear() {
     dirId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool RemoveNonOwnedEdgeReq::operator==(const RemoveNonOwnedEdgeReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeReq& x) {
@@ -2387,13 +2387,13 @@ void SameShardHardFileUnlinkReq::clear() {
     ownerId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool SameShardHardFileUnlinkReq::operator==(const SameShardHardFileUnlinkReq& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkReq& x) {
@@ -2444,12 +2444,12 @@ void StatTransientFileResp::unpack(BincodeBuf& buf) {
     buf.unpackBytes(note);
 }
 void StatTransientFileResp::clear() {
-    mtime = EggsTime();
+    mtime = TernTime();
     size = uint64_t(0);
     note.clear();
 }
 bool StatTransientFileResp::operator==(const StatTransientFileResp& rhs) const {
-    if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
+    if ((TernTime)this->mtime != (TernTime)rhs.mtime) { return false; };
     if ((uint64_t)this->size != (uint64_t)rhs.size) { return false; };
     if (note != rhs.note) { return false; };
     return true;
@@ -3169,14 +3169,14 @@ void SameDirectoryRenameSnapshotReq::clear() {
     targetId = InodeId();
     dirId = InodeId();
     oldName.clear();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
     newName.clear();
 }
 bool SameDirectoryRenameSnapshotReq::operator==(const SameDirectoryRenameSnapshotReq& rhs) const {
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (oldName != rhs.oldName) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     if (newName != rhs.newName) { return false; };
     return true;
 }
@@ -3192,10 +3192,10 @@ void SameDirectoryRenameSnapshotResp::unpack(BincodeBuf& buf) {
     newCreationTime.unpack(buf);
 }
 void SameDirectoryRenameSnapshotResp::clear() {
-    newCreationTime = EggsTime();
+    newCreationTime = TernTime();
 }
 bool SameDirectoryRenameSnapshotResp::operator==(const SameDirectoryRenameSnapshotResp& rhs) const {
-    if ((EggsTime)this->newCreationTime != (EggsTime)rhs.newCreationTime) { return false; };
+    if ((TernTime)this->newCreationTime != (TernTime)rhs.newCreationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameSnapshotResp& x) {
@@ -3276,10 +3276,10 @@ void CreateDirectoryInodeResp::unpack(BincodeBuf& buf) {
     mtime.unpack(buf);
 }
 void CreateDirectoryInodeResp::clear() {
-    mtime = EggsTime();
+    mtime = TernTime();
 }
 bool CreateDirectoryInodeResp::operator==(const CreateDirectoryInodeResp& rhs) const {
-    if ((EggsTime)this->mtime != (EggsTime)rhs.mtime) { return false; };
+    if ((TernTime)this->mtime != (TernTime)rhs.mtime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CreateDirectoryInodeResp& x) {
@@ -3375,13 +3375,13 @@ void CreateLockedCurrentEdgeReq::clear() {
     dirId = InodeId();
     name.clear();
     targetId = InodeId();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
 }
 bool CreateLockedCurrentEdgeReq::operator==(const CreateLockedCurrentEdgeReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (name != rhs.name) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeReq& x) {
@@ -3396,10 +3396,10 @@ void CreateLockedCurrentEdgeResp::unpack(BincodeBuf& buf) {
     creationTime.unpack(buf);
 }
 void CreateLockedCurrentEdgeResp::clear() {
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool CreateLockedCurrentEdgeResp::operator==(const CreateLockedCurrentEdgeResp& rhs) const {
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeResp& x) {
@@ -3422,13 +3422,13 @@ void LockCurrentEdgeReq::unpack(BincodeBuf& buf) {
 void LockCurrentEdgeReq::clear() {
     dirId = InodeId();
     targetId = InodeId();
-    creationTime = EggsTime();
+    creationTime = TernTime();
     name.clear();
 }
 bool LockCurrentEdgeReq::operator==(const LockCurrentEdgeReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     if (name != rhs.name) { return false; };
     return true;
 }
@@ -3468,14 +3468,14 @@ void UnlockCurrentEdgeReq::unpack(BincodeBuf& buf) {
 void UnlockCurrentEdgeReq::clear() {
     dirId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
     targetId = InodeId();
     wasMoved = bool(0);
 }
 bool UnlockCurrentEdgeReq::operator==(const UnlockCurrentEdgeReq& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((bool)this->wasMoved != (bool)rhs.wasMoved) { return false; };
     return true;
@@ -3515,13 +3515,13 @@ void RemoveOwnedSnapshotFileEdgeReq::clear() {
     ownerId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool RemoveOwnedSnapshotFileEdgeReq::operator==(const RemoveOwnedSnapshotFileEdgeReq& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeReq& x) {
@@ -3611,11 +3611,11 @@ void MakeDirectoryResp::unpack(BincodeBuf& buf) {
 }
 void MakeDirectoryResp::clear() {
     id = InodeId();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool MakeDirectoryResp::operator==(const MakeDirectoryResp& rhs) const {
     if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const MakeDirectoryResp& x) {
@@ -3643,7 +3643,7 @@ void RenameFileReq::clear() {
     targetId = InodeId();
     oldOwnerId = InodeId();
     oldName.clear();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
     newOwnerId = InodeId();
     newName.clear();
 }
@@ -3651,7 +3651,7 @@ bool RenameFileReq::operator==(const RenameFileReq& rhs) const {
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((InodeId)this->oldOwnerId != (InodeId)rhs.oldOwnerId) { return false; };
     if (oldName != rhs.oldName) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     if ((InodeId)this->newOwnerId != (InodeId)rhs.newOwnerId) { return false; };
     if (newName != rhs.newName) { return false; };
     return true;
@@ -3668,10 +3668,10 @@ void RenameFileResp::unpack(BincodeBuf& buf) {
     creationTime.unpack(buf);
 }
 void RenameFileResp::clear() {
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool RenameFileResp::operator==(const RenameFileResp& rhs) const {
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RenameFileResp& x) {
@@ -3694,13 +3694,13 @@ void SoftUnlinkDirectoryReq::unpack(BincodeBuf& buf) {
 void SoftUnlinkDirectoryReq::clear() {
     ownerId = InodeId();
     targetId = InodeId();
-    creationTime = EggsTime();
+    creationTime = TernTime();
     name.clear();
 }
 bool SoftUnlinkDirectoryReq::operator==(const SoftUnlinkDirectoryReq& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     if (name != rhs.name) { return false; };
     return true;
 }
@@ -3743,7 +3743,7 @@ void RenameDirectoryReq::clear() {
     targetId = InodeId();
     oldOwnerId = InodeId();
     oldName.clear();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
     newOwnerId = InodeId();
     newName.clear();
 }
@@ -3751,7 +3751,7 @@ bool RenameDirectoryReq::operator==(const RenameDirectoryReq& rhs) const {
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((InodeId)this->oldOwnerId != (InodeId)rhs.oldOwnerId) { return false; };
     if (oldName != rhs.oldName) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     if ((InodeId)this->newOwnerId != (InodeId)rhs.newOwnerId) { return false; };
     if (newName != rhs.newName) { return false; };
     return true;
@@ -3768,10 +3768,10 @@ void RenameDirectoryResp::unpack(BincodeBuf& buf) {
     creationTime.unpack(buf);
 }
 void RenameDirectoryResp::clear() {
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool RenameDirectoryResp::operator==(const RenameDirectoryResp& rhs) const {
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RenameDirectoryResp& x) {
@@ -3827,13 +3827,13 @@ void CrossShardHardUnlinkFileReq::clear() {
     ownerId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool CrossShardHardUnlinkFileReq::operator==(const CrossShardHardUnlinkFileReq& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileReq& x) {
@@ -3943,11 +3943,11 @@ void LocalCdcResp::unpack(BincodeBuf& buf) {
 }
 void LocalCdcResp::clear() {
     addrs.clear();
-    lastSeen = EggsTime();
+    lastSeen = TernTime();
 }
 bool LocalCdcResp::operator==(const LocalCdcResp& rhs) const {
     if (addrs != rhs.addrs) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LocalCdcResp& x) {
@@ -4042,10 +4042,10 @@ void LocalChangedBlockServicesReq::unpack(BincodeBuf& buf) {
     changedSince.unpack(buf);
 }
 void LocalChangedBlockServicesReq::clear() {
-    changedSince = EggsTime();
+    changedSince = TernTime();
 }
 bool LocalChangedBlockServicesReq::operator==(const LocalChangedBlockServicesReq& rhs) const {
-    if ((EggsTime)this->changedSince != (EggsTime)rhs.changedSince) { return false; };
+    if ((TernTime)this->changedSince != (TernTime)rhs.changedSince) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LocalChangedBlockServicesReq& x) {
@@ -4062,11 +4062,11 @@ void LocalChangedBlockServicesResp::unpack(BincodeBuf& buf) {
     buf.unpackList<BlockService>(blockServices);
 }
 void LocalChangedBlockServicesResp::clear() {
-    lastChange = EggsTime();
+    lastChange = TernTime();
     blockServices.clear();
 }
 bool LocalChangedBlockServicesResp::operator==(const LocalChangedBlockServicesResp& rhs) const {
-    if ((EggsTime)this->lastChange != (EggsTime)rhs.lastChange) { return false; };
+    if ((TernTime)this->lastChange != (TernTime)rhs.lastChange) { return false; };
     if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
@@ -4349,11 +4349,11 @@ void ChangedBlockServicesAtLocationReq::unpack(BincodeBuf& buf) {
 }
 void ChangedBlockServicesAtLocationReq::clear() {
     locationId = uint8_t(0);
-    changedSince = EggsTime();
+    changedSince = TernTime();
 }
 bool ChangedBlockServicesAtLocationReq::operator==(const ChangedBlockServicesAtLocationReq& rhs) const {
     if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
-    if ((EggsTime)this->changedSince != (EggsTime)rhs.changedSince) { return false; };
+    if ((TernTime)this->changedSince != (TernTime)rhs.changedSince) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesAtLocationReq& x) {
@@ -4370,11 +4370,11 @@ void ChangedBlockServicesAtLocationResp::unpack(BincodeBuf& buf) {
     buf.unpackList<BlockService>(blockServices);
 }
 void ChangedBlockServicesAtLocationResp::clear() {
-    lastChange = EggsTime();
+    lastChange = TernTime();
     blockServices.clear();
 }
 bool ChangedBlockServicesAtLocationResp::operator==(const ChangedBlockServicesAtLocationResp& rhs) const {
-    if ((EggsTime)this->lastChange != (EggsTime)rhs.lastChange) { return false; };
+    if ((TernTime)this->lastChange != (TernTime)rhs.lastChange) { return false; };
     if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
@@ -4447,11 +4447,11 @@ void CdcAtLocationResp::unpack(BincodeBuf& buf) {
 }
 void CdcAtLocationResp::clear() {
     addrs.clear();
-    lastSeen = EggsTime();
+    lastSeen = TernTime();
 }
 bool CdcAtLocationResp::operator==(const CdcAtLocationResp& rhs) const {
     if (addrs != rhs.addrs) { return false; };
-    if ((EggsTime)this->lastSeen != (EggsTime)rhs.lastSeen) { return false; };
+    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CdcAtLocationResp& x) {
@@ -5194,16 +5194,16 @@ std::ostream& operator<<(std::ostream& out, const LogWriteReq& x) {
 }
 
 void LogWriteResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
 }
 void LogWriteResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
 }
 void LogWriteResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
 }
 bool LogWriteResp::operator==(const LogWriteResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LogWriteResp& x) {
@@ -5234,16 +5234,16 @@ std::ostream& operator<<(std::ostream& out, const ReleaseReq& x) {
 }
 
 void ReleaseResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
 }
 void ReleaseResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
 }
 void ReleaseResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
 }
 bool ReleaseResp::operator==(const ReleaseResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ReleaseResp& x) {
@@ -5270,19 +5270,19 @@ std::ostream& operator<<(std::ostream& out, const LogReadReq& x) {
 }
 
 void LogReadResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
     buf.packList<uint8_t>(value);
 }
 void LogReadResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
     buf.unpackList<uint8_t>(value);
 }
 void LogReadResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
     value.clear();
 }
 bool LogReadResp::operator==(const LogReadResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     if (value != rhs.value) { return false; };
     return true;
 }
@@ -5310,19 +5310,19 @@ std::ostream& operator<<(std::ostream& out, const NewLeaderReq& x) {
 }
 
 void NewLeaderResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
     lastReleased.pack(buf);
 }
 void NewLeaderResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
     lastReleased.unpack(buf);
 }
 void NewLeaderResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
     lastReleased = LogIdx();
 }
 bool NewLeaderResp::operator==(const NewLeaderResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     if ((LogIdx)this->lastReleased != (LogIdx)rhs.lastReleased) { return false; };
     return true;
 }
@@ -5354,16 +5354,16 @@ std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmReq& x) {
 }
 
 void NewLeaderConfirmResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
 }
 void NewLeaderConfirmResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
 }
 void NewLeaderConfirmResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
 }
 bool NewLeaderConfirmResp::operator==(const NewLeaderConfirmResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmResp& x) {
@@ -5394,19 +5394,19 @@ std::ostream& operator<<(std::ostream& out, const LogRecoveryReadReq& x) {
 }
 
 void LogRecoveryReadResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
     buf.packList<uint8_t>(value);
 }
 void LogRecoveryReadResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
     buf.unpackList<uint8_t>(value);
 }
 void LogRecoveryReadResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
     value.clear();
 }
 bool LogRecoveryReadResp::operator==(const LogRecoveryReadResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     if (value != rhs.value) { return false; };
     return true;
 }
@@ -5442,16 +5442,16 @@ std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteReq& x) {
 }
 
 void LogRecoveryWriteResp::pack(BincodeBuf& buf) const {
-    buf.packScalar<EggsError>(result);
+    buf.packScalar<TernError>(result);
 }
 void LogRecoveryWriteResp::unpack(BincodeBuf& buf) {
-    result = buf.unpackScalar<EggsError>();
+    result = buf.unpackScalar<TernError>();
 }
 void LogRecoveryWriteResp::clear() {
-    result = EggsError(0);
+    result = TernError(0);
 }
 bool LogRecoveryWriteResp::operator==(const LogRecoveryWriteResp& rhs) const {
-    if ((EggsError)this->result != (EggsError)rhs.result) { return false; };
+    if ((TernError)this->result != (TernError)rhs.result) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x) {
@@ -6005,7 +6005,7 @@ void ShardReqContainer::operator=(const ShardReqContainer& other) {
         setMakeFileTransient() = other.getMakeFileTransient();
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
     }
 }
 
@@ -6106,7 +6106,7 @@ size_t ShardReqContainer::packedSize() const {
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
         return sizeof(ShardMessageKind) + std::get<43>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
 }
 
@@ -6246,7 +6246,7 @@ void ShardReqContainer::pack(BincodeBuf& buf) const {
         std::get<43>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
 }
 
@@ -6625,16 +6625,16 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", x.kind());
     }
     return out;
 }
 
-const EggsError& ShardRespContainer::getError() const {
+const TernError& ShardRespContainer::getError() const {
     ALWAYS_ASSERT(_kind == ShardMessageKind::ERROR, "%s != %s", _kind, ShardMessageKind::ERROR);
     return std::get<0>(_data);
 }
-EggsError& ShardRespContainer::setError() {
+TernError& ShardRespContainer::setError() {
     _kind = ShardMessageKind::ERROR;
     auto& x = _data.emplace<0>();
     return x;
@@ -7188,7 +7188,7 @@ void ShardRespContainer::operator=(const ShardRespContainer& other) {
         setMakeFileTransient() = other.getMakeFileTransient();
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", other.kind());
     }
 }
 
@@ -7201,7 +7201,7 @@ void ShardRespContainer::operator=(ShardRespContainer&& other) {
 size_t ShardRespContainer::packedSize() const {
     switch (_kind) {
     case ShardMessageKind::ERROR:
-        return sizeof(ShardMessageKind) + sizeof(EggsError);
+        return sizeof(ShardMessageKind) + sizeof(TernError);
     case ShardMessageKind::LOOKUP:
         return sizeof(ShardMessageKind) + std::get<1>(_data).packedSize();
     case ShardMessageKind::STAT_FILE:
@@ -7291,7 +7291,7 @@ size_t ShardRespContainer::packedSize() const {
     case ShardMessageKind::MAKE_FILE_TRANSIENT:
         return sizeof(ShardMessageKind) + std::get<44>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
 }
 
@@ -7299,7 +7299,7 @@ void ShardRespContainer::pack(BincodeBuf& buf) const {
     buf.packScalar<ShardMessageKind>(_kind);
     switch (_kind) {
     case ShardMessageKind::ERROR:
-        buf.packScalar<EggsError>(std::get<0>(_data));
+        buf.packScalar<TernError>(std::get<0>(_data));
         break;
     case ShardMessageKind::LOOKUP:
         std::get<1>(_data).pack(buf);
@@ -7434,7 +7434,7 @@ void ShardRespContainer::pack(BincodeBuf& buf) const {
         std::get<44>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", _kind);
     }
 }
 
@@ -7442,7 +7442,7 @@ void ShardRespContainer::unpack(BincodeBuf& buf) {
     _kind = buf.unpackScalar<ShardMessageKind>();
     switch (_kind) {
     case ShardMessageKind::ERROR:
-        _data.emplace<0>(buf.unpackScalar<EggsError>());
+        _data.emplace<0>(buf.unpackScalar<TernError>());
         break;
     case ShardMessageKind::LOOKUP:
         _data.emplace<1>().unpack(buf);
@@ -7821,7 +7821,7 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad ShardMessageKind kind %s", x.kind());
     }
     return out;
 }
@@ -7928,7 +7928,7 @@ void CDCReqContainer::operator=(const CDCReqContainer& other) {
         setCdcSnapshot() = other.getCdcSnapshot();
         break;
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
     }
 }
 
@@ -7955,7 +7955,7 @@ size_t CDCReqContainer::packedSize() const {
     case CDCMessageKind::CDC_SNAPSHOT:
         return sizeof(CDCMessageKind) + std::get<6>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
 }
 
@@ -7984,7 +7984,7 @@ void CDCReqContainer::pack(BincodeBuf& buf) const {
         std::get<6>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
 }
 
@@ -8067,16 +8067,16 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
     }
     return out;
 }
 
-const EggsError& CDCRespContainer::getError() const {
+const TernError& CDCRespContainer::getError() const {
     ALWAYS_ASSERT(_kind == CDCMessageKind::ERROR, "%s != %s", _kind, CDCMessageKind::ERROR);
     return std::get<0>(_data);
 }
-EggsError& CDCRespContainer::setError() {
+TernError& CDCRespContainer::setError() {
     _kind = CDCMessageKind::ERROR;
     auto& x = _data.emplace<0>();
     return x;
@@ -8186,7 +8186,7 @@ void CDCRespContainer::operator=(const CDCRespContainer& other) {
         setCdcSnapshot() = other.getCdcSnapshot();
         break;
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", other.kind());
     }
 }
 
@@ -8199,7 +8199,7 @@ void CDCRespContainer::operator=(CDCRespContainer&& other) {
 size_t CDCRespContainer::packedSize() const {
     switch (_kind) {
     case CDCMessageKind::ERROR:
-        return sizeof(CDCMessageKind) + sizeof(EggsError);
+        return sizeof(CDCMessageKind) + sizeof(TernError);
     case CDCMessageKind::MAKE_DIRECTORY:
         return sizeof(CDCMessageKind) + std::get<1>(_data).packedSize();
     case CDCMessageKind::RENAME_FILE:
@@ -8215,7 +8215,7 @@ size_t CDCRespContainer::packedSize() const {
     case CDCMessageKind::CDC_SNAPSHOT:
         return sizeof(CDCMessageKind) + std::get<7>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
 }
 
@@ -8223,7 +8223,7 @@ void CDCRespContainer::pack(BincodeBuf& buf) const {
     buf.packScalar<CDCMessageKind>(_kind);
     switch (_kind) {
     case CDCMessageKind::ERROR:
-        buf.packScalar<EggsError>(std::get<0>(_data));
+        buf.packScalar<TernError>(std::get<0>(_data));
         break;
     case CDCMessageKind::MAKE_DIRECTORY:
         std::get<1>(_data).pack(buf);
@@ -8247,7 +8247,7 @@ void CDCRespContainer::pack(BincodeBuf& buf) const {
         std::get<7>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", _kind);
     }
 }
 
@@ -8255,7 +8255,7 @@ void CDCRespContainer::unpack(BincodeBuf& buf) {
     _kind = buf.unpackScalar<CDCMessageKind>();
     switch (_kind) {
     case CDCMessageKind::ERROR:
-        _data.emplace<0>(buf.unpackScalar<EggsError>());
+        _data.emplace<0>(buf.unpackScalar<TernError>());
         break;
     case CDCMessageKind::MAKE_DIRECTORY:
         _data.emplace<1>().unpack(buf);
@@ -8338,7 +8338,7 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad CDCMessageKind kind %s", x.kind());
     }
     return out;
 }
@@ -8697,7 +8697,7 @@ void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
         setUpdateBlockServicePath() = other.getUpdateBlockServicePath();
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
 }
 
@@ -8766,7 +8766,7 @@ size_t ShuckleReqContainer::packedSize() const {
     case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         return sizeof(ShuckleMessageKind) + std::get<27>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
 }
 
@@ -8858,7 +8858,7 @@ void ShuckleReqContainer::pack(BincodeBuf& buf) const {
         std::get<27>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
 }
 
@@ -9109,16 +9109,16 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
     }
     return out;
 }
 
-const EggsError& ShuckleRespContainer::getError() const {
+const TernError& ShuckleRespContainer::getError() const {
     ALWAYS_ASSERT(_kind == ShuckleMessageKind::ERROR, "%s != %s", _kind, ShuckleMessageKind::ERROR);
     return std::get<0>(_data);
 }
-EggsError& ShuckleRespContainer::setError() {
+TernError& ShuckleRespContainer::setError() {
     _kind = ShuckleMessageKind::ERROR;
     auto& x = _data.emplace<0>();
     return x;
@@ -9480,7 +9480,7 @@ void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
         setUpdateBlockServicePath() = other.getUpdateBlockServicePath();
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
     }
 }
 
@@ -9493,7 +9493,7 @@ void ShuckleRespContainer::operator=(ShuckleRespContainer&& other) {
 size_t ShuckleRespContainer::packedSize() const {
     switch (_kind) {
     case ShuckleMessageKind::ERROR:
-        return sizeof(ShuckleMessageKind) + sizeof(EggsError);
+        return sizeof(ShuckleMessageKind) + sizeof(TernError);
     case ShuckleMessageKind::LOCAL_SHARDS:
         return sizeof(ShuckleMessageKind) + std::get<1>(_data).packedSize();
     case ShuckleMessageKind::LOCAL_CDC:
@@ -9551,7 +9551,7 @@ size_t ShuckleRespContainer::packedSize() const {
     case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         return sizeof(ShuckleMessageKind) + std::get<28>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
 }
 
@@ -9559,7 +9559,7 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
     buf.packScalar<ShuckleMessageKind>(_kind);
     switch (_kind) {
     case ShuckleMessageKind::ERROR:
-        buf.packScalar<EggsError>(std::get<0>(_data));
+        buf.packScalar<TernError>(std::get<0>(_data));
         break;
     case ShuckleMessageKind::LOCAL_SHARDS:
         std::get<1>(_data).pack(buf);
@@ -9646,7 +9646,7 @@ void ShuckleRespContainer::pack(BincodeBuf& buf) const {
         std::get<28>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
     }
 }
 
@@ -9654,7 +9654,7 @@ void ShuckleRespContainer::unpack(BincodeBuf& buf) {
     _kind = buf.unpackScalar<ShuckleMessageKind>();
     switch (_kind) {
     case ShuckleMessageKind::ERROR:
-        _data.emplace<0>(buf.unpackScalar<EggsError>());
+        _data.emplace<0>(buf.unpackScalar<TernError>());
         break;
     case ShuckleMessageKind::LOCAL_SHARDS:
         _data.emplace<1>().unpack(buf);
@@ -9905,7 +9905,7 @@ std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
     }
     return out;
 }
@@ -10012,7 +10012,7 @@ void LogReqContainer::operator=(const LogReqContainer& other) {
         setLogRecoveryWrite() = other.getLogRecoveryWrite();
         break;
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", other.kind());
     }
 }
 
@@ -10039,7 +10039,7 @@ size_t LogReqContainer::packedSize() const {
     case LogMessageKind::LOG_RECOVERY_WRITE:
         return sizeof(LogMessageKind) + std::get<6>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", _kind);
     }
 }
 
@@ -10068,7 +10068,7 @@ void LogReqContainer::pack(BincodeBuf& buf) const {
         std::get<6>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", _kind);
     }
 }
 
@@ -10151,16 +10151,16 @@ std::ostream& operator<<(std::ostream& out, const LogReqContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", x.kind());
     }
     return out;
 }
 
-const EggsError& LogRespContainer::getError() const {
+const TernError& LogRespContainer::getError() const {
     ALWAYS_ASSERT(_kind == LogMessageKind::ERROR, "%s != %s", _kind, LogMessageKind::ERROR);
     return std::get<0>(_data);
 }
-EggsError& LogRespContainer::setError() {
+TernError& LogRespContainer::setError() {
     _kind = LogMessageKind::ERROR;
     auto& x = _data.emplace<0>();
     return x;
@@ -10270,7 +10270,7 @@ void LogRespContainer::operator=(const LogRespContainer& other) {
         setLogRecoveryWrite() = other.getLogRecoveryWrite();
         break;
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", other.kind());
     }
 }
 
@@ -10283,7 +10283,7 @@ void LogRespContainer::operator=(LogRespContainer&& other) {
 size_t LogRespContainer::packedSize() const {
     switch (_kind) {
     case LogMessageKind::ERROR:
-        return sizeof(LogMessageKind) + sizeof(EggsError);
+        return sizeof(LogMessageKind) + sizeof(TernError);
     case LogMessageKind::LOG_WRITE:
         return sizeof(LogMessageKind) + std::get<1>(_data).packedSize();
     case LogMessageKind::RELEASE:
@@ -10299,7 +10299,7 @@ size_t LogRespContainer::packedSize() const {
     case LogMessageKind::LOG_RECOVERY_WRITE:
         return sizeof(LogMessageKind) + std::get<7>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", _kind);
     }
 }
 
@@ -10307,7 +10307,7 @@ void LogRespContainer::pack(BincodeBuf& buf) const {
     buf.packScalar<LogMessageKind>(_kind);
     switch (_kind) {
     case LogMessageKind::ERROR:
-        buf.packScalar<EggsError>(std::get<0>(_data));
+        buf.packScalar<TernError>(std::get<0>(_data));
         break;
     case LogMessageKind::LOG_WRITE:
         std::get<1>(_data).pack(buf);
@@ -10331,7 +10331,7 @@ void LogRespContainer::pack(BincodeBuf& buf) const {
         std::get<7>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", _kind);
     }
 }
 
@@ -10339,7 +10339,7 @@ void LogRespContainer::unpack(BincodeBuf& buf) {
     _kind = buf.unpackScalar<LogMessageKind>();
     switch (_kind) {
     case LogMessageKind::ERROR:
-        _data.emplace<0>(buf.unpackScalar<EggsError>());
+        _data.emplace<0>(buf.unpackScalar<TernError>());
         break;
     case LogMessageKind::LOG_WRITE:
         _data.emplace<1>().unpack(buf);
@@ -10422,7 +10422,7 @@ std::ostream& operator<<(std::ostream& out, const LogRespContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad LogMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad LogMessageKind kind %s", x.kind());
     }
     return out;
 }
@@ -10544,12 +10544,12 @@ void ConstructFileEntry::unpack(BincodeBuf& buf) {
 }
 void ConstructFileEntry::clear() {
     type = uint8_t(0);
-    deadlineTime = EggsTime();
+    deadlineTime = TernTime();
     note.clear();
 }
 bool ConstructFileEntry::operator==(const ConstructFileEntry& rhs) const {
     if ((uint8_t)this->type != (uint8_t)rhs.type) { return false; };
-    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    if ((TernTime)this->deadlineTime != (TernTime)rhs.deadlineTime) { return false; };
     if (note != rhs.note) { return false; };
     return true;
 }
@@ -10602,14 +10602,14 @@ void SameDirectoryRenameEntry::clear() {
     dirId = InodeId();
     targetId = InodeId();
     oldName.clear();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
     newName.clear();
 }
 bool SameDirectoryRenameEntry::operator==(const SameDirectoryRenameEntry& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (oldName != rhs.oldName) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     if (newName != rhs.newName) { return false; };
     return true;
 }
@@ -10634,13 +10634,13 @@ void SoftUnlinkFileEntry::clear() {
     ownerId = InodeId();
     fileId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool SoftUnlinkFileEntry::operator==(const SoftUnlinkFileEntry& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileEntry& x) {
@@ -10690,13 +10690,13 @@ void CreateLockedCurrentEdgeEntry::clear() {
     dirId = InodeId();
     name.clear();
     targetId = InodeId();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
 }
 bool CreateLockedCurrentEdgeEntry::operator==(const CreateLockedCurrentEdgeEntry& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (name != rhs.name) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeEntry& x) {
@@ -10721,14 +10721,14 @@ void UnlockCurrentEdgeEntry::unpack(BincodeBuf& buf) {
 void UnlockCurrentEdgeEntry::clear() {
     dirId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
     targetId = InodeId();
     wasMoved = bool(0);
 }
 bool UnlockCurrentEdgeEntry::operator==(const UnlockCurrentEdgeEntry& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if ((bool)this->wasMoved != (bool)rhs.wasMoved) { return false; };
     return true;
@@ -10753,13 +10753,13 @@ void LockCurrentEdgeEntry::unpack(BincodeBuf& buf) {
 void LockCurrentEdgeEntry::clear() {
     dirId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
     targetId = InodeId();
 }
 bool LockCurrentEdgeEntry::operator==(const LockCurrentEdgeEntry& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     return true;
 }
@@ -10868,13 +10868,13 @@ void RemoveNonOwnedEdgeEntry::clear() {
     dirId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool RemoveNonOwnedEdgeEntry::operator==(const RemoveNonOwnedEdgeEntry& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x) {
@@ -10892,11 +10892,11 @@ void ScrapTransientFileEntry::unpack(BincodeBuf& buf) {
 }
 void ScrapTransientFileEntry::clear() {
     id = InodeId();
-    deadlineTime = EggsTime();
+    deadlineTime = TernTime();
 }
 bool ScrapTransientFileEntry::operator==(const ScrapTransientFileEntry& rhs) const {
     if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    if ((TernTime)this->deadlineTime != (TernTime)rhs.deadlineTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const ScrapTransientFileEntry& x) {
@@ -11108,13 +11108,13 @@ void RemoveOwnedSnapshotFileEdgeEntry::clear() {
     ownerId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
+    creationTime = TernTime();
 }
 bool RemoveOwnedSnapshotFileEdgeEntry::operator==(const RemoveOwnedSnapshotFileEdgeEntry& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const RemoveOwnedSnapshotFileEdgeEntry& x) {
@@ -11306,14 +11306,14 @@ void SameDirectoryRenameSnapshotEntry::clear() {
     dirId = InodeId();
     targetId = InodeId();
     oldName.clear();
-    oldCreationTime = EggsTime();
+    oldCreationTime = TernTime();
     newName.clear();
 }
 bool SameDirectoryRenameSnapshotEntry::operator==(const SameDirectoryRenameSnapshotEntry& rhs) const {
     if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (oldName != rhs.oldName) { return false; };
-    if ((EggsTime)this->oldCreationTime != (EggsTime)rhs.oldCreationTime) { return false; };
+    if ((TernTime)this->oldCreationTime != (TernTime)rhs.oldCreationTime) { return false; };
     if (newName != rhs.newName) { return false; };
     return true;
 }
@@ -11436,15 +11436,15 @@ void SameShardHardFileUnlinkEntry::clear() {
     ownerId = InodeId();
     targetId = InodeId();
     name.clear();
-    creationTime = EggsTime();
-    deadlineTime = EggsTime();
+    creationTime = TernTime();
+    deadlineTime = TernTime();
 }
 bool SameShardHardFileUnlinkEntry::operator==(const SameShardHardFileUnlinkEntry& rhs) const {
     if ((InodeId)this->ownerId != (InodeId)rhs.ownerId) { return false; };
     if ((InodeId)this->targetId != (InodeId)rhs.targetId) { return false; };
     if (name != rhs.name) { return false; };
-    if ((EggsTime)this->creationTime != (EggsTime)rhs.creationTime) { return false; };
-    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    if ((TernTime)this->creationTime != (TernTime)rhs.creationTime) { return false; };
+    if ((TernTime)this->deadlineTime != (TernTime)rhs.deadlineTime) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& x) {
@@ -11464,12 +11464,12 @@ void MakeFileTransientEntry::unpack(BincodeBuf& buf) {
 }
 void MakeFileTransientEntry::clear() {
     id = InodeId();
-    deadlineTime = EggsTime();
+    deadlineTime = TernTime();
     note.clear();
 }
 bool MakeFileTransientEntry::operator==(const MakeFileTransientEntry& rhs) const {
     if ((InodeId)this->id != (InodeId)rhs.id) { return false; };
-    if ((EggsTime)this->deadlineTime != (EggsTime)rhs.deadlineTime) { return false; };
+    if ((TernTime)this->deadlineTime != (TernTime)rhs.deadlineTime) { return false; };
     if (note != rhs.note) { return false; };
     return true;
 }
@@ -11868,7 +11868,7 @@ void ShardLogEntryContainer::operator=(const ShardLogEntryContainer& other) {
         setMakeFileTransient() = other.getMakeFileTransient();
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad ShardLogEntryKind kind %s", other.kind());
     }
 }
 
@@ -11943,7 +11943,7 @@ size_t ShardLogEntryContainer::packedSize() const {
     case ShardLogEntryKind::MAKE_FILE_TRANSIENT:
         return sizeof(ShardLogEntryKind) + std::get<30>(_data).packedSize();
     default:
-        throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
 }
 
@@ -12044,7 +12044,7 @@ void ShardLogEntryContainer::pack(BincodeBuf& buf) const {
         std::get<30>(_data).pack(buf);
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad ShardLogEntryKind kind %s", _kind);
     }
 }
 
@@ -12319,7 +12319,7 @@ std::ostream& operator<<(std::ostream& out, const ShardLogEntryContainer& x) {
         out << "EMPTY";
         break;
     default:
-        throw EGGS_EXCEPTION("bad ShardLogEntryKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad ShardLogEntryKind kind %s", x.kind());
     }
     return out;
 }

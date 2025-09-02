@@ -24,105 +24,105 @@
 MODULE_LICENSE("GPL");
 
 // general purpose wq this is where various async completion function run
-struct workqueue_struct* eggsfs_wq;
+struct workqueue_struct* ternfs_wq;
 
 // fast wq, we don't want delays in these operations
-struct workqueue_struct* eggsfs_fast_wq;
+struct workqueue_struct* ternfs_fast_wq;
 
-static int __init eggsfs_init(void) {
+static int __init ternfs_init(void) {
     int err;
 
-    eggsfs_debug("initializing module");
-    eggsfs_info("revision %s", eggsfs_revision);
+    ternfs_debug("initializing module");
+    ternfs_info("revision %s", ternfs_revision);
 
-    eggsfs_shard_init();
+    ternfs_shard_init();
 
-    eggsfs_wq = alloc_workqueue("eggsfs-wq", 0, 0);
-    if (!eggsfs_wq) { return -ENOMEM; }
+    ternfs_wq = alloc_workqueue("ternfs-wq", 0, 0);
+    if (!ternfs_wq) { return -ENOMEM; }
 
-    eggsfs_fast_wq = alloc_workqueue("eggsfs-fast-wq", 0, 0);
-    if (!eggsfs_fast_wq) { goto out_fast_wq; }
+    ternfs_fast_wq = alloc_workqueue("ternfs-fast-wq", 0, 0);
+    if (!ternfs_fast_wq) { goto out_fast_wq; }
 
-    err = eggsfs_rs_init();
+    err = ternfs_rs_init();
     if (err) { goto out_rs; }
 
-    err = eggsfs_policy_init();
+    err = ternfs_policy_init();
     if (err) { goto out_policy; }
 
-    err = eggsfs_block_service_init();
+    err = ternfs_block_service_init();
     if (err) { goto out_block_service; }
 
-    err = eggsfs_sysfs_init();
+    err = ternfs_sysfs_init();
     if (err) { goto out_sysfs; }
 
-    err = eggsfs_sysctl_init();
+    err = ternfs_sysctl_init();
     if (err) { goto out_sysctl; }
 
-    err = eggsfs_block_init();
+    err = ternfs_block_init();
     if (err) { goto out_block; }
 
-    err = eggsfs_span_init();
+    err = ternfs_span_init();
     if (err) { goto out_span; }
 
-    err = eggsfs_inode_init();
+    err = ternfs_inode_init();
     if (err) { goto out_inode; }
 
-    err = eggsfs_dir_init();
+    err = ternfs_dir_init();
     if (err) { goto out_dir; }
 
-    err = eggsfs_file_init();
+    err = ternfs_file_init();
     if (err) { goto out_file; }
 
-    err = eggsfs_fs_init();
+    err = ternfs_fs_init();
     if (err) { goto out_fs; }
 
-    err = eggsfs_debugfs_init();
+    err = ternfs_debugfs_init();
     if (err) { goto out_debugfs; }
 
     return 0;
 
 out_debugfs:
-    eggsfs_fs_exit();
+    ternfs_fs_exit();
 out_fs:
-    eggsfs_file_exit();
+    ternfs_file_exit();
 out_file:
-    eggsfs_dir_exit();
+    ternfs_dir_exit();
 out_dir:
-    eggsfs_inode_exit();
+    ternfs_inode_exit();
 out_inode:
-    eggsfs_span_exit();
+    ternfs_span_exit();
 out_span:
-    eggsfs_block_exit();
+    ternfs_block_exit();
 out_block:
-    eggsfs_sysctl_exit();
+    ternfs_sysctl_exit();
 out_sysctl:
-    eggsfs_sysfs_exit();
+    ternfs_sysfs_exit();
 out_sysfs:
-    eggsfs_block_service_exit();
+    ternfs_block_service_exit();
 out_block_service:
-    eggsfs_policy_exit();
+    ternfs_policy_exit();
 out_policy:
-    eggsfs_rs_exit();
+    ternfs_rs_exit();
 out_rs:
-    destroy_workqueue(eggsfs_fast_wq);
+    destroy_workqueue(ternfs_fast_wq);
 out_fast_wq:
-    destroy_workqueue(eggsfs_wq);
+    destroy_workqueue(ternfs_wq);
     return err;
 }
 
-static void __exit eggsfs_exit(void) {
-    eggsfs_debugfs_exit();
-    eggsfs_fs_exit();
-    eggsfs_file_exit();
-    eggsfs_dir_exit();
-    eggsfs_inode_exit();
-    eggsfs_span_exit();
-    eggsfs_block_exit();
-    eggsfs_sysctl_exit();
-    eggsfs_sysfs_exit();
-    eggsfs_block_service_exit();
-    eggsfs_policy_exit();
-    eggsfs_rs_exit();
+static void __exit ternfs_exit(void) {
+    ternfs_debugfs_exit();
+    ternfs_fs_exit();
+    ternfs_file_exit();
+    ternfs_dir_exit();
+    ternfs_inode_exit();
+    ternfs_span_exit();
+    ternfs_block_exit();
+    ternfs_sysctl_exit();
+    ternfs_sysfs_exit();
+    ternfs_block_service_exit();
+    ternfs_policy_exit();
+    ternfs_rs_exit();
 
     // tracepoint_synchronize_unregister() must be called before the end of
     // the module exit function to make sure there is no caller left using
@@ -130,11 +130,11 @@ static void __exit eggsfs_exit(void) {
     // probe call, make sure that probe removal and module unload are safe.
     tracepoint_synchronize_unregister();
 
-    eggsfs_debug("destroying workqueues");
-    destroy_workqueue(eggsfs_fast_wq);
-    destroy_workqueue(eggsfs_wq);
+    ternfs_debug("destroying workqueues");
+    destroy_workqueue(ternfs_fast_wq);
+    destroy_workqueue(ternfs_wq);
 }
 
-module_init(eggsfs_init);
-module_exit(eggsfs_exit);
+module_init(ternfs_init);
+module_exit(ternfs_exit);
 

@@ -17,9 +17,9 @@
 #define __sysctl_buffer __kernel
 #endif
 
-int eggsfs_debug_output = 0;
+int ternfs_debug_output = 0;
 
-#define eggsfs_do_sysctl(__callback) \
+#define ternfs_do_sysctl(__callback) \
     int ret; \
     ret = proc_dointvec_minmax(table, write, buffer, len, ppos); \
     if (ret) { \
@@ -31,29 +31,29 @@ int eggsfs_debug_output = 0;
     return 0;
 
 static int drop_fetch_block_sockets;
-static int eggsfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
-    eggsfs_do_sysctl(eggsfs_drop_fetch_block_sockets);
+static int ternfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+    ternfs_do_sysctl(ternfs_drop_fetch_block_sockets);
 }
 
 static int drop_write_block_sockets;
-static int eggsfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
-    eggsfs_do_sysctl(eggsfs_drop_write_block_sockets);
+static int ternfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+    ternfs_do_sysctl(ternfs_drop_write_block_sockets);
 }
 
-#define EGGSFS_CTL_ULONG(_name) \
+#define TERNFS_CTL_ULONG(_name) \
     { \
         .procname = #_name, \
-        .data = &eggsfs_##_name, \
-        .maxlen = sizeof(eggsfs_##_name), \
+        .data = &ternfs_##_name, \
+        .maxlen = sizeof(ternfs_##_name), \
         .mode = 0644, \
         .proc_handler = proc_doulongvec_minmax,  \
     }
 
-#define EGGSFS_CTL_UINT(_name) \
+#define TERNFS_CTL_UINT(_name) \
     { \
         .procname = #_name, \
-        .data = &eggsfs_##_name, \
-        .maxlen = sizeof(eggsfs_##_name), \
+        .data = &ternfs_##_name, \
+        .maxlen = sizeof(ternfs_##_name), \
         .mode = 0644, \
         .proc_handler = proc_douintvec,  \
     }
@@ -61,31 +61,31 @@ static int eggsfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int w
 static int bool_off = 0;
 static int bool_on = 1;
 
-#define EGGSFS_CTL_BOOL(_name) \
+#define TERNFS_CTL_BOOL(_name) \
     { \
         .procname = #_name, \
-        .data = &eggsfs_##_name, \
-        .maxlen = sizeof(eggsfs_##_name), \
+        .data = &ternfs_##_name, \
+        .maxlen = sizeof(ternfs_##_name), \
         .mode = 0644, \
         .proc_handler = proc_dointvec_minmax,  \
         .extra1 = &bool_off,  \
         .extra2 = &bool_on,  \
     }
 
-#define EGGSFS_CTL_INT_JIFFIES(_name) \
+#define TERNFS_CTL_INT_JIFFIES(_name) \
     { \
         .procname = #_name "_ms", \
-        .data = &eggsfs_##_name##_jiffies, \
-        .maxlen = sizeof(eggsfs_##_name##_jiffies), \
+        .data = &ternfs_##_name##_jiffies, \
+        .maxlen = sizeof(ternfs_##_name##_jiffies), \
         .mode = 0644, \
         .proc_handler = proc_dointvec_ms_jiffies,  \
     }
 
-static struct ctl_table eggsfs_cb_sysctls[] = {
+static struct ctl_table ternfs_cb_sysctls[] = {
     {
         .procname = "debug",
-        .data = &eggsfs_debug_output,
-        .maxlen = sizeof(eggsfs_debug_output),
+        .data = &ternfs_debug_output,
+        .maxlen = sizeof(ternfs_debug_output),
         .mode = 0644,
         .proc_handler = proc_dointvec_minmax,
         .extra1 = &bool_off,
@@ -94,12 +94,12 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
 
     {
         .procname = "rs_cpu_level",
-        .data = &eggsfs_rs_cpu_level,
-        .maxlen = sizeof(eggsfs_rs_cpu_level),
+        .data = &ternfs_rs_cpu_level,
+        .maxlen = sizeof(ternfs_rs_cpu_level),
         .mode = 0644,
         .proc_handler = proc_dointvec_minmax,
-        .extra1 = &eggsfs_rs_cpu_level_min,
-        .extra2 = &eggsfs_rs_cpu_level_max,
+        .extra1 = &ternfs_rs_cpu_level_min,
+        .extra2 = &ternfs_rs_cpu_level_max,
     },
 
     {
@@ -107,7 +107,7 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .data = &drop_fetch_block_sockets,
         .maxlen = sizeof(int),
         .mode = 0200,
-        .proc_handler = eggsfs_drop_fetch_block_sockets_sysctl,
+        .proc_handler = ternfs_drop_fetch_block_sockets_sysctl,
     },
 
     {
@@ -115,82 +115,73 @@ static struct ctl_table eggsfs_cb_sysctls[] = {
         .data = &drop_write_block_sockets,
         .maxlen = sizeof(int),
         .mode = 0200,
-        .proc_handler = eggsfs_drop_write_block_sockets_sysctl,
+        .proc_handler = ternfs_drop_write_block_sockets_sysctl,
     },
 
-    EGGSFS_CTL_INT_JIFFIES(dir_getattr_refresh_time),
-    EGGSFS_CTL_INT_JIFFIES(dir_dentry_refresh_time),
-    EGGSFS_CTL_INT_JIFFIES(file_getattr_refresh_time),
-    EGGSFS_CTL_INT_JIFFIES(shuckle_refresh_time),
-    EGGSFS_CTL_INT_JIFFIES(initial_shard_timeout),
-    EGGSFS_CTL_INT_JIFFIES(max_shard_timeout),
-    EGGSFS_CTL_INT_JIFFIES(overall_shard_timeout),
-    EGGSFS_CTL_INT_JIFFIES(initial_cdc_timeout),
-    EGGSFS_CTL_INT_JIFFIES(max_cdc_timeout),
-    EGGSFS_CTL_INT_JIFFIES(overall_cdc_timeout),
-    EGGSFS_CTL_INT_JIFFIES(block_service_connect_timeout),
+    TERNFS_CTL_INT_JIFFIES(dir_getattr_refresh_time),
+    TERNFS_CTL_INT_JIFFIES(dir_dentry_refresh_time),
+    TERNFS_CTL_INT_JIFFIES(file_getattr_refresh_time),
+    TERNFS_CTL_INT_JIFFIES(shuckle_refresh_time),
+    TERNFS_CTL_INT_JIFFIES(initial_shard_timeout),
+    TERNFS_CTL_INT_JIFFIES(max_shard_timeout),
+    TERNFS_CTL_INT_JIFFIES(overall_shard_timeout),
+    TERNFS_CTL_INT_JIFFIES(initial_cdc_timeout),
+    TERNFS_CTL_INT_JIFFIES(max_cdc_timeout),
+    TERNFS_CTL_INT_JIFFIES(overall_cdc_timeout),
+    TERNFS_CTL_INT_JIFFIES(block_service_connect_timeout),
 
-    EGGSFS_CTL_UINT(readahead_pages),
-    EGGSFS_CTL_UINT(max_write_span_attempts),
-    EGGSFS_CTL_UINT(atime_update_interval_sec),
-    EGGSFS_CTL_UINT(file_io_timeout_sec),
-    EGGSFS_CTL_UINT(file_io_retry_refresh_span_interval_sec),
-    EGGSFS_CTL_UINT(disable_ftruncate),
+    TERNFS_CTL_UINT(readahead_pages),
+    TERNFS_CTL_UINT(max_write_span_attempts),
+    TERNFS_CTL_UINT(atime_update_interval_sec),
+    TERNFS_CTL_UINT(file_io_timeout_sec),
+    TERNFS_CTL_UINT(file_io_retry_refresh_span_interval_sec),
+    TERNFS_CTL_UINT(disable_ftruncate),
 
     {
         .procname = "mtu",
-        .data = &eggsfs_mtu,
-        .maxlen = sizeof(eggsfs_mtu),
+        .data = &ternfs_mtu,
+        .maxlen = sizeof(ternfs_mtu),
         .mode = 0644,
         .proc_handler = proc_douintvec_minmax,
-        .extra1 = &eggsfs_default_mtu,
-        .extra2 = &eggsfs_max_mtu,
+        .extra1 = &ternfs_default_mtu,
+        .extra2 = &ternfs_max_mtu,
     },
 
     {}
 };
 
-static struct ctl_table eggsfs_cb_sysctl_dir[] = {
+static struct ctl_table ternfs_cb_sysctl_dir[] = {
     {
         .procname = "eggsfs",
         .mode = 0555,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-        .child = eggsfs_cb_sysctls,
-#endif
+        .child = ternfs_cb_sysctls,
     },
     { }
 };
 
-static struct ctl_table eggsfs_cb_sysctl_root[] = {
+static struct ctl_table ternfs_cb_sysctl_root[] = {
     {
         .procname = "fs",
         .mode = 0555,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-        .child = eggsfs_cb_sysctl_dir,
-#endif
+        .child = ternfs_cb_sysctl_dir,
     },
     { }
 };
 
-static struct ctl_table_header* eggsfs_callback_sysctl_table;
+static struct ctl_table_header* ternfs_callback_sysctl_table;
 
-int __init eggsfs_sysctl_init(void) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-    eggsfs_callback_sysctl_table = register_sysctl_table(eggsfs_cb_sysctl_root);
-#else
-    eggsfs_callback_sysctl_table = register_sysctl("fs/eggsfs", eggsfs_cb_sysctls);
-#endif
-
-    if (eggsfs_callback_sysctl_table == NULL) {
+int __init ternfs_sysctl_init(void) {
+    ternfs_callback_sysctl_table = register_sysctl_table(ternfs_cb_sysctl_root);
+    if (ternfs_callback_sysctl_table == NULL) {
         return -ENOMEM;
     }
     return 0;
 }
 
-void __cold eggsfs_sysctl_exit(void) {
-    eggsfs_debug("sysctl exit");
+void __cold ternfs_sysctl_exit(void) {
+    ternfs_debug("sysctl exit");
 
-    unregister_sysctl_table(eggsfs_callback_sysctl_table);
-    eggsfs_callback_sysctl_table = NULL;
+    unregister_sysctl_table(ternfs_callback_sysctl_table);
+    ternfs_callback_sysctl_table = NULL;
 }
 

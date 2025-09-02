@@ -306,7 +306,7 @@ func (l *Logger) RaiseHardwareEvent(failureDomain string, blockServiceID string,
 			Hostname:  fmt.Sprintf("%REDACTED", failureDomain),
 			Timestamp: time.Now(),
 			Component: DiskComponent,
-			Location:  "EggsFS",
+			Location:  "TernFS",
 			Message:   string(msgData),
 		}
 		err = l.heClient.SendHardwareEvent(evt)

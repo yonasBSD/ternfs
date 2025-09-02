@@ -2,8 +2,8 @@ package client
 
 import (
 	"testing"
-	"xtx/eggsfs/assert"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/assert"
+	"xtx/ternfs/msgs"
 )
 
 func TestLRU(t *testing.T) {

@@ -5,7 +5,7 @@ include(ExternalProject)
 set(CMAKE_C_COMPILER clang)
 set(CMAKE_CXX_COMPILER clang++)
 
-project(eggsfs)
+project(ternfs)
 
 # Yes, this means that it won't work for multi-configuration stuff, which is fine for now.
 if(NOT CMAKE_BUILD_TYPE)
@@ -34,10 +34,10 @@ add_compile_options("$<$<NOT:$<CONFIG:valgrind>>:-march=skylake;-mgfni>")
 
 # performance/debug stuff
 add_compile_options("$<$<NOT:$<CONFIG:debug,alpinedebug>>:-O3>")
-add_compile_options("$<$<CONFIG:debug,alpinedebug>:-Og;-DEGGS_DEBUG>")
+add_compile_options("$<$<CONFIG:debug,alpinedebug>:-Og;-DTERN_DEBUG>")
 
 # We build the release build statically in Alpine
-add_compile_options("$<$<CONFIG:alpine,alpinedebug>:-DEGGS_ALPINE>")
+add_compile_options("$<$<CONFIG:alpine,alpinedebug>:-DTERN_ALPINE>")
 add_link_options("$<$<CONFIG:alpine,alpinedebug>:-static>")
 add_link_options("$<$<NOT:$<CONFIG:alpine,alpinedebug>>:-no-pie>")
 
@@ -49,7 +49,7 @@ add_link_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 # we only use jemalloc in release builds, alpine doesn't seem to
 # like jemalloc very much, and sanitizer etc works better without it
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "release")
-    set(EGGSFS_JEMALLOC_LIBS "jemalloc")
+    set(TERNFS_JEMALLOC_LIBS "jemalloc")
 endif()
 
 include(thirdparty.cmake)

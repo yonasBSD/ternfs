@@ -196,35 +196,35 @@ void SharedRocksDB::dumpRocksDBStatistics() {
 
 namespace fs = std::filesystem;
 
-EggsError SharedRocksDB::snapshot(const std::string& path) {
+TernError SharedRocksDB::snapshot(const std::string& path) {
     std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     LOG_INFO(_env, "Creating snapshot in  %s", path);
     std::error_code ec;
     if (fs::is_directory(path, ec)) {
         LOG_INFO(_env, "Snapshot exists in  %s", path);
-        return EggsError::NO_ERROR;
+        return TernError::NO_ERROR;
     }
     if (fs::exists(path, ec)) {
         LOG_ERROR(_env, "Provided path exists and is not an existing snapshot  %s", path);
-        return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+        return TernError::CANNOT_CREATE_DB_SNAPSHOT;
     }
     std::string tmpPath;
     {
         fs::path p{path};
         if (!p.has_parent_path()) {
             LOG_ERROR(_env, "Path %s does not have parent", path);
-            return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+            return TernError::CANNOT_CREATE_DB_SNAPSHOT;
         }
         p = p.parent_path();
         if (!fs::is_directory(p, ec)) {
             LOG_ERROR(_env, "Parent path of %s is not a directory", path);
-            return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+            return TernError::CANNOT_CREATE_DB_SNAPSHOT;
         }
-        p /= "tmp-snapshot-" + std::to_string(eggsNow().ns);
+        p /= "tmp-snapshot-" + std::to_string(ternNow().ns);
         if (fs::exists(p, ec)) {
             LOG_ERROR(_env, "Tmp path exists %s", p.generic_string());
-            return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+            return TernError::CANNOT_CREATE_DB_SNAPSHOT;
         }
         tmpPath = p.generic_string();
     }
@@ -233,7 +233,7 @@ EggsError SharedRocksDB::snapshot(const std::string& path) {
     auto status = rocksdb::Checkpoint::Create(_db.get(), (rocksdb::Checkpoint**)(&checkpoint));
     if (!status.ok()) {
         LOG_ERROR(_env, "Failed creating checkpint (%s)", status.ToString());
-        return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+        return TernError::CANNOT_CREATE_DB_SNAPSHOT;
     }
 
     status = checkpoint->CreateCheckpoint(tmpPath);
@@ -241,14 +241,14 @@ EggsError SharedRocksDB::snapshot(const std::string& path) {
         LOG_ERROR(_env, "Failed storing checkpint (%s)", status.ToString());
         // try to cleanup tmpPath
         fs::remove_all(tmpPath, ec);
-        return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+        return TernError::CANNOT_CREATE_DB_SNAPSHOT;
     }
     fs::rename(tmpPath, path, ec);
     if (ec) {
         LOG_ERROR(_env, "Failed moving temp dir to requested path error (%s)", ec.message());
         // try to cleanup tmpPath
         fs::remove_all(tmpPath, ec);
-        return EggsError::CANNOT_CREATE_DB_SNAPSHOT;
+        return TernError::CANNOT_CREATE_DB_SNAPSHOT;
     }
-    return EggsError::NO_ERROR;
+    return TernError::NO_ERROR;
 }

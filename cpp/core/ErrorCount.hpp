@@ -10,13 +10,13 @@
 struct ErrorCount {
     std::vector<std::atomic<uint64_t>> count;
 
-    ErrorCount() : count(maxEggsError) {
+    ErrorCount() : count(maxTernError) {
         for (int i = 0; i < count.size(); i++) {
             count[i].store(0);
         }
     }
 
-    void add(EggsError err) {
+    void add(TernError err) {
         count[(int)err]++;
     }
 

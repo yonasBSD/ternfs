@@ -1,12 +1,12 @@
-#ifndef _EGGSFS_SYSCTL_H
-#define _EGGSFS_SYSCTL_H
+#ifndef _TERNFS_SYSCTL_H
+#define _TERNFS_SYSCTL_H
 
 #include <linux/init.h>
 
-extern int eggsfs_debug_output;
+extern int ternfs_debug_output;
 
-int __init eggsfs_sysctl_init(void);
-void __cold eggsfs_sysctl_exit(void);
+int __init ternfs_sysctl_init(void);
+void __cold ternfs_sysctl_exit(void);
 
 #endif
 

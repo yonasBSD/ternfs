@@ -65,5 +65,4 @@ std::pair<int, std::string> fetchLocalShards(
     std::array<ShardInfo, 256>& shards
 );
 
-const std::string defaultShuckleAddress = "REDACTED";
 bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shuckleHost, uint16_t& shucklePort);

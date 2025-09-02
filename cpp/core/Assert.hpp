@@ -15,7 +15,7 @@
         throw AssertionException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), #expr, ## __VA_ARGS__);  \
     } while (false)
 
-#if defined(EGGS_DEBUG)
+#if defined(TERN_DEBUG)
 
     #define ASSERT(expr, ...) ALWAYS_ASSERT(expr, ## __VA_ARGS__)
 

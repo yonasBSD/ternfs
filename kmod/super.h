@@ -1,20 +1,20 @@
-#ifndef _EGGSFS_SUPER_H
-#define _EGGSFS_SUPER_H
+#ifndef _TERNFS_SUPER_H
+#define _TERNFS_SUPER_H
 
 #include <linux/inet.h>
 
 #include "net.h"
 #include "shuckle.h"
 
-extern int eggsfs_shuckle_refresh_time_jiffies;
-extern unsigned int eggsfs_readahead_pages;
+extern int ternfs_shuckle_refresh_time_jiffies;
+extern unsigned int ternfs_readahead_pages;
 
 // We store addresses as atomics so that we can
 // easily refresh them.
-struct eggsfs_fs_info {
-    struct eggsfs_shuckle_addr shuckle_addr;
+struct ternfs_fs_info {
+    struct ternfs_shuckle_addr shuckle_addr;
 
-    struct eggsfs_metadata_socket sock;
+    struct ternfs_metadata_socket sock;
 
     atomic64_t shard_addrs1[256];
     atomic64_t shard_addrs2[256];
@@ -34,17 +34,17 @@ struct eggsfs_fs_info {
     umode_t dmask;
 };
 
-int __init eggsfs_fs_init(void);
-void __cold eggsfs_fs_exit(void);
+int __init ternfs_fs_init(void);
+void __cold ternfs_fs_exit(void);
 
-static inline u64 eggsfs_mk_addr(u32 ip, u16 port) {
+static inline u64 ternfs_mk_addr(u32 ip, u16 port) {
     return ((u64)port << 32) | (u64)ip;
 }
 
-static inline __be32 eggsfs_get_addr_ip(u64 v) {
+static inline __be32 ternfs_get_addr_ip(u64 v) {
     return htonl(v&((1ull<<32)-1));
 }
-static inline __be16 eggsfs_get_addr_port(u64 v) {
+static inline __be16 ternfs_get_addr_port(u64 v) {
     return htons(v >> 32);
 }
 

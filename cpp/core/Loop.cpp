@@ -152,7 +152,7 @@ void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loop
                             throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_getname_np");
                         }
                     }
-                    throw EGGS_EXCEPTION("loop %s has not terminated in time, aborting", name);
+                    throw TERN_EXCEPTION("loop %s has not terminated in time, aborting", name);
                 }
                 throw EXPLICIT_SYSCALL_EXCEPTION(ret, "pthread_timedjoin_np");
             }

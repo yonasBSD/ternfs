@@ -11,35 +11,35 @@
 #include "super.h"
 #include "net_compat.h"
 
-void eggsfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
-    put_unaligned_le32(EGGSFS_SHUCKLE_REQ_PROTOCOL_VERSION, buf); buf += 4;
+void ternfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
+    put_unaligned_le32(TERNFS_SHUCKLE_REQ_PROTOCOL_VERSION, buf); buf += 4;
     // automatically include the kind, much nicer for the caller
     put_unaligned_le32(req_len+1, buf); buf += 4;
     *(u8*)buf = req_kind; buf++;
 }
 
-int eggsfs_read_shuckle_resp_header(char* buf, u32* resp_len, u8* resp_kind) {
+int ternfs_read_shuckle_resp_header(char* buf, u32* resp_len, u8* resp_kind) {
     u32 protocol = get_unaligned_le32(buf); buf += 4;
-    if (protocol != EGGSFS_SHUCKLE_RESP_PROTOCOL_VERSION) {
-        eggsfs_warn("bad shuckle protocol, expected 0x%08x, got 0x%08x", EGGSFS_SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
+    if (protocol != TERNFS_SHUCKLE_RESP_PROTOCOL_VERSION) {
+        ternfs_warn("bad shuckle protocol, expected 0x%08x, got 0x%08x", TERNFS_SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
         return -EINVAL;
     }
     *resp_len = get_unaligned_le32(buf); buf += 4;
     if (*resp_len == 0) {
-        eggsfs_warn("unexpected zero-length shuckle response (the kind should at least be there)");
+        ternfs_warn("unexpected zero-length shuckle response (the kind should at least be there)");
         return -EINVAL;
     }
     *resp_kind = *(u8*)buf; buf++;
-    eggsfs_debug("resp_len=%d, resp_kind=0x%02x", *resp_len, (int)*resp_kind);
+    ternfs_debug("resp_len=%d, resp_kind=0x%02x", *resp_len, (int)*resp_kind);
     (*resp_len)--; // exclude the kind, it's much nicer for the caller
     return 0;
 }
 
-static int eggsfs_parse_ipv4_addr(const char* str, int len, struct sockaddr_in* addr) {
+static int ternfs_parse_ipv4_addr(const char* str, int len, struct sockaddr_in* addr) {
     int err;
     const char* addr_end;
 
-    eggsfs_debug("parsing shuckle address %*pE", len, str);
+    ternfs_debug("parsing shuckle address %*pE", len, str);
 
     // parse device, which is the shuckle address in 0.0.0.0:0 form (ipv4, port)
 
@@ -52,37 +52,37 @@ static int eggsfs_parse_ipv4_addr(const char* str, int len, struct sockaddr_in* 
         char port_str[6]; // max port + terminating byte
         int port_len = len - (addr_end-str) - 1;
         if (port_len <= 0 || port_len >= sizeof(port_str)) {
-            eggsfs_warn("bad port in address %*pE (port_len=%d)", len, str, port_len);
+            ternfs_warn("bad port in address %*pE (port_len=%d)", len, str, port_len);
             return -EINVAL;
         }
         memcpy(port_str, addr_end+1, port_len);
         port_str[port_len] = '\0';
         err = kstrtou16(port_str, 10, &port);
         if (err < 0) {
-            eggsfs_warn("bad port in address %*pE", len, str);
+            ternfs_warn("bad port in address %*pE", len, str);
             return err;
         }
         if (port == 0) {
-            eggsfs_warn("zero port in address %*pE", len, str);
+            ternfs_warn("zero port in address %*pE", len, str);
             return -EINVAL;
         }
         addr->sin_port = htons(port);
     }
 
     addr->sin_family = AF_INET;
-    eggsfs_debug("parsed shuckle addr %pI4:%d", &addr->sin_addr, port);
+    ternfs_debug("parsed shuckle addr %pI4:%d", &addr->sin_addr, port);
 
     return 0;
 }
 
-static int eggsfs_resolve_domain_name_addr(struct eggsfs_shuckle_addr* saddr, struct sockaddr_in* addr) {
+static int ternfs_resolve_domain_name_addr(struct ternfs_shuckle_addr* saddr, struct sockaddr_in* addr) {
     const char* domain_name_end = strchr(saddr->addr, ':');
     if (domain_name_end == NULL) {
-        eggsfs_info("shuckle address %s does not have port", saddr->addr);
+        ternfs_info("shuckle address %s does not have port", saddr->addr);
         return -EINVAL;
     }
 
-    eggsfs_debug("resolving address %s", saddr->addr);
+    ternfs_debug("resolving address %s", saddr->addr);
 
     char* ip_addr = NULL;
     int ip_len = dns_query(
@@ -96,13 +96,13 @@ static int eggsfs_resolve_domain_name_addr(struct eggsfs_shuckle_addr* saddr, st
         false
     );
     if (ip_len < 0) {
-        eggsfs_info("could not resolve shuckle address %s: %d", saddr->addr, ip_len);
+        ternfs_info("could not resolve shuckle address %s: %d", saddr->addr, ip_len);
         return ip_len;
     }
     size_t addrsz = rpc_pton(saddr->net, ip_addr, ip_len, (struct sockaddr*)addr, sizeof(*addr));
     kfree(ip_addr);
     if (addrsz == 0) {
-        eggsfs_info("could not parse DNS query result for shuckle address %s: %d", saddr->addr, ip_len);
+        ternfs_info("could not parse DNS query result for shuckle address %s: %d", saddr->addr, ip_len);
         return -EINVAL;
     }
 
@@ -115,41 +115,41 @@ static int eggsfs_resolve_domain_name_addr(struct eggsfs_shuckle_addr* saddr, st
     }
     addr->sin_port = htons(port);
 
-    eggsfs_debug("resolved address %s to %pI4:%d", saddr->addr, &addr->sin_addr, ntohs(addr->sin_port));
+    ternfs_debug("resolved address %s to %pI4:%d", saddr->addr, &addr->sin_addr, ntohs(addr->sin_port));
 
     return 0;
 }
 
-int eggsfs_process_shuckle_addr(struct eggsfs_shuckle_addr* saddr, struct sockaddr_in* addr1, struct sockaddr_in* addr2) {
+int ternfs_process_shuckle_addr(struct ternfs_shuckle_addr* saddr, struct sockaddr_in* addr1, struct sockaddr_in* addr2) {
     memset(addr1, 0, sizeof(*addr1));
     memset(addr2, 0, sizeof(*addr2));
 
     size_t addr_len = strlen(saddr->addr);
     const char* addr1_end = strchr(saddr->addr, ',');
     if (addr1_end == NULL) { // only one address
-        int err = eggsfs_parse_ipv4_addr(saddr->addr, addr_len, addr1);
+        int err = ternfs_parse_ipv4_addr(saddr->addr, addr_len, addr1);
         if (err == -EINVAL) {
-            return eggsfs_resolve_domain_name_addr(saddr, addr1);
+            return ternfs_resolve_domain_name_addr(saddr, addr1);
         }
         return err;
     } else if (saddr->addr + addr_len == addr1_end) {
         return -EINVAL; // terminated with :
     } else {
-        int err = eggsfs_parse_ipv4_addr(saddr->addr, addr1_end - saddr->addr, addr1);
+        int err = ternfs_parse_ipv4_addr(saddr->addr, addr1_end - saddr->addr, addr1);
         if (err) {
             return err;
         }
-        return eggsfs_parse_ipv4_addr(addr1_end+1, addr_len - (addr1_end-saddr->addr) - 1, addr2);
+        return ternfs_parse_ipv4_addr(addr1_end+1, addr_len - (addr1_end-saddr->addr) - 1, addr2);
     }
 }
 
-int eggsfs_create_shuckle_socket(struct eggsfs_shuckle_addr* saddr, struct socket** sock) {
+int ternfs_create_shuckle_socket(struct ternfs_shuckle_addr* saddr, struct socket** sock) {
     int err;
 
     struct sockaddr_in addrs[2];
     memset(&addrs, 0, sizeof(addrs));
 
-    err = eggsfs_process_shuckle_addr(saddr, &addrs[0], &addrs[1]);
+    err = ternfs_process_shuckle_addr(saddr, &addrs[0], &addrs[1]);
     if (err) {
         return err;
     }
@@ -157,7 +157,7 @@ int eggsfs_create_shuckle_socket(struct eggsfs_shuckle_addr* saddr, struct socke
     // create socket
     err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, sock);
     if (err < 0) {
-        eggsfs_warn("could not create shuckle socket: %d", err);
+        ternfs_warn("could not create shuckle socket: %d", err);
         return err;
     }
 
@@ -166,19 +166,19 @@ int eggsfs_create_shuckle_socket(struct eggsfs_shuckle_addr* saddr, struct socke
     tv.tv_usec = 0;
     err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, &tv, sizeof(tv));
     if (err < 0) {
-        eggsfs_warn("could not set receive timeout on shuckle socket: %d", err);
+        ternfs_warn("could not set receive timeout on shuckle socket: %d", err);
         goto out_sock;
     }
     err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, &tv, sizeof(tv));
     if (err < 0) {
-        eggsfs_warn("could not set send timeout on shuckle socket: %d", err);
+        ternfs_warn("could not set send timeout on shuckle socket: %d", err);
         goto out_sock;
     }
 
     int syn_count = 3;
     err = COMPAT_SET_SOCKOPT(*sock, SOL_TCP, TCP_SYNCNT, &syn_count, sizeof(syn_count));
     if (err < 0) {
-        eggsfs_warn("could not set TCP_SYNCNT=%d on shuckle socket: %d", syn_count, err);
+        ternfs_warn("could not set TCP_SYNCNT=%d on shuckle socket: %d", syn_count, err);
         goto out_sock;
     }
 
@@ -188,16 +188,16 @@ int eggsfs_create_shuckle_socket(struct eggsfs_shuckle_addr* saddr, struct socke
         int ix = i%2;
         struct sockaddr_in* addr = &addrs[ix];
         if (addr->sin_port == 0) {
-            eggsfs_debug("skipping zero port address val %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
+            ternfs_debug("skipping zero port address val %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
             continue;
         }
-        eggsfs_debug("connecting to address %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
+        ternfs_debug("connecting to address %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
         err = kernel_connect(*sock, (struct sockaddr*)addr, sizeof(*addr), 0);
         if (err < 0) {
-            eggsfs_warn("could not connect to shuckle addr %pI4:%d, might retry", &addr->sin_addr, ntohs(addr->sin_port));
+            ternfs_warn("could not connect to shuckle addr %pI4:%d, might retry", &addr->sin_addr, ntohs(addr->sin_port));
             continue;
         }
-        eggsfs_debug("connected to shuckle");
+        ternfs_debug("connected to shuckle");
 
         return 0;
     }

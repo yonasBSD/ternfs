@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/msgs"
 )
 
 type dirInfoKey struct {
@@ -29,7 +29,7 @@ type dirInfoCacheLruSlot struct {
 
 type dirInfoCacheInheritedFrom struct {
 	id       msgs.InodeId
-	cachedAt msgs.EggsTime
+	cachedAt msgs.TernTime
 	lruSlot  int32
 }
 
@@ -110,7 +110,7 @@ type dirInfoCacheBucket struct {
 }
 
 type cachedDirInfoEntry struct {
-	cachedAt msgs.EggsTime
+	cachedAt msgs.TernTime
 	entry    msgs.IsDirectoryInfoEntry
 	packed   [256]byte // for easy comparison
 }

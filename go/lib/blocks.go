@@ -2,7 +2,7 @@ package lib
 
 import (
 	"encoding/binary"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/msgs"
 )
 
 func BlockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {

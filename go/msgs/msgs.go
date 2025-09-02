@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/rs"
+	"xtx/ternfs/bincode"
+	"xtx/ternfs/rs"
 )
 
 //go:generate go run ../bincodegen
@@ -31,7 +31,7 @@ type ShardId uint8
 type ReplicaId uint8
 type ShardReplicaId uint16
 type StorageClass uint8
-type EggsTime uint64
+type TernTime uint64
 type BlockId uint64
 type BlockServiceId uint64
 type BlockServiceFlags uint8
@@ -92,31 +92,31 @@ const LOG_RESP_PROTOCOL_VERSION uint32 = 0x1474f4c
 const ERROR_KIND uint8 = 0
 
 const (
-	EGGSFS_BLOCK_SERVICE_EMPTY          BlockServiceFlags = 0x0
-	EGGSFS_BLOCK_SERVICE_STALE          BlockServiceFlags = 0x1
-	EGGSFS_BLOCK_SERVICE_NO_READ        BlockServiceFlags = 0x2
-	EGGSFS_BLOCK_SERVICE_NO_WRITE       BlockServiceFlags = 0x4
-	EGGSFS_BLOCK_SERVICE_DECOMMISSIONED BlockServiceFlags = 0x8
-	EGGSFS_BLOCK_SERVICE_MASK_ALL                         = 0xf
+	TERNFS_BLOCK_SERVICE_EMPTY          BlockServiceFlags = 0x0
+	TERNFS_BLOCK_SERVICE_STALE          BlockServiceFlags = 0x1
+	TERNFS_BLOCK_SERVICE_NO_READ        BlockServiceFlags = 0x2
+	TERNFS_BLOCK_SERVICE_NO_WRITE       BlockServiceFlags = 0x4
+	TERNFS_BLOCK_SERVICE_DECOMMISSIONED BlockServiceFlags = 0x8
+	TERNFS_BLOCK_SERVICE_MASK_ALL                         = 0xf
 )
 
 const (
-	EGGS_PAGE_SIZE          uint32 = 1 << 12 // 4KB
-	EGGS_PAGE_WITH_CRC_SIZE uint32 = EGGS_PAGE_SIZE + 4
+	TERN_PAGE_SIZE          uint32 = 1 << 12 // 4KB
+	TERN_PAGE_WITH_CRC_SIZE uint32 = TERN_PAGE_SIZE + 4
 )
 
 func BlockServiceFlagFromName(n string) (BlockServiceFlags, error) {
 	switch n {
 	case "0":
-		return EGGSFS_BLOCK_SERVICE_EMPTY, nil
+		return TERNFS_BLOCK_SERVICE_EMPTY, nil
 	case "STALE":
-		return EGGSFS_BLOCK_SERVICE_STALE, nil
+		return TERNFS_BLOCK_SERVICE_STALE, nil
 	case "NO_READ":
-		return EGGSFS_BLOCK_SERVICE_NO_READ, nil
+		return TERNFS_BLOCK_SERVICE_NO_READ, nil
 	case "NO_WRITE":
-		return EGGSFS_BLOCK_SERVICE_NO_WRITE, nil
+		return TERNFS_BLOCK_SERVICE_NO_WRITE, nil
 	case "DECOMMISSIONED":
-		return EGGSFS_BLOCK_SERVICE_DECOMMISSIONED, nil
+		return TERNFS_BLOCK_SERVICE_DECOMMISSIONED, nil
 	default:
 		panic(fmt.Errorf("unknown blockservice flag %q", n))
 	}
@@ -143,16 +143,16 @@ func (flags BlockServiceFlags) String() string {
 		return "0"
 	}
 	var ret []string
-	if flags&EGGSFS_BLOCK_SERVICE_STALE != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_STALE != 0 {
 		ret = append(ret, "STALE")
 	}
-	if flags&EGGSFS_BLOCK_SERVICE_NO_READ != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_NO_READ != 0 {
 		ret = append(ret, "NO_READ")
 	}
-	if flags&EGGSFS_BLOCK_SERVICE_NO_WRITE != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_NO_WRITE != 0 {
 		ret = append(ret, "NO_WRITE")
 	}
-	if flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
 		ret = append(ret, "DECOMMISSIONED")
 	}
 	return strings.Join(ret, "|")
@@ -163,27 +163,27 @@ func (flags BlockServiceFlags) ShortString() string {
 		return "0"
 	}
 	var ret []string
-	if flags&EGGSFS_BLOCK_SERVICE_STALE != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_STALE != 0 {
 		ret = append(ret, "S")
 	}
-	if flags&EGGSFS_BLOCK_SERVICE_NO_READ != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_NO_READ != 0 {
 		ret = append(ret, "NR")
 	}
-	if flags&EGGSFS_BLOCK_SERVICE_NO_WRITE != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_NO_WRITE != 0 {
 		ret = append(ret, "NW")
 	}
-	if flags&EGGSFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
+	if flags&TERNFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
 		ret = append(ret, "D")
 	}
 	return strings.Join(ret, "|")
 }
 
 func (flags BlockServiceFlags) CanRead() bool {
-	return (flags & (EGGSFS_BLOCK_SERVICE_STALE | EGGSFS_BLOCK_SERVICE_NO_READ | EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) == 0
+	return (flags & (TERNFS_BLOCK_SERVICE_STALE | TERNFS_BLOCK_SERVICE_NO_READ | TERNFS_BLOCK_SERVICE_DECOMMISSIONED)) == 0
 }
 
 func (flags BlockServiceFlags) CanWrite() bool {
-	return (flags & (EGGSFS_BLOCK_SERVICE_STALE | EGGSFS_BLOCK_SERVICE_NO_WRITE | EGGSFS_BLOCK_SERVICE_DECOMMISSIONED)) == 0
+	return (flags & (TERNFS_BLOCK_SERVICE_STALE | TERNFS_BLOCK_SERVICE_NO_WRITE | TERNFS_BLOCK_SERVICE_DECOMMISSIONED)) == 0
 }
 
 const (
@@ -481,27 +481,27 @@ const (
 	ROOT_DIR_INODE_ID = InodeId(DIRECTORY) << 61
 )
 
-func MakeEggsTime(t time.Time) EggsTime {
-	return EggsTime(uint64(t.UnixNano()))
+func MakeTernTime(t time.Time) TernTime {
+	return TernTime(uint64(t.UnixNano()))
 }
 
-func Now() EggsTime {
-	return MakeEggsTime(time.Now())
+func Now() TernTime {
+	return MakeTernTime(time.Now())
 }
 
-func (t EggsTime) Time() time.Time {
+func (t TernTime) Time() time.Time {
 	return time.Unix(0, int64(uint64(t)))
 }
 
-func (t EggsTime) String() string {
+func (t TernTime) String() string {
 	return t.Time().Format(time.RFC3339Nano)
 }
 
-func (t EggsTime) MarshalJSON() ([]byte, error) {
+func (t TernTime) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("%q", t.String())), nil
 }
 
-func (t *EggsTime) UnmarshalJSON(b []byte) error {
+func (t *TernTime) UnmarshalJSON(b []byte) error {
 	var ts string
 	if err := json.Unmarshal(b, &ts); err != nil {
 		return err
@@ -510,7 +510,7 @@ func (t *EggsTime) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return err
 	}
-	*t = EggsTime(tt.UnixNano())
+	*t = TernTime(tt.UnixNano())
 	return nil
 }
 
@@ -547,7 +547,7 @@ func (i *IpPort) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-type EggsError uint16
+type TernError uint16
 
 type ShardMessageKind uint8
 
@@ -630,7 +630,7 @@ type LookupReq struct {
 
 type LookupResp struct {
 	TargetId     InodeId
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 // Does not consider transient files. Might return snapshot files:
@@ -641,8 +641,8 @@ type StatFileReq struct {
 }
 
 type StatFileResp struct {
-	Mtime EggsTime
-	Atime EggsTime
+	Mtime TernTime
+	Atime TernTime
 	Size  uint64
 }
 
@@ -651,7 +651,7 @@ type StatTransientFileReq struct {
 }
 
 type StatTransientFileResp struct {
-	Mtime EggsTime
+	Mtime TernTime
 	Size  uint64
 	Note  string
 }
@@ -679,7 +679,7 @@ type DirectoryInfo struct {
 }
 
 type StatDirectoryResp struct {
-	Mtime EggsTime
+	Mtime TernTime
 	Owner InodeId // if NULL_INODE_ID, the directory is currently snapshot
 	Info  DirectoryInfo
 }
@@ -698,7 +698,7 @@ type CurrentEdge struct {
 	TargetId     InodeId
 	NameHash     NameHash
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 // Names with the same hash will never straddle two `ReadDirResp`s, assuming the
@@ -909,7 +909,7 @@ type LinkFileReq struct {
 }
 
 type LinkFileResp struct {
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 // turns a current outgoing edge into a snapshot owning edge.
@@ -919,11 +919,11 @@ type SoftUnlinkFileReq struct {
 	Name    string
 	// See comment in `SameDirectoryRenameReq` for an idication of why
 	// we have this here even if it's not strictly needed.
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type SoftUnlinkFileResp struct {
-	DeleteCreationTime EggsTime // the creation time of the newly created delete edge
+	DeleteCreationTime TernTime // the creation time of the newly created delete edge
 }
 
 // Starts from the first span with byte offset <= than the provided
@@ -1059,12 +1059,12 @@ type SameDirectoryRenameReq struct {
 	// don't strictly needed because current edges are uniquely
 	// identified by name) so that the shard can implement heuristics
 	// to let likely repeated calls through in the name of idempotency.
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 	NewName         string
 }
 
 type SameDirectoryRenameResp struct {
-	NewCreationTime EggsTime
+	NewCreationTime TernTime
 }
 
 // This is exactly like `SameDirectoryRenameReq`, but it expects
@@ -1074,12 +1074,12 @@ type SameDirectoryRenameSnapshotReq struct {
 	TargetId        InodeId
 	DirId           InodeId
 	OldName         string
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 	NewName         string
 }
 
 type SameDirectoryRenameSnapshotResp struct {
-	NewCreationTime EggsTime
+	NewCreationTime TernTime
 }
 
 type VisitDirectoriesReq struct {
@@ -1115,7 +1115,7 @@ type VisitTransientFilesReq struct {
 type TransientFile struct {
 	Id           InodeId
 	Cookie       Cookie
-	DeadlineTime EggsTime
+	DeadlineTime TernTime
 }
 
 // Shall this be unsafe/private? We can freely get the cookie.
@@ -1147,7 +1147,7 @@ type FullReadDirReq struct {
 	DirId     InodeId
 	Flags     FullReadDirFlags
 	StartName string
-	StartTime EggsTime
+	StartTime TernTime
 	Limit     uint16
 	Mtu       uint16
 }
@@ -1163,7 +1163,7 @@ type Edge struct {
 	TargetId     InodeIdExtra
 	NameHash     NameHash
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 func (e *Edge) Owned() bool {
@@ -1175,7 +1175,7 @@ type FullReadDirCursor struct {
 	// remember in which section we are.
 	Current   bool
 	StartName string
-	StartTime EggsTime
+	StartTime TernTime
 }
 
 type FullReadDirResp struct {
@@ -1194,7 +1194,7 @@ type CreateDirectoryInodeReq struct {
 }
 
 type CreateDirectoryInodeResp struct {
-	Mtime EggsTime
+	Mtime TernTime
 }
 
 // This is needed to move directories -- but it can break the invariants
@@ -1257,17 +1257,17 @@ type CreateLockedCurrentEdgeReq struct {
 	DirId           InodeId
 	Name            string
 	TargetId        InodeId
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 }
 
 type CreateLockedCurrentEdgeResp struct {
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type LockCurrentEdgeReq struct {
 	DirId        InodeId
 	TargetId     InodeId
-	CreationTime EggsTime
+	CreationTime TernTime
 	Name         string
 }
 
@@ -1277,7 +1277,7 @@ type LockCurrentEdgeResp struct{}
 type UnlockCurrentEdgeReq struct {
 	DirId        InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 	TargetId     InodeId
 	// Turn the current edge into a snapshot edge, and create a deletion
 	// edge with the same name.
@@ -1292,7 +1292,7 @@ type RemoveNonOwnedEdgeReq struct {
 	DirId        InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type RemoveNonOwnedEdgeResp struct{}
@@ -1303,7 +1303,7 @@ type SameShardHardFileUnlinkReq struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type SameShardHardFileUnlinkResp struct{}
@@ -1314,7 +1314,7 @@ type RemoveOwnedSnapshotFileEdgeReq struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type RemoveOwnedSnapshotFileEdgeResp struct{}
@@ -1445,26 +1445,26 @@ type MakeDirectoryReq struct {
 
 type MakeDirectoryResp struct {
 	Id           InodeId
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type RenameFileReq struct {
 	TargetId        InodeId
 	OldOwnerId      InodeId
 	OldName         string
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 	NewOwnerId      InodeId
 	NewName         string
 }
 
 type RenameFileResp struct {
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type SoftUnlinkDirectoryReq struct {
 	OwnerId      InodeId
 	TargetId     InodeId
-	CreationTime EggsTime
+	CreationTime TernTime
 	Name         string
 }
 
@@ -1474,13 +1474,13 @@ type RenameDirectoryReq struct {
 	TargetId        InodeId
 	OldOwnerId      InodeId
 	OldName         string
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 	NewOwnerId      InodeId
 	NewName         string
 }
 
 type RenameDirectoryResp struct {
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 // This operation is safe for files: we can check that it has no spans,
@@ -1505,7 +1505,7 @@ type CrossShardHardUnlinkFileReq struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type CrossShardHardUnlinkFileResp struct{}
@@ -1753,7 +1753,7 @@ func (p *StripePolicy) Stripes(size uint32) uint8 {
 
 type ConstructFileEntry struct {
 	Type         InodeType
-	DeadlineTime EggsTime
+	DeadlineTime TernTime
 	Note         string
 }
 
@@ -1767,7 +1767,7 @@ type SameDirectoryRenameEntry struct {
 	DirId           InodeId
 	TargetId        InodeId
 	OldName         string
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 	NewName         string
 }
 
@@ -1775,7 +1775,7 @@ type SameDirectoryRenameSnapshotEntry struct {
 	DirId           InodeId
 	TargetId        InodeId
 	OldName         string
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 	NewName         string
 }
 
@@ -1783,7 +1783,7 @@ type SoftUnlinkFileEntry struct {
 	OwnerId      InodeId
 	FileId       InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type CreateDirectoryInodeEntry struct {
@@ -1796,7 +1796,7 @@ type CreateLockedCurrentEdgeEntry struct {
 	DirId           InodeId
 	Name            string
 	TargetId        InodeId
-	OldCreationTime EggsTime
+	OldCreationTime TernTime
 }
 
 type UnlockCurrentEdgeEntry struct {
@@ -1806,7 +1806,7 @@ type UnlockCurrentEdgeEntry struct {
 	// locking mechanism + CDC synchronization anyway, which offer stronger guarantees
 	// which means we never need heuristics for this. But we include it for consistency
 	// and to better detect bugs.
-	CreationTime EggsTime
+	CreationTime TernTime
 	TargetId     InodeId
 	WasMoved     bool
 }
@@ -1814,7 +1814,7 @@ type UnlockCurrentEdgeEntry struct {
 type LockCurrentEdgeEntry struct {
 	DirId        InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 	TargetId     InodeId
 }
 
@@ -1841,22 +1841,22 @@ type RemoveNonOwnedEdgeEntry struct {
 	DirId        InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type SameShardHardFileUnlinkDEPRECATEDEntry struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type SameShardHardFileUnlinkEntry struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
-	DeadlineTime EggsTime // Deadline for transient file
+	CreationTime TernTime
+	DeadlineTime TernTime // Deadline for transient file
 }
 
 type RemoveSpanInitiateEntry struct {
@@ -1883,9 +1883,9 @@ type BlockServiceDeprecatedInfo struct {
 	AvailableBytes   uint64
 	Blocks           uint64 // how many blocks we have
 	Path             string
-	LastSeen         EggsTime
+	LastSeen         TernTime
 	HasFiles         bool
-	FlagsLastChanged EggsTime
+	FlagsLastChanged TernTime
 }
 
 type EntryNewBlockInfo struct {
@@ -1935,13 +1935,13 @@ type MakeFileTransientDEPRECATEDEntry struct {
 
 type MakeFileTransientEntry struct {
 	Id           InodeId
-	DeadlineTime EggsTime
+	DeadlineTime TernTime
 	Note         string
 }
 
 type ScrapTransientFileEntry struct {
 	Id           InodeId
-	DeadlineTime EggsTime
+	DeadlineTime TernTime
 }
 
 type RemoveSpanCertifyEntry struct {
@@ -1954,7 +1954,7 @@ type RemoveOwnedSnapshotFileEdgeEntry struct {
 	OwnerId      InodeId
 	TargetId     InodeId
 	Name         string
-	CreationTime EggsTime
+	CreationTime TernTime
 }
 
 type SwapBlocksEntry struct {
@@ -2060,21 +2060,21 @@ type AllBlockServicesDeprecatedResp struct {
 }
 
 type LocalChangedBlockServicesReq struct {
-	ChangedSince EggsTime
+	ChangedSince TernTime
 }
 
 type LocalChangedBlockServicesResp struct {
-	LastChange    EggsTime
+	LastChange    TernTime
 	BlockServices []BlockService
 }
 
 type ChangedBlockServicesAtLocationReq struct {
 	LocationId   Location
-	ChangedSince EggsTime
+	ChangedSince TernTime
 }
 
 type ChangedBlockServicesAtLocationResp struct {
-	LastChange    EggsTime
+	LastChange    TernTime
 	BlockServices []BlockService
 }
 
@@ -2130,7 +2130,7 @@ type LocalShardsReq struct{}
 
 type ShardInfo struct {
 	Addrs    AddrsInfo
-	LastSeen EggsTime
+	LastSeen TernTime
 }
 
 type LocalShardsResp struct {
@@ -2171,7 +2171,7 @@ type FullShardInfo struct {
 	Id         ShardReplicaId
 	IsLeader   bool
 	Addrs      AddrsInfo
-	LastSeen   EggsTime
+	LastSeen   TernTime
 	LocationId Location
 }
 
@@ -2206,7 +2206,7 @@ type LocalCdcReq struct{}
 
 type LocalCdcResp struct {
 	Addrs    AddrsInfo
-	LastSeen EggsTime
+	LastSeen TernTime
 }
 
 type CdcAtLocationReq struct {
@@ -2215,7 +2215,7 @@ type CdcAtLocationReq struct {
 
 type CdcAtLocationResp struct {
 	Addrs    AddrsInfo
-	LastSeen EggsTime
+	LastSeen TernTime
 }
 
 type AllCdcReq struct{}
@@ -2225,7 +2225,7 @@ type CdcInfo struct {
 	LocationId Location
 	IsLeader   bool
 	Addrs      AddrsInfo
-	LastSeen   EggsTime
+	LastSeen   TernTime
 }
 
 type AllCdcResp struct {
@@ -2382,7 +2382,7 @@ type LogWriteReq struct {
 }
 
 type LogWriteResp struct {
-	Result EggsError
+	Result TernError
 }
 
 type ReleaseReq struct {
@@ -2391,7 +2391,7 @@ type ReleaseReq struct {
 }
 
 type ReleaseResp struct {
-	Result EggsError
+	Result TernError
 }
 
 type LogReadReq struct {
@@ -2399,7 +2399,7 @@ type LogReadReq struct {
 }
 
 type LogReadResp struct {
-	Result EggsError
+	Result TernError
 	Value  bincode.Blob
 }
 
@@ -2408,7 +2408,7 @@ type NewLeaderReq struct {
 }
 
 type NewLeaderResp struct {
-	Result       EggsError
+	Result       TernError
 	LastReleased LogIdx
 }
 
@@ -2418,7 +2418,7 @@ type NewLeaderConfirmReq struct {
 }
 
 type NewLeaderConfirmResp struct {
-	Result EggsError
+	Result TernError
 }
 
 type LogRecoveryReadReq struct {
@@ -2427,7 +2427,7 @@ type LogRecoveryReadReq struct {
 }
 
 type LogRecoveryReadResp struct {
-	Result EggsError
+	Result TernError
 	Value  bincode.Blob
 }
 
@@ -2438,5 +2438,5 @@ type LogRecoveryWriteReq struct {
 }
 
 type LogRecoveryWriteResp struct {
-	Result EggsError
+	Result TernError
 }

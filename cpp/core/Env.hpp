@@ -70,7 +70,7 @@ public:
                 outSs << "<" << syslogLevel << ">" << prefix << ": " << line << std::endl;
             }
         } else {
-            auto t = eggsNow();
+            auto t = ternNow();
             while (std::getline(formatSs, line)) {
                 outSs << t << " " << prefix << " [" << level << "] " << line << std::endl;
             }
@@ -149,7 +149,7 @@ public:
     }
 };
 
-#ifdef EGGS_DEBUG
+#ifdef TERN_DEBUG
     #define LOG_TRACE(env, ...) \
         do { \
             if (unlikely((env)._shouldLog(LogLevel::LOG_TRACE))) { \

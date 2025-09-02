@@ -3,9 +3,9 @@ package cleanup
 import (
 	"fmt"
 	"sync/atomic"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/client"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type ZeroBlockServiceFilesStats struct {

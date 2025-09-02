@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/client"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type CollectDirectoriesStats struct {

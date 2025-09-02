@@ -13,19 +13,19 @@
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
 
-unsigned eggsfs_initial_shard_timeout_jiffies = MSECS_TO_JIFFIES(250);
-unsigned eggsfs_max_shard_timeout_jiffies = MSECS_TO_JIFFIES(2000);
-unsigned eggsfs_overall_shard_timeout_jiffies = MSECS_TO_JIFFIES(10000);
-unsigned eggsfs_initial_cdc_timeout_jiffies = MSECS_TO_JIFFIES(1000);
-unsigned eggsfs_max_cdc_timeout_jiffies = MSECS_TO_JIFFIES(10000);
-unsigned eggsfs_overall_cdc_timeout_jiffies = MSECS_TO_JIFFIES(120000);
+unsigned ternfs_initial_shard_timeout_jiffies = MSECS_TO_JIFFIES(250);
+unsigned ternfs_max_shard_timeout_jiffies = MSECS_TO_JIFFIES(2000);
+unsigned ternfs_overall_shard_timeout_jiffies = MSECS_TO_JIFFIES(10000);
+unsigned ternfs_initial_cdc_timeout_jiffies = MSECS_TO_JIFFIES(1000);
+unsigned ternfs_max_cdc_timeout_jiffies = MSECS_TO_JIFFIES(10000);
+unsigned ternfs_overall_cdc_timeout_jiffies = MSECS_TO_JIFFIES(120000);
 
 static u64 WHICH_SHARD_IP = 0;
 
-static struct eggsfs_metadata_request* get_metadata_request(struct eggsfs_metadata_socket* s, u64 request_id) __must_hold(s->lock) {
+static struct ternfs_metadata_request* get_metadata_request(struct ternfs_metadata_socket* s, u64 request_id) __must_hold(s->lock) {
     struct rb_node* node = s->requests.rb_node;
     while (node) {
-        struct eggsfs_metadata_request* req = container_of(node, struct eggsfs_metadata_request, node);
+        struct ternfs_metadata_request* req = container_of(node, struct ternfs_metadata_request, node);
         if (request_id < req->request_id) { node = node->rb_left; }
         else if (request_id > req->request_id) { node = node->rb_right; }
         else { return req; }
@@ -33,26 +33,26 @@ static struct eggsfs_metadata_request* get_metadata_request(struct eggsfs_metada
     return NULL;
 }
 
-static void insert_metadata_request(struct eggsfs_metadata_socket* s, struct eggsfs_metadata_request* req) __must_hold(s->lock) {
+static void insert_metadata_request(struct ternfs_metadata_socket* s, struct ternfs_metadata_request* req) __must_hold(s->lock) {
     u64 request_id = req->request_id;
     struct rb_node** new = &s->requests.rb_node;
     struct rb_node* parent = NULL;
     while (*new) {
-        struct eggsfs_metadata_request* this = container_of(*new, struct eggsfs_metadata_request, node);
+        struct ternfs_metadata_request* this = container_of(*new, struct ternfs_metadata_request, node);
         parent = *new;
         if (request_id < this->request_id) { new = &((*new)->rb_left); }
         else if (request_id > this->request_id) { new = &((*new)->rb_right); }
-        else { eggsfs_error("dup id %lld vs. %lld %p vs. %p\n", request_id, this->request_id, req, this); BUG(); return; }
+        else { ternfs_error("dup id %lld vs. %lld %p vs. %p\n", request_id, this->request_id, req, this); BUG(); return; }
     }
 
     rb_link_node(&req->node, parent, new);
     rb_insert_color(&req->node, &s->requests);
 }
 
-void eggsfs_metadata_request_init(
-    struct eggsfs_metadata_socket* sock,
-    struct eggsfs_metadata_request* req,
-    struct eggsfs_metadata_request_state* state
+void ternfs_metadata_request_init(
+    struct ternfs_metadata_socket* sock,
+    struct ternfs_metadata_request* req,
+    struct ternfs_metadata_request_state* state
 ) {
     state->start_t = get_jiffies_64();
     state->next_timeout = 0;
@@ -66,24 +66,24 @@ void eggsfs_metadata_request_init(
 }
 
 #define INC_STAT_COUNTER(req, kind, _NAME) do { \
-        if ((req)->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR) { break; } \
+        if ((req)->flags & TERNFS_METADATA_REQUEST_ASYNC_GETATTR) { break; } \
         u64 stats_idx = ((req)->shard < 0) ? \
-            ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS) : \
-            ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_COUNTERS_NUM_COUNTERS + (u64)(req)->shard * EGGSFS_SHARD_KIND_MAX * EGGSFS_COUNTERS_NUM_COUNTERS); \
+            ((u64)__ternfs_cdc_kind_index_mappings[kind] * TERNFS_COUNTERS_NUM_COUNTERS) : \
+            ((u64)__ternfs_shard_kind_index_mappings[kind] * TERNFS_COUNTERS_NUM_COUNTERS + (u64)(req)->shard * TERNFS_SHARD_KIND_MAX * TERNFS_COUNTERS_NUM_COUNTERS); \
         if ((req)->shard < 0) { \
-            atomic64_add(1, (atomic64_t*)&cdc_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_NAME]); \
+            atomic64_add(1, (atomic64_t*)&cdc_counters[stats_idx + TERNFS_COUNTERS_IDX_##_NAME]); \
         } else { \
-            atomic64_add(1, (atomic64_t*)&shard_counters[stats_idx + EGGSFS_COUNTERS_IDX_##_NAME]); \
+            atomic64_add(1, (atomic64_t*)&shard_counters[stats_idx + TERNFS_COUNTERS_IDX_##_NAME]); \
         } \
     } while (0)
 
 static void sock_readable(struct sock* sk) {
-    struct eggsfs_metadata_socket* s;
+    struct ternfs_metadata_socket* s;
     struct sk_buff* skb;
     int err;
 
     read_lock_bh(&sk->sk_callback_lock);
-    s = (struct eggsfs_metadata_socket*)sk->sk_user_data;
+    s = (struct ternfs_metadata_socket*)sk->sk_user_data;
     BUG_ON(!s);
     for (;;) {
         skb = COMPAT_SKB_RECV_UDP(sk, MSG_DONTWAIT, &err);
@@ -93,18 +93,18 @@ static void sock_readable(struct sock* sk) {
         }
 
         if (unlikely(skb_checksum_complete(skb))) {
-            eggsfs_warn("dropping request with bad checksum");
+            ternfs_warn("dropping request with bad checksum");
             goto drop_skb;
         }
 
         // u32 protocol + u64 req_id + u8 kind. Note that we check the protocol later on.
         // We just need the request id here, and the kind for logging.
         if (unlikely(skb->len < 13)) {
-            eggsfs_warn("dropping runt eggsfs request");
+            ternfs_warn("dropping runt ternfs request");
             goto drop_skb;
         }
-        if (unlikely(skb->len > EGGSFS_MAX_MTU)) {
-            eggsfs_warn("dropping overlong eggsfs request");
+        if (unlikely(skb->len > TERNFS_MAX_MTU)) {
+            ternfs_warn("dropping overlong ternfs request");
             goto drop_skb;
         }
         u32 resp_len = skb->len;
@@ -119,22 +119,22 @@ static void sock_readable(struct sock* sk) {
             BUG_ON(skb_copy_bits(skb, 4 + 8 + 1, &err, 2) != 0);
             bincode_err = le16_to_cpu(err);
         }
-        struct eggsfs_metadata_request* req;
+        struct ternfs_metadata_request* req;
         s16 shard;
 
         // We want to remove the request quickly and not call completions while holding the lock
-        // Completions functions also remove from the rb_tree but in a safe maner using eggsfs_metadata_remove_request
+        // Completions functions also remove from the rb_tree but in a safe maner using ternfs_metadata_remove_request
         spin_lock_bh(&s->lock);
         req = get_metadata_request(s, request_id);
-        struct eggsfs_inode* getattr_enode = NULL;
+        struct ternfs_inode* getattr_enode = NULL;
         if (req) {
             BUG_ON(req->skb);
             shard = req->shard; // We save this here because I think `req` might be gone by the time we trace below.
             req->skb = skb;     // We could trace while holding the spinlock but I figured it's a bit better to not
             skb = NULL;         // do that.
             rb_erase(&req->node, &s->requests);
-            if (req->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR) {
-                getattr_enode = container_of(req, struct eggsfs_inode, getattr_async_req);
+            if (req->flags & TERNFS_METADATA_REQUEST_ASYNC_GETATTR) {
+                getattr_enode = container_of(req, struct ternfs_inode, getattr_async_req);
                 // we must ihold it as it could timeout and be freed before we get to it.
                 ihold(&getattr_enode->inode);
             }
@@ -151,13 +151,13 @@ static void sock_readable(struct sock* sk) {
                 }
                 iput(&getattr_enode->inode);
             } else {
-                struct eggsfs_metadata_sync_request* sreq = container_of(req, struct eggsfs_metadata_sync_request, req);
+                struct ternfs_metadata_sync_request* sreq = container_of(req, struct ternfs_metadata_sync_request, req);
                 complete(&sreq->comp);
             }
             struct sockaddr_in addr = {0};
-            trace_eggsfs_metadata_request(&addr, request_id, 0, shard, kind, 0, resp_len, EGGSFS_METADATA_REQUEST_DONE, bincode_err);
+            trace_eggsfs_metadata_request(&addr, request_id, 0, shard, kind, 0, resp_len, TERNFS_METADATA_REQUEST_DONE, bincode_err);
         } else {
-            eggsfs_debug("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
+            ternfs_debug("could not find request id %llu (probably interrupted or late after multiple attempts)", request_id);
         }
 
         if (skb) {
@@ -172,7 +172,7 @@ drop_skb:
 // requeue
 // whoever wants to remove request needs to handle timer and workqueue
 
-void eggsfs_net_shard_free_socket(struct eggsfs_metadata_socket* s) {
+void ternfs_net_shard_free_socket(struct ternfs_metadata_socket* s) {
     // TODO anything else?
     write_lock_bh(&s->sock->sk->sk_callback_lock);
     s->sock->sk->sk_data_ready = s->original_data_ready;
@@ -181,7 +181,7 @@ void eggsfs_net_shard_free_socket(struct eggsfs_metadata_socket* s) {
     sock_release(s->sock);
 }
 
-int eggsfs_init_shard_socket(struct eggsfs_metadata_socket* s) {
+int ternfs_init_shard_socket(struct ternfs_metadata_socket* s) {
     struct sockaddr_in addr;
     int err;
 
@@ -217,14 +217,14 @@ out_err:
     return err;
 }
 
-static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* addr, const atomic64_t* addr_data) {
+static bool ternfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* addr, const atomic64_t* addr_data) {
     u64 v1 = atomic64_read(addr_data);
 
-    __be32 ip = eggsfs_get_addr_ip(v1);
+    __be32 ip = ternfs_get_addr_ip(v1);
     if (unlikely(ip == 0)) {
         return false;
     }
-    __be16 port = eggsfs_get_addr_port(v1);
+    __be16 port = ternfs_get_addr_port(v1);
 
     addr->sin_addr.s_addr = ip;
     addr->sin_port = port;
@@ -243,8 +243,8 @@ static bool eggsfs_shard_fill_msghdr(struct msghdr *msg, struct sockaddr_in* add
 // |1 below drops the 0 value to the smallest bucket
 static void inc_latency_bucket(s16 shard_id, u8 kind, u64 elapsed) {
     u64 latencies_idx = (shard_id < 0) ?
-        ((u64)__eggsfs_cdc_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS) :
-        ((u64)__eggsfs_shard_kind_index_mappings[kind] * EGGSFS_LATENCIES_NUM_BUCKETS + (u64)shard_id * EGGSFS_SHARD_KIND_MAX * EGGSFS_LATENCIES_NUM_BUCKETS);
+        ((u64)__ternfs_cdc_kind_index_mappings[kind] * TERNFS_LATENCIES_NUM_BUCKETS) :
+        ((u64)__ternfs_shard_kind_index_mappings[kind] * TERNFS_LATENCIES_NUM_BUCKETS + (u64)shard_id * TERNFS_SHARD_KIND_MAX * TERNFS_LATENCIES_NUM_BUCKETS);
     u64 hist_bucket = 0;
     u64 elapsed_nsecs = jiffies_to_nsecs(elapsed) | 1;
     __asm__("lzcnt %1,%0" : "=r"(hist_bucket) : "r"(elapsed_nsecs));
@@ -255,14 +255,14 @@ static void inc_latency_bucket(s16 shard_id, u8 kind, u64 elapsed) {
     }
 }
 
-int eggsfs_metadata_send_request(
-    struct eggsfs_metadata_socket* sock,
+int ternfs_metadata_send_request(
+    struct ternfs_metadata_socket* sock,
     const atomic64_t* addr_data1,
     const atomic64_t* addr_data2,
-    struct eggsfs_metadata_request* req,
+    struct ternfs_metadata_request* req,
     void* data,
     u32 len,
-    struct eggsfs_metadata_request_state* state
+    struct ternfs_metadata_request_state* state
 ) {
     state->attempts++;
 
@@ -274,9 +274,9 @@ int eggsfs_metadata_send_request(
 
     const atomic64_t* addr_data[2] = {addr_data1, addr_data2};
 
-    unsigned overall_timeout = is_cdc ? eggsfs_overall_cdc_timeout_jiffies : eggsfs_overall_shard_timeout_jiffies;
-    unsigned max_timeout = is_cdc ? eggsfs_max_cdc_timeout_jiffies : eggsfs_max_shard_timeout_jiffies;
-    unsigned initial_timeout = is_cdc ? eggsfs_initial_cdc_timeout_jiffies : eggsfs_initial_shard_timeout_jiffies;
+    unsigned overall_timeout = is_cdc ? ternfs_overall_cdc_timeout_jiffies : ternfs_overall_shard_timeout_jiffies;
+    unsigned max_timeout = is_cdc ? ternfs_max_cdc_timeout_jiffies : ternfs_max_shard_timeout_jiffies;
+    unsigned initial_timeout = is_cdc ? ternfs_initial_cdc_timeout_jiffies : ternfs_initial_shard_timeout_jiffies;
     if ((get_jiffies_64() - state->start_t) > overall_timeout) {
         err = -ETIMEDOUT;
         INC_STAT_COUNTER(req, kind, TIMEOUTS);
@@ -290,23 +290,23 @@ int eggsfs_metadata_send_request(
     struct sockaddr_in addr;
     struct msghdr msg;
 
-    if (unlikely(!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[state->which_addr%2]))) {
-        if (!eggsfs_shard_fill_msghdr(&msg, &addr, addr_data[0])) {
-            eggsfs_warn("could not find any shard addresses! does everything look good in shuckle?");
+    if (unlikely(!ternfs_shard_fill_msghdr(&msg, &addr, addr_data[state->which_addr%2]))) {
+        if (!ternfs_shard_fill_msghdr(&msg, &addr, addr_data[0])) {
+            ternfs_warn("could not find any shard addresses! does everything look good in shuckle?");
             err = -EIO;
             goto out_err_no_trace; // we have no addr
         }
     }
     state->which_addr++;
 
-    trace_eggsfs_metadata_request(&addr, req->request_id, len, req->shard, kind, state->attempts, 0, EGGSFS_METADATA_REQUEST_ATTEMPT, 0);
+    trace_eggsfs_metadata_request(&addr, req->request_id, len, req->shard, kind, state->attempts, 0, TERNFS_METADATA_REQUEST_ATTEMPT, 0);
     INC_STAT_COUNTER(req, kind, ATTEMPTED);
 
-    eggsfs_debug("sending: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums addr=%pI4:%d", req->request_id, req->shard,  is_cdc ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind), kind, state->attempts, jiffies64_to_msecs(get_jiffies_64() - state->start_t), &addr.sin_addr, ntohs(addr.sin_port));
+    ternfs_debug("sending: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums addr=%pI4:%d", req->request_id, req->shard,  is_cdc ? ternfs_cdc_kind_str(kind) : ternfs_shard_kind_str(kind), kind, state->attempts, jiffies64_to_msecs(get_jiffies_64() - state->start_t), &addr.sin_addr, ntohs(addr.sin_port));
     err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
     if (unlikely(err < 0)) {
         if (err != -ERESTARTSYS) {
-            eggsfs_info("could not send: %d", err);
+            ternfs_info("could not send: %d", err);
             INC_STAT_COUNTER(req, kind, NET_FAILURES);
         }
         // For ENETUNREACH, we pretend to have sent it, and then the timeout
@@ -333,20 +333,20 @@ out_err:
 out_err_no_latency:
     {
         struct sockaddr_in addr = {0};
-        trace_eggsfs_metadata_request(&addr, req->request_id, 0, -2, kind, 0, 0, EGGSFS_METADATA_REQUEST_DONE, err);
+        trace_eggsfs_metadata_request(&addr, req->request_id, 0, -2, kind, 0, 0, TERNFS_METADATA_REQUEST_DONE, err);
     }
 out_err_no_trace:
     // it is very important we search and remove request rather than just remove from the tree by node
     // this could be called after timeout and we might race with removal happening from socket callback
-    eggsfs_metadata_remove_request(sock, req->request_id);
+    ternfs_metadata_remove_request(sock, req->request_id);
     // Free the skb if it's set. It is possible request got completed and skb set between we gave up on completion and
     // came here to remove the request.
     if (req->skb) {
         // if the skb is set then completion is either set or will be set prompty. we need to wait for it or we risk
         // use after free for completion
         // we should not hit this code path for async requests. they dont retry the same way
-        BUG_ON(req->flags & EGGSFS_METADATA_REQUEST_ASYNC_GETATTR);
-        struct eggsfs_metadata_sync_request* sreq = container_of(req, struct eggsfs_metadata_sync_request, req);
+        BUG_ON(req->flags & TERNFS_METADATA_REQUEST_ASYNC_GETATTR);
+        struct ternfs_metadata_sync_request* sreq = container_of(req, struct ternfs_metadata_sync_request, req);
         wait_for_completion(&sreq->comp);
         kfree_skb(req->skb);
         req->skb = NULL;
@@ -354,9 +354,9 @@ out_err_no_trace:
     return err;
 }
 
-void eggsfs_metadata_remove_request(struct eggsfs_metadata_socket* sock, u64 request_id) {
+void ternfs_metadata_remove_request(struct ternfs_metadata_socket* sock, u64 request_id) {
     spin_lock_bh(&sock->lock);
-    struct eggsfs_metadata_request* req = get_metadata_request(sock, request_id);
+    struct ternfs_metadata_request* req = get_metadata_request(sock, request_id);
     if (req) {
         rb_erase(&req->node, &sock->requests);
     }
@@ -365,19 +365,19 @@ void eggsfs_metadata_remove_request(struct eggsfs_metadata_socket* sock, u64 req
 
 // If this function returns succesfull, we're done, and the request
 // is out of the tree.
-// If it returns -ETIMEDOUT, we should call `eggsfs_metadata_send_request`
+// If it returns -ETIMEDOUT, we should call `ternfs_metadata_send_request`
 // again.
 // Any other error, we're done and the request is out of the tree.
-static struct sk_buff* eggsfs_metadata_wait_request(
-    struct eggsfs_metadata_socket* sock,
-    struct eggsfs_metadata_sync_request* req,
+static struct sk_buff* ternfs_metadata_wait_request(
+    struct ternfs_metadata_socket* sock,
+    struct ternfs_metadata_sync_request* req,
     s16 shard,
     u8 kind,
-    struct eggsfs_metadata_request_state* state
+    struct ternfs_metadata_request_state* state
 ) {
     u64 timeout_s = state->next_timeout/HZ;
     if (timeout_s > 10) {
-        eggsfs_warn("about to wait for request for a long time (%llu seconds)", timeout_s);
+        ternfs_warn("about to wait for request for a long time (%llu seconds)", timeout_s);
     }
     int ret = wait_for_completion_timeout(&req->comp, state->next_timeout);
     // We got a response, this is the happy path.
@@ -385,11 +385,11 @@ static struct sk_buff* eggsfs_metadata_wait_request(
         BUG_ON(!req->req.skb);
         u64 elapsed = get_jiffies_64() - state->start_t;
         u64 late_threshold = (req->req.shard < 0) ? MSECS_TO_JIFFIES(60000) : MSECS_TO_JIFFIES(1000);
-        const char* kind_str = (req->req.shard < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
+        const char* kind_str = (req->req.shard < 0) ? ternfs_cdc_kind_str(kind) : ternfs_shard_kind_str(kind);
         if (unlikely(elapsed > late_threshold)) {
-            eggsfs_info("late request: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
+            ternfs_info("late request: req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
         } else {
-            eggsfs_debug("completed request req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
+            ternfs_debug("completed request req_id=%llu shard_id=%d kind_str=%s kind=%d attempts=%d elapsed=%llums", req->req.request_id, req->req.shard, kind_str, kind, state->attempts, jiffies64_to_msecs(elapsed));
         }
         inc_latency_bucket(shard, kind, elapsed);
         int bincode_err = 0;
@@ -398,17 +398,17 @@ static struct sk_buff* eggsfs_metadata_wait_request(
             BUG_ON(skb_copy_bits(req->req.skb, 4 + 8 + 1, &err, 2) != 0);
             bincode_err = le16_to_cpu(err);
         }
-        if (unlikely(bincode_err && eggsfs_unexpected_error(bincode_err))) {
+        if (unlikely(bincode_err && ternfs_unexpected_error(bincode_err))) {
             INC_STAT_COUNTER(&req->req, kind, FAILURES);
-            const char* kind_str = (req->req.shard < 0) ? eggsfs_cdc_kind_str(kind) : eggsfs_shard_kind_str(kind);
-            eggsfs_warn("unexpected error: req_id=%llu shard_id=%d kind_str=%s kind=%d err_str=%s err=%d", req->req.request_id, req->req.shard, kind_str, kind, eggsfs_err_str(bincode_err), bincode_err);
+            const char* kind_str = (req->req.shard < 0) ? ternfs_cdc_kind_str(kind) : ternfs_shard_kind_str(kind);
+            ternfs_warn("unexpected error: req_id=%llu shard_id=%d kind_str=%s kind=%d err_str=%s err=%d", req->req.request_id, req->req.shard, kind_str, kind, ternfs_err_str(bincode_err), bincode_err);
         }
         INC_STAT_COUNTER(&req->req, kind, COMPLETED);
         return req->req.skb;
     }
     // Actual error, remove the request
     if (unlikely(ret)) {
-        eggsfs_warn("could not wait for request %llu: %d", req->req.request_id, ret);
+        ternfs_warn("could not wait for request %llu: %d", req->req.request_id, ret);
         spin_lock_bh(&sock->lock);
         rb_erase(&req->req.node, &sock->requests);
         spin_unlock_bh(&sock->lock);
@@ -419,8 +419,8 @@ static struct sk_buff* eggsfs_metadata_wait_request(
 }
 
 // shard_id is just used for debugging/event tracing, and should be -1 if we're going to the CDC
-struct sk_buff* eggsfs_metadata_request(
-    struct eggsfs_metadata_socket* sock,
+struct sk_buff* ternfs_metadata_request(
+    struct ternfs_metadata_socket* sock,
     s16 shard_id,
     u64 req_id,
     void* p,
@@ -429,26 +429,26 @@ struct sk_buff* eggsfs_metadata_request(
     const atomic64_t* addr_data2,
     u32* attempts
 ) {
-    struct eggsfs_metadata_sync_request req;
+    struct ternfs_metadata_sync_request req;
     init_completion(&req.comp);
     req.req.request_id = req_id;
     req.req.flags = 0;
     req.req.shard = shard_id;
 
-    struct eggsfs_metadata_request_state state;
+    struct ternfs_metadata_request_state state;
     struct sk_buff* skb = NULL;
 
-    eggsfs_metadata_request_init(sock, &req.req, &state);
+    ternfs_metadata_request_init(sock, &req.req, &state);
 
     u8 kind = *((u8*)p + 12);
 
     for (;;) {
-        int err = eggsfs_metadata_send_request(sock, addr_data1, addr_data2, &req.req, p, len, &state);
+        int err = ternfs_metadata_send_request(sock, addr_data1, addr_data2, &req.req, p, len, &state);
         if (err < 0) {
             skb = ERR_PTR(err);
             goto out;
         }
-        skb = eggsfs_metadata_wait_request(sock, &req, shard_id, kind, &state);
+        skb = ternfs_metadata_wait_request(sock, &req, shard_id, kind, &state);
         if (IS_ERR(skb)) {
             if (PTR_ERR(skb) == -ETIMEDOUT) { continue; }
             goto out;

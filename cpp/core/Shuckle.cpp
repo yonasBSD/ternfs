@@ -321,7 +321,7 @@ std::pair<int, std::string> fetchCDCReplicas(
     }
 
     if (respContainer.getCdcReplicasDEPRECATED().replicas.els.size() != replicas.size()) {
-        throw EGGS_EXCEPTION("expecting %s replicas, got %s", replicas.size(), respContainer.getCdcReplicasDEPRECATED().replicas.els.size());
+        throw TERN_EXCEPTION("expecting %s replicas, got %s", replicas.size(), respContainer.getCdcReplicasDEPRECATED().replicas.els.size());
     }
     for (int i = 0; i < replicas.size(); i++) {
         replicas[i] = respContainer.getCdcReplicasDEPRECATED().replicas.els[i];
@@ -349,7 +349,7 @@ std::pair<int, std::string> fetchLocalShards(const std::string& host, uint16_t p
         if (err) { return {err, errStr}; }
     }
     if (respContainer.getLocalShards().shards.els.size() != shards.size()) {
-        throw EGGS_EXCEPTION("expecting %s shards, got %s", shards.size(), respContainer.getLocalShards().shards.els.size());
+        throw TERN_EXCEPTION("expecting %s shards, got %s", shards.size(), respContainer.getLocalShards().shards.els.size());
     }
     for (int i = 0; i < shards.size(); i++) {
         shards[i] = respContainer.getLocalShards().shards.els[i];

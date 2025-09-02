@@ -1,35 +1,31 @@
-# EggsFS
+# TernFS
 
-A distributed file system.
+A distributed file system. For a high-level description of TernFS, see its [blog post](TODO insert link). This document provides a more bare-bones overview and an introduction to the codebase.
 
 ## Goals
 
-The target use case for EggsFS is the kind of machine learning we do at XTX: reading and writing large immutable files. With "immutable" we mean files that do not need modifying after they are first created. With "large" we mean that most of the storage space will be taken up by files bigger than a few MBs.
+The target use case for TernFS is the kind of machine learning we do at XTX: reading and writing large immutable files. With "immutable" we mean files that do not need modifying after they are first created. With "large" we mean that most of the storage space will be taken up by files bigger than a few MBs.
 
-We don't expect new directories to be created often, and files (or directories) to be moved between directories often. In terms of numbers, we expect the upper bound for EggsFS to roughly be the upper bound for the data we're planning for a single data center:
+We don't expect new directories to be created often, and files (or directories) to be moved between directories often. In terms of numbers, we expect the upper bound for TernFS to roughly be the upper bound for the data we're planning for a single data center:
 
 - 10EB of logical file storage (i.e. if you sum all file sizes = 10EB)
 - 1 trillion files -- average ~10MB file size
 - 100 billion directories -- average ~10 files per directory
-- 100,000 clients
+- 1 million clients
 
 We want to drive the filesystem with commodity hardware and Ethernet networking.
 
 We want the system to be robust in various ways:
 
-* Witnessing half-written files should be impossible -- a file is fully written by the writer or not readable by other clients (TODO reference link)
+* Witnessing half-written files should be impossible -- a file is fully written by the writer or not readable by other clients
 * Power loss or similar failure of storage or metadata nodes should not result in a corrupted filesystems (be it metadata or filesystem corruption)
 * Corrupted reads due to hard drives bitrot should be exceedingly unlikely
-  * TODO reference to CRC32C strategy for spans/blocks
-  * TODO some talking about RocksDB's CRCs (<https://rocksdb.org/blog/2022/07/18/per-key-value-checksum.html>)
 * Data loss should be exceedingly unlikely, unless we suffer a datacenter-wide catastrophic event (fire, flooding, datacenter-wide vibration, etc)
-  * TODO link to precise storage strategy to make this more precise
-  * TODO some talking about future multi data center plans
 * The filesystem should keep working through maintenance or failure of metadata or storage nodes
 
-Moreover, we want the filesystem to be usable as a "normal" filesystem (although _not_ a POSIX compliant filesystem) as opposed to a blob storage with some higher level API a-la AWS S3. This is mostly due to the cost we would face if we had to upgrade all the current users of the compute cluster to a non-file API.
+We also want to be able to restore deleted files or directories, using a configurable "permanent deletion" policy.
 
-Finally, we want to be able to restore deleted files or directories, using a configurable "permanent deletion" policy.
+Finally, TernFS can be replicated to multiple data centres to make it resilient to data centre loss, with each data centre storing the whole TernFS data set.
 
 ## Components
 
@@ -40,19 +36,19 @@ TODO decorate list below with links drilling down on specific concepts.
 * **servers**
   * **shuckle**
     * 1 logical instance
-    * `eggsshuckle`, Go binary
+    * `ternshuckle`, Go binary
     * state currently persisted through SQLite (1 physical instance), should move to a Galera cluster soon (see #41)
     * TCP -- both bincode and HTTP
-    * stores metadata about a specific EggsFS deployment
+    * stores metadata about a specific TernFS deployment
       * shard/cdc addresses
       * block services addressea and storage statistics
       * latency histograms
-    * serves web UI (e.g. <http://REDACTED>)
+    * serves web UI
   * **filesystem data**
     * **metadata**
       * **shard**
         * 256 logical instances
-        * `eggsshard`, C++ binary
+        * `ternshard`, C++ binary
         * stores all metadata for the filesystem
           * file attributes (size, mtime, atime)
           * directory attributes (mtime)
@@ -64,7 +60,7 @@ TODO decorate list below with links drilling down on specific concepts.
         * communicates with shuckle to fetch block services, register itself, insert statistics
     * **CDC**
       * 1 logical instance
-      * `eggscdc`, C++ binary
+      * `terncdc`, C++ binary
       * coordinates actions which span multiple directories
         * create directory
         * remove directory
@@ -81,7 +77,7 @@ TODO decorate list below with links drilling down on specific concepts.
     * up to 1 million logical instances
     * 1 logical instance = 1 disk
     * 1 physical instance handles ~100 logical instances (since there are ~100 disks per server)
-    * `eggsblocks`, Go binary (for now, will be rewritten in C++ eventually)
+    * `ternblocks`, Go binary (for now, will be rewritten in C++ eventually)
     * stores "blocks", which are blobs of data which contain file contents
     * each file is split in many blocks stored on many block services (so that if up to 4 block services fail we can always recover files)
     * single instances are not redundant, the redundancy is handled by spreading files over many instances so that we can recover their contents
@@ -91,28 +87,28 @@ TODO decorate list below with links drilling down on specific concepts.
     * communicates with shuckle to register itself and to update information about free space, number of blocks, etc.
 * **clients**, these all talk to all of the servers
   * **cli**
-    * `eggscli`, Go binary
+    * `terncli`, Go binary
     * toolkit to perform various tasks, most notably
-      * migrating contents of dead block services (`eggscli migrate`)
-      * moving around blocks so that files are stored efficiently (`eggscli defrag`, currently WIP, see #50)
+      * migrating contents of dead block services (`terncli migrate`)
+      * moving around blocks so that files are stored efficiently (`terncli defrag`, currently WIP, see #50)
   * **kmod**
-    * `eggsfs.ko`, C Linux kernel module
+    * `ternfs.ko`, C Linux kernel module
     * kernel module implementing `mount -t eggsfs ...`
     * the most fun and pleasant part of the codebase
   * **FUSE**
-    * `eggsfuse`, Go FUSE implementation of an eggsfs client
+    * `ternfuse`, Go FUSE implementation of a TernFS client
     * much slower but should be almost fully functional (there are some limitations concerning when a file gets flushed)
 * **daemons**, these also talk to all of the servers
   * **GC**
-    * `eggsgc`, Go binary
+    * `terngc`, Go binary
     * permanently deletes expired snapshots (i.e. deleted but not yet purged data)
     * cleans up all blocks for permanently deleted files
   * **scrubber**
     * TODO see #32
     * goes around detecting and repairing bitrot
 * **additional tools**
-  * `eggsrun`, a tool to quickly spin up an EggsFS instance
-  * `eggstests`, runs some integration tests
+  * `ternrun`, a tool to quickly spin up a TernFS instance
+  * `terntests`, runs some integration tests
 
 ## Building
 
@@ -135,13 +131,13 @@ Will run the integration tests as CI would (inside a docker image). You can also
 To work with the qemu kmod tests you'll first need to download the base Ubuntu image we use for testing:
 
 ```
-% wget 'https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img'
+% wget -P kmod 'https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img'
 ```
 
 Then you can run the CI tests in kmod like so:
 
 ```
-% ./ci.py --kmod --short --prepare-image=/full/path/to/focal-server-cloudimg-amd64.img --leader-only
+% ./ci.py --kmod --short --prepare-image=kmod/focal-server-cloudimg-amd64.img --leader-only
 ```
 
 The tests redirect dmesg output to `kmod/dmesg`, event tracing output to `kmod/trace`, and the full test log to `kmod/test-out`.
@@ -152,18 +148,18 @@ You can also ssh into the qemu which is running the tests with
 % ssh -p 2223 -i kmod/image-key fmazzol@localhost
 ```
 
-Note that the kmod tests are very long (~1hr). Usually when developing the kernel module it's best to use `./kmod/restartsession.sh` to be dropped into qemu, and then run specific tests using `eggstests`.
+Note that the kmod tests are very long (~1hr). Usually when developing the kernel module it's best to use `./kmod/restartsession.sh` to be dropped into qemu, and then run specific tests using `terntests`.
 
-However when merging code modifying eggsfs internals it's very important for the kmod tests to pass as well as the normal integration tests. This is due to the fact that the qemu environment is generally very different from the non-qemu env, which means that sometimes it'll surface issues that the non-qemu environment won't.
+However when merging code modifying TernFS internals it's very important for the kmod tests to pass as well as the normal integration tests. This is due to the fact that the qemu environment is generally very different from the non-qemu env, which means that sometimes it'll surface issues that the non-qemu environment won't.
 
-## Playing with a local EggsFS instance
+## Playing with a local TernFS instance
 
 ```
-% cd go/eggsrun
+% cd go/ternrun
 % go run . -data-dir <data-dir>
 ```
 
-The above will run all the processes needed to run EggsFS. This includes:
+The above will run all the processes needed to run TernFS. This includes:
 
 * 256 metadata shards;
 * 1 cross directory coordinator (CDC)
@@ -171,6 +167,8 @@ The above will run all the processes needed to run EggsFS. This includes:
 * 1 shuckle instance
 
 A multitude of directories to persist the whole thing will appear in `<data-dir>`. The filesystem will also be mounted using FUSE under `<data-dir>/fuse/mnt`.
+
+TODO add instruction on how to run a multi-datacenter setup.
 
 ## Building the Kernel module
 
@@ -185,7 +183,7 @@ A multitude of directories to persist the whole thing will appear in `<data-dir>
 
 Most of the codebase is understandable by VS Code/LSP:
 
-* Code in `go/` just works out of the box with the [Go extension](https://code.visualstudio.com/docs/languages/go). I (fmazzol) open a separate VS Code window which specifically has the `eggsfs/go` directory open, since the Go extension doesn't seem to like working from a subdirectory.
+* Code in `go/` just works out of the box with the [Go extension](https://code.visualstudio.com/docs/languages/go). I (fmazzol) open a separate VS Code window which specifically has the `ternfs/go` directory open, since the Go extension doesn't seem to like working from a subdirectory.
 * Code in `cpp/`:
     - Disable existing C++ integrations for VS Code (I don't remember which exact C++ extension caused me trouble -- something by Microsoft itself).
     - Install the [clangd extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd).
@@ -202,3 +200,7 @@ Most of the codebase is understandable by VS Code/LSP:
     - [Build the module](#building-the-kernel-module).
     - Generate `compile_commands.json` with `./kmod/gen_compile_commands.sh`.
     - New files should work automatically, but if things stop working, just re-bulid and re-generate `compile_commands.json`.
+
+## A note on naming
+
+TernFS was originally called EggsFS internally. This name quickly proved to be very poor due to the phonetic similarity to XFS, another notable filesystem. Therefore the filesystem was renamed to TernFS before open sourcing. However the old name lingers on in certain areas of the system that would have been hard to change, such as metric names.

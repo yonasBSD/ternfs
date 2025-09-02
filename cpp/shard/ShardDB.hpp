@@ -13,7 +13,7 @@
 
 struct ShardLogEntry {
     LogIdx idx;
-    EggsTime time;
+    TernTime time;
     ShardLogEntryContainer body;
 
     bool operator==(const ShardLogEntry& rhs) const {
@@ -81,7 +81,7 @@ public:
     // for some span request or something like that).
     //
     // As usual, if an error is returned, the contents of `logEntry` should be ignored.
-    EggsError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry);
+    TernError prepareLogEntry(const ShardReqContainer& req, ShardLogEntry& logEntry);
 
     // The index of the last log entry persisted to the DB
     uint64_t lastAppliedLogEntry();

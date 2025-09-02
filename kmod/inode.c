@@ -17,127 +17,127 @@
 
 // Some services (samba) try to preallocate larger files, but can handle
 // the failure or absence of ftruncate().
-unsigned eggsfs_disable_ftruncate = 0;
+unsigned ternfs_disable_ftruncate = 0;
 
-static struct kmem_cache* eggsfs_inode_cachep;
+static struct kmem_cache* ternfs_inode_cachep;
 
 #define MSECS_TO_JIFFIES(_ms) (((u64)_ms * HZ) / 1000ull)
 
 #define POSIX_BLK_SIZE 512
 
 // This is very rarely needed to be up to date, set it to 1hr
-int eggsfs_dir_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
-int eggsfs_file_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
+int ternfs_dir_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
+int ternfs_file_getattr_refresh_time_jiffies = MSECS_TO_JIFFIES(3600000);
 
-int eggsfs_dir_dentry_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
+int ternfs_dir_dentry_refresh_time_jiffies = MSECS_TO_JIFFIES(250);
 
 static void getattr_async_complete(struct work_struct* work);
 
-struct inode* eggsfs_inode_alloc(struct super_block* sb) {
-    struct eggsfs_inode* enode;
+struct inode* ternfs_inode_alloc(struct super_block* sb) {
+    struct ternfs_inode* enode;
 
-    eggsfs_debug("sb=%p", sb);
+    ternfs_debug("sb=%p", sb);
 
-    enode = (struct eggsfs_inode*)kmem_cache_alloc(eggsfs_inode_cachep, GFP_NOFS);
+    enode = (struct ternfs_inode*)kmem_cache_alloc(ternfs_inode_cachep, GFP_NOFS);
     if (!enode) {
         return NULL;
     }
 
-    eggsfs_latch_init(&enode->getattr_update_latch);
-    eggsfs_latch_init(&enode->getattr_update_init_latch);
+    ternfs_latch_init(&enode->getattr_update_latch);
+    ternfs_latch_init(&enode->getattr_update_init_latch);
     INIT_DELAYED_WORK(&enode->getattr_async_work, &getattr_async_complete);
 
-    eggsfs_debug("done enode=%p", enode);
+    ternfs_debug("done enode=%p", enode);
     return &enode->inode;
 }
 
-void eggsfs_inode_evict(struct inode* inode) {
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
-    eggsfs_debug("evict enode=%p", enode);
+void ternfs_inode_evict(struct inode* inode) {
+    struct ternfs_inode* enode = TERNFS_I(inode);
+    ternfs_debug("evict enode=%p", enode);
     if (S_ISDIR(inode->i_mode)) {
-        eggsfs_dir_drop_cache(enode);
+        ternfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        eggsfs_unlink_spans(enode);
+        ternfs_unlink_spans(enode);
     }
     truncate_inode_pages(&inode->i_data, 0);
     clear_inode(inode);
 }
 
-void eggsfs_inode_free(struct inode* inode) {
+void ternfs_inode_free(struct inode* inode) {
     // We need to clear the spans
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
-    eggsfs_debug("enode=%p", enode);
-    kmem_cache_free(eggsfs_inode_cachep, enode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
+    ternfs_debug("enode=%p", enode);
+    kmem_cache_free(ternfs_inode_cachep, enode);
 }
 
-static void eggsfs_inode_init_once(void* ptr) {
-    struct eggsfs_inode* enode = (struct eggsfs_inode*)ptr;
+static void ternfs_inode_init_once(void* ptr) {
+    struct ternfs_inode* enode = (struct ternfs_inode*)ptr;
 
     inode_init_once(&enode->inode);
 }
 
-int __init eggsfs_inode_init(void) {
-    eggsfs_inode_cachep = kmem_cache_create(
-        "eggsfs_inode_cache", sizeof(struct eggsfs_inode),
-        0, SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD, eggsfs_inode_init_once
+int __init ternfs_inode_init(void) {
+    ternfs_inode_cachep = kmem_cache_create(
+        "ternfs_inode_cache", sizeof(struct ternfs_inode),
+        0, SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD, ternfs_inode_init_once
     );
-    if (!eggsfs_inode_cachep) { return -ENOMEM; }
+    if (!ternfs_inode_cachep) { return -ENOMEM; }
 
     return 0;
 }
 
-void __cold eggsfs_inode_exit(void) {
-    eggsfs_debug("inode exit");
+void __cold ternfs_inode_exit(void) {
+    ternfs_debug("inode exit");
     rcu_barrier();
-    kmem_cache_destroy(eggsfs_inode_cachep);
+    kmem_cache_destroy(ternfs_inode_cachep);
 }
 
 // Returns:
 // *  0: the async getattr was not sent, because of contention
 // *  1: the async getattr was sent
 // * -n: error code
-int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
-    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+int ternfs_start_async_getattr(struct ternfs_inode* enode) {
+    ternfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 
     int ret = 0;
     u64 seqno = 0;
     u64 init_seqno = 0;
-    if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
-        // it is not safe to pass enode->getattr_async_seqno directly to eggsfs_latch_try_acquire as subsequent calls while lock is held
+    if (ternfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
+        // it is not safe to pass enode->getattr_async_seqno directly to ternfs_latch_try_acquire as subsequent calls while lock is held
         // overwrite the seqno we need for release causing a deadlock
         enode->getattr_async_seqno = seqno;
         // This latch is guaranteeing completion does not finish and free update_latch before we are finished with it
         // As we didn't schedule completion yet no one could be holding it
-        BUG_ON(!eggsfs_latch_try_acquire(&enode->getattr_update_init_latch, init_seqno));
+        BUG_ON(!ternfs_latch_try_acquire(&enode->getattr_update_init_latch, init_seqno));
         ihold(&enode->inode); // we need the request until we're done
         // Schedule the work immediately, so that we can't end up in the situation where
         // the async completes before we schedule the work and we run the complete twice.
-        BUG_ON(!schedule_delayed_work(&enode->getattr_async_work, eggsfs_initial_shard_timeout_jiffies));
+        BUG_ON(!schedule_delayed_work(&enode->getattr_async_work, ternfs_initial_shard_timeout_jiffies));
 
 
         u64 ts = get_jiffies_64();
         if (smp_load_acquire(&enode->getattr_expiry) > ts) {
-            eggsfs_debug("getattr fresh enough, skipping");
+            ternfs_debug("getattr fresh enough, skipping");
             goto out;
         }
 
         if (S_ISDIR(enode->inode.i_mode)) {
-            ret = eggsfs_shard_async_getattr_dir(
-                (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+            ret = ternfs_shard_async_getattr_dir(
+                (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
                 &enode->getattr_async_req,
                 enode->inode.i_ino
             );
             if (ret) { goto out; }
         } else {
-            if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
-                ret = eggsfs_shard_async_getattr_file(
-                    (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+            if (enode->file.status == TERNFS_FILE_STATUS_READING || enode->file.status == TERNFS_FILE_STATUS_NONE) {
+                ret = ternfs_shard_async_getattr_file(
+                    (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
                     &enode->getattr_async_req,
                     enode->inode.i_ino
                 );
                 if (ret) { goto out; }
             } else {
-                eggsfs_debug("skipping async getattr for non-reading file");
+                ternfs_debug("skipping async getattr for non-reading file");
                 goto out;
             }
         }
@@ -149,35 +149,35 @@ int eggsfs_start_async_getattr(struct eggsfs_inode* enode) {
 
 out:
     //we are done with init, relase the init latch
-    eggsfs_latch_release(&enode->getattr_update_init_latch, init_seqno);
+    ternfs_latch_release(&enode->getattr_update_init_latch, init_seqno);
     if (ret <= 0) {
         // The timeout might have already ran, in which case it'll be the one
         // releasing the latch.
         bool was_pending = cancel_delayed_work_sync(&enode->getattr_async_work);
         if (was_pending) {
             iput(&enode->inode);
-            eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+            ternfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
         }
     }
     return ret;
 }
 
 static void getattr_async_complete(struct work_struct* work) {
-    struct eggsfs_inode* enode = container_of(to_delayed_work(work), struct eggsfs_inode, getattr_async_work);
-    eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+    struct ternfs_inode* enode = container_of(to_delayed_work(work), struct ternfs_inode, getattr_async_work);
+    ternfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 
     u64 seqno = 0;
-    if(!eggsfs_latch_try_acquire(&enode->getattr_update_init_latch, seqno)) {
-        // wait until eggsfs_do_getattr is finished with init
-        eggsfs_latch_wait(&enode->getattr_update_init_latch, seqno);
+    if(!ternfs_latch_try_acquire(&enode->getattr_update_init_latch, seqno)) {
+        // wait until ternfs_do_getattr is finished with init
+        ternfs_latch_wait(&enode->getattr_update_init_latch, seqno);
         // we are holding getattr_update_latch no one will acquire init latch before we release it
-        BUG_ON(!eggsfs_latch_try_acquire(&enode->getattr_update_init_latch, seqno));
+        BUG_ON(!ternfs_latch_try_acquire(&enode->getattr_update_init_latch, seqno));
     }
     // we might as well release it now, we are holding getattr_update_latch
-    eggsfs_latch_release(&enode->getattr_update_init_latch, seqno);
+    ternfs_latch_release(&enode->getattr_update_init_latch, seqno);
 
     // we need to remove the request first before checking if we have buffer or not otherwise buffer could be set after we check and we would leak buffer
-    eggsfs_metadata_remove_request(&((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info)->sock, enode->getattr_async_req.request_id);
+    ternfs_metadata_remove_request(&((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info)->sock, enode->getattr_async_req.request_id);
 
     // if we have a buffer, we're done, otherwise it's a timeout
     if (enode->getattr_async_req.skb) {
@@ -192,27 +192,27 @@ static void getattr_async_complete(struct work_struct* work) {
         u64 atime;
         if (S_ISDIR(enode->inode.i_mode)) {
             u64 owner;
-            struct eggsfs_policy_body block_policy;
-            struct eggsfs_policy_body span_policy;
-            struct eggsfs_policy_body stripe_policy;
-            err = eggsfs_error_to_linux(eggsfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy));
+            struct ternfs_policy_body block_policy;
+            struct ternfs_policy_body span_policy;
+            struct ternfs_policy_body stripe_policy;
+            err = ternfs_error_to_linux(ternfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy));
             if (err == 0) {
                 if (block_policy.len) {
-                    enode->block_policy = eggsfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
+                    enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
                 }
                 if (span_policy.len) {
-                    enode->span_policy = eggsfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
+                    enode->span_policy = ternfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
                 }
                 if (stripe_policy.len) {
-                    enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
+                    enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
                 }
-                expiry = get_jiffies_64() + eggsfs_dir_getattr_refresh_time_jiffies;
+                expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
             }
         } else {
             u64 size;
-            err = eggsfs_shard_parse_getattr_file(skb, &mtime, &atime, &size);
+            err = ternfs_shard_parse_getattr_file(skb, &mtime, &atime, &size);
             has_atime = true;
-            if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
+            if (err == TERNFS_ERR_FILE_NOT_FOUND && enode->file.status == TERNFS_FILE_STATUS_NONE) { // probably just created
                 enode->inode.i_size = 0;
                 enode->inode.i_blocks = 0;
                 expiry = 0;
@@ -220,13 +220,13 @@ static void getattr_async_complete(struct work_struct* work) {
             } else if (err == 0) {
                 enode->inode.i_size = size;
                 enode->inode.i_blocks = DIV_ROUND_UP(size, POSIX_BLK_SIZE);
-                expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
+                expiry = get_jiffies_64() + ternfs_file_getattr_refresh_time_jiffies;
             }
-            err = eggsfs_error_to_linux(err);
+            err = ternfs_error_to_linux(err);
         }
 
         if (err) {
-            eggsfs_info("could not perform async stat to 0x%016lx: %d", enode->inode.i_ino, err);
+            ternfs_info("could not perform async stat to 0x%016lx: %d", enode->inode.i_ino, err);
         } else {
             WRITE_ONCE(enode->mtime, mtime);
             inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
@@ -234,30 +234,30 @@ static void getattr_async_complete(struct work_struct* work) {
             if (has_atime) {
                 inode_set_atime(&enode->inode, atime / 1000000000, atime % 1000000000);
             }
-            eggsfs_debug("id=%016lx new_expiry=%llu", enode->inode.i_ino, expiry);
+            ternfs_debug("id=%016lx new_expiry=%llu", enode->inode.i_ino, expiry);
             smp_store_release(&enode->getattr_expiry, expiry);
         }
     }
 
     // And put inode, release latch ordering is not important in this case but it's good practice to release references/locks in reverse order of acquisition
     iput(&enode->inode);
-    eggsfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+    ternfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
 }
 
-int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
+int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
     int err;
     s64 seqno;
 
     // progress: whoever wins the lock won't try again
     for (;;) {
-        eggsfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
+        ternfs_debug("enode=%p id=0x%016lx mtime=%lld getattr_expiry=%lld", enode, enode->inode.i_ino, enode->mtime, enode->getattr_expiry);
 
         // we're still managing this file, nothing to do
-        if (!S_ISDIR(enode->inode.i_mode) && enode->file.status == EGGSFS_FILE_STATUS_WRITING) {
+        if (!S_ISDIR(enode->inode.i_mode) && enode->file.status == TERNFS_FILE_STATUS_WRITING) {
             return 0;
         }
 
-        if (eggsfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
+        if (ternfs_latch_try_acquire(&enode->getattr_update_latch, seqno)) {
             u64 ts = get_jiffies_64();
             switch (cache_timeout_type) {
             case ATTR_CACHE_NORM_TIMEOUT:
@@ -270,7 +270,7 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
             case ATTR_CACHE_NO_TIMEOUT:
                 break;
             default:
-                eggsfs_error("unknown cache timeout type %d", cache_timeout_type);
+                ternfs_error("unknown cache timeout type %d", cache_timeout_type);
                 BUG();
             }
 
@@ -280,11 +280,11 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
             u64 atime;
             if (S_ISDIR(enode->inode.i_mode)) {
                 u64 owner;
-                struct eggsfs_policy_body block_policy;
-                struct eggsfs_policy_body span_policy;
-                struct eggsfs_policy_body stripe_policy;
-                err = eggsfs_shard_getattr_dir(
-                    (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+                struct ternfs_policy_body block_policy;
+                struct ternfs_policy_body span_policy;
+                struct ternfs_policy_body stripe_policy;
+                err = ternfs_shard_getattr_dir(
+                    (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
                     enode->inode.i_ino,
                     &mtime,
                     &owner,
@@ -294,29 +294,29 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
                 );
                 if (err == 0) {
                     if (block_policy.len) {
-                        enode->block_policy = eggsfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
+                        enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
                     }
                     if (span_policy.len) {
-                        enode->span_policy = eggsfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
+                        enode->span_policy = ternfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
                     }
                     if (stripe_policy.len) {
-                        enode->stripe_policy = eggsfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
+                        enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
                     }
-                    expiry = get_jiffies_64() + eggsfs_dir_getattr_refresh_time_jiffies;
+                    expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
                 }
             } else {
-                if (enode->file.status == EGGSFS_FILE_STATUS_READING || enode->file.status == EGGSFS_FILE_STATUS_NONE) {
-                    eggsfs_debug("updating getattr for reading file");
+                if (enode->file.status == TERNFS_FILE_STATUS_READING || enode->file.status == TERNFS_FILE_STATUS_NONE) {
+                    ternfs_debug("updating getattr for reading file");
                     u64 size;
-                    err = eggsfs_shard_getattr_file(
-                        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+                    err = ternfs_shard_getattr_file(
+                        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
                         enode->inode.i_ino,
                         &mtime,
                         &atime,
                         &size
                     );
                     has_atime = true;
-                    if (err == EGGSFS_ERR_FILE_NOT_FOUND && enode->file.status == EGGSFS_FILE_STATUS_NONE) { // probably just created
+                    if (err == TERNFS_ERR_FILE_NOT_FOUND && enode->file.status == TERNFS_FILE_STATUS_NONE) { // probably just created
                         enode->inode.i_size = 0;
                         expiry = 0;
                         mtime = 0;
@@ -326,13 +326,13 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
                         // our replication policy is per span. This is quite expensive to do for stat.
                         // We could keep this value calcualated and stored on shards but it's not worth it at this point.
                         enode->inode.i_blocks = DIV_ROUND_UP(size, POSIX_BLK_SIZE);
-                        expiry = get_jiffies_64() + eggsfs_file_getattr_refresh_time_jiffies;
+                        expiry = get_jiffies_64() + ternfs_file_getattr_refresh_time_jiffies;
                     }
                 } else {
-                    BUG_ON(enode->file.status != EGGSFS_FILE_STATUS_WRITING);
+                    BUG_ON(enode->file.status != TERNFS_FILE_STATUS_WRITING);
                 }
             }
-            if (err) { err = eggsfs_error_to_linux(err); goto out; }
+            if (err) { err = ternfs_error_to_linux(err); goto out; }
             else {
                 WRITE_ONCE(enode->mtime, mtime);
                 inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
@@ -343,32 +343,32 @@ int eggsfs_do_getattr(struct eggsfs_inode* enode, int cache_timeout_type) {
             }
 
             if (S_ISDIR(enode->inode.i_mode)) {
-                smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + eggsfs_dir_dentry_refresh_time_jiffies);
+                smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + ternfs_dir_dentry_refresh_time_jiffies);
             }
             smp_store_release(&enode->getattr_expiry, expiry);
 
 out:
-            eggsfs_latch_release(&enode->getattr_update_latch, seqno);
-            eggsfs_debug("out mtime=%llu getattr_expiry=%llu", enode->mtime, enode->getattr_expiry);
+            ternfs_latch_release(&enode->getattr_update_latch, seqno);
+            ternfs_debug("out mtime=%llu getattr_expiry=%llu", enode->mtime, enode->getattr_expiry);
             return err;
         } else {
-            long ret = eggsfs_latch_wait_timeout(&enode->getattr_update_latch, seqno, 2 * eggsfs_overall_shard_timeout_jiffies);
+            long ret = ternfs_latch_wait_timeout(&enode->getattr_update_latch, seqno, 2 * ternfs_overall_shard_timeout_jiffies);
             if (unlikely(ret < 1)) {
-                eggsfs_warn("latch_wait timed out, this should never happen, getattr stuck? id=0x%016lx getattr_async_seqno=%lld counter=%lld seqno=%lld", enode->inode.i_ino, enode->getattr_async_seqno, atomic64_read(&enode->getattr_update_latch.counter), seqno);
+                ternfs_warn("latch_wait timed out, this should never happen, getattr stuck? id=0x%016lx getattr_async_seqno=%lld counter=%lld seqno=%lld", enode->inode.i_ino, enode->getattr_async_seqno, atomic64_read(&enode->getattr_update_latch.counter), seqno);
                 return -EDEADLK;
             }
         }
     }
 }
 
-static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int itype, struct dentry* dentry) {
+static struct ternfs_inode* ternfs_create_internal(struct inode* parent, int itype, struct dentry* dentry) {
     int err;
 
     BUG_ON(dentry->d_inode);
 
-    if (dentry->d_name.len > EGGSFS_MAX_FILENAME) { return ERR_PTR(-ENAMETOOLONG); }
+    if (dentry->d_name.len > TERNFS_MAX_FILENAME) { return ERR_PTR(-ENAMETOOLONG); }
 
-    // internal-repo/blob/main/docs/kmod-file-tracking.md
+    // https://internal-repo/blob/main/docs/kmod-file-tracking.md
     // This (should) happen only from NFSd. Right now we only re-export on NFS for
     // this reason, so we should never hit this.
     preempt_disable();
@@ -376,37 +376,37 @@ static struct eggsfs_inode* eggsfs_create_internal(struct inode* parent, int ity
     struct mm_struct* mm = owner->mm;
     if (mm == NULL) {
         preempt_enable();
-        eggsfs_warn("current->group_leader->mm = NULL, called from kernel thread?");
+        ternfs_warn("current->group_leader->mm = NULL, called from kernel thread?");
         return ERR_PTR(-EIO);
     }
     // We might need the mm beyond the file lifetime, to clear up block write pages MM_FILEPAGES
     mmgrab(mm);
     preempt_enable();
 
-    struct eggsfs_inode* parent_enode = EGGSFS_I(parent);
+    struct ternfs_inode* parent_enode = TERNFS_I(parent);
 
-    eggsfs_debug("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
+    ternfs_debug("creating %*s in %016lx", dentry->d_name.len, dentry->d_name.name, parent->i_ino);
 
     u64 ino, cookie;
-    err = eggsfs_error_to_linux(eggsfs_shard_create_file(
-        (struct eggsfs_fs_info*)parent->i_sb->s_fs_info, eggsfs_inode_shard(parent->i_ino),
+    err = ternfs_error_to_linux(ternfs_shard_create_file(
+        (struct ternfs_fs_info*)parent->i_sb->s_fs_info, ternfs_inode_shard(parent->i_ino),
         itype, dentry->d_name.name, dentry->d_name.len, &ino, &cookie
     ));
     if (err) {
-        err = eggsfs_error_to_linux(err);
+        err = ternfs_error_to_linux(err);
         goto out_err;
     }
     // make this dentry stick around?
 
     // new_inode
-    struct inode* inode = eggsfs_get_inode_normal(parent->i_sb, parent_enode, ino);
+    struct inode* inode = ternfs_get_inode_normal(parent->i_sb, parent_enode, ino);
     if (IS_ERR(inode)) {
         err = PTR_ERR(inode);
         goto out_err;
     }
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
-    enode->file.status = EGGSFS_FILE_STATUS_WRITING;
+    enode->file.status = TERNFS_FILE_STATUS_WRITING;
     enode->inode.i_size = 0;
 
     // Initialize all the transient specific fields
@@ -424,8 +424,8 @@ out_err:
     return ERR_PTR(err);
 }
 
-static int COMPAT_FUNC_UNS_IMP(eggsfs_create, struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
-    struct eggsfs_inode* enode = eggsfs_create_internal(parent, EGGSFS_INODE_FILE, dentry);
+static int COMPAT_FUNC_UNS_IMP(ternfs_create, struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
+    struct ternfs_inode* enode = ternfs_create_internal(parent, TERNFS_INODE_FILE, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
 
     // This is not valid yet, we need to fill it in first
@@ -436,13 +436,13 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_create, struct inode* parent, struct dentr
 }
 
 // vfs: refcount of path->dentry
-static int COMPAT_FUNC_UNS_IMP(eggsfs_getattr, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
+static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
     struct inode* inode = d_inode(path->dentry);
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
     trace_eggsfs_vfs_getattr_enter(inode);
 
-    // >= so that eggsfs_dir_refresh_time=0 causes revalidation at every call to this function
+    // >= so that ternfs_dir_refresh_time=0 causes revalidation at every call to this function
     if (get_jiffies_64() >= smp_load_acquire(&enode->getattr_expiry)) {
         int err;
 
@@ -456,7 +456,7 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_getattr, const struct path* path, struct k
 
         // dentry refcount also protects the inode (e.g. d_delete will not turn used dentry into a negative one),
         // so no need to grab anything before we start waiting for stuff
-        err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+        err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
         if (err) {
             trace_eggsfs_vfs_getattr_exit(inode, err);
             return err;
@@ -473,15 +473,15 @@ done:
     return 0;
 }
 
-static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
+static int ternfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     struct inode* inode = dentry->d_inode;
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
-    if (eggsfs_disable_ftruncate) { return -ENOSYS; }
+    if (ternfs_disable_ftruncate) { return -ENOSYS; }
 
     BUG_ON(!inode_is_locked(inode));
 
-    if (smp_load_acquire(&enode->file.status) != EGGSFS_FILE_STATUS_WRITING) {
+    if (smp_load_acquire(&enode->file.status) != TERNFS_FILE_STATUS_WRITING) {
         return -EINVAL;
     }
 
@@ -489,7 +489,7 @@ static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     loff_t epos = attr->ia_size;
 
     if (epos < ppos) {
-        eggsfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos);
+        ternfs_debug("refusing ftruncate on pos %lld smaller than file size %lld", epos, ppos);
         return -EINVAL;
     }
     if (epos == ppos) {
@@ -498,9 +498,9 @@ static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
 
     // any attempt to write after ftruncate() will still result in EINVAL
     while (ppos < epos) {
-        eggsfs_debug("calling file write with %lld %lld", ppos, epos);
-        ssize_t written = eggsfs_file_write_internal(enode, 0, &ppos, NULL, epos - ppos);
-        eggsfs_debug("wrriten %ld", written);
+        ternfs_debug("calling file write with %lld %lld", ppos, epos);
+        ssize_t written = ternfs_file_write_internal(enode, 0, &ppos, NULL, epos - ppos);
+        ternfs_debug("wrriten %ld", written);
         if (unlikely(written < 0)) {
             return written;
         }
@@ -509,7 +509,7 @@ static int eggsfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     return 0;
 }
 
-static int COMPAT_FUNC_UNS_IMP(eggsfs_setattr, struct dentry* dentry, struct iattr* attr) {
+static int COMPAT_FUNC_UNS_IMP(ternfs_setattr, struct dentry* dentry, struct iattr* attr) {
     // https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L49 is the only
     // place where ATTR_SIZE is set, which means only when truncating.
     if (attr->ia_valid & ATTR_SIZE) {
@@ -519,8 +519,8 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_setattr, struct dentry* dentry, struct iat
         // https://elixir.bootlin.com/linux/v5.4/source/fs/attr.c#L268.
         // Ideally we would continue the execution here and send the SET_TIME
         // request, but it is not supported for transient files and instead
-        // eggsfs_file_write_internal will modify mtime/ctime if needed.
-        return eggsfs_do_ftruncate(dentry, attr);
+        // ternfs_file_write_internal will modify mtime/ctime if needed.
+        return ternfs_do_ftruncate(dentry, attr);
     }
 
     // ATTR_TIMES_SET/ATTR_TOUCH is just to distinguish between a touch
@@ -528,7 +528,7 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_setattr, struct dentry* dentry, struct iat
     // Note that `utimes_common` unconditionally sets ATTR_CTIME, but we
     // can't do much with it.
     if (attr->ia_valid & ~(ATTR_ATIME|ATTR_ATIME_SET|ATTR_MTIME|ATTR_MTIME_SET|ATTR_TIMES_SET|ATTR_CTIME|ATTR_TOUCH)) {
-        eggsfs_debug("skipping setattr, ia_valid=%08x", attr->ia_valid);
+        ternfs_debug("skipping setattr, ia_valid=%08x", attr->ia_valid);
         return -EPERM;
     }
 
@@ -541,7 +541,7 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_setattr, struct dentry* dentry, struct iat
         } else {
             atime = now;
         }
-        eggsfs_debug("setting atime to %llu", atime);
+        ternfs_debug("setting atime to %llu", atime);
         atime |= 1ull << 63;
     }
 
@@ -552,24 +552,24 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_setattr, struct dentry* dentry, struct iat
         } else {
             mtime = now;
         }
-        eggsfs_debug("setting mtime to %llu", mtime);
+        ternfs_debug("setting mtime to %llu", mtime);
         mtime |= 1ull << 63;
     }
 
-    int err = eggsfs_shard_set_time((struct eggsfs_fs_info*)dentry->d_inode->i_sb->s_fs_info, dentry->d_inode->i_ino, mtime, atime);
+    int err = ternfs_shard_set_time((struct ternfs_fs_info*)dentry->d_inode->i_sb->s_fs_info, dentry->d_inode->i_ino, mtime, atime);
     if (err) { return err; }
 
     // could copy out attributes instead?
-    smp_store_release(&EGGSFS_I(dentry->d_inode)->getattr_expiry, 0);
+    smp_store_release(&TERNFS_I(dentry->d_inode)->getattr_expiry, 0);
 
     return 0;
 }
 
-static int COMPAT_FUNC_UNS_IMP(eggsfs_symlink, struct inode* dir, struct dentry* dentry, const char* path) {
-    struct eggsfs_inode* enode = eggsfs_create_internal(dir, EGGSFS_INODE_SYMLINK, dentry);
+static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry* dentry, const char* path) {
+    struct ternfs_inode* enode = ternfs_create_internal(dir, TERNFS_INODE_SYMLINK, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
 
-    enode->file.status = EGGSFS_FILE_STATUS_WRITING; // needed for flush to flush below
+    enode->file.status = TERNFS_FILE_STATUS_WRITING; // needed for flush to flush below
 
     size_t len = strlen(path);
 
@@ -581,11 +581,11 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_symlink, struct inode* dir, struct dentry*
     vec.iov_len = len;
     iov_iter_kvec(&from, READ, &vec, 1, vec.iov_len);
     inode_lock(&enode->inode);
-    int err = eggsfs_file_write(enode, 0, &ppos, &from);
+    int err = ternfs_file_write(enode, 0, &ppos, &from);
     inode_unlock(&enode->inode);
     if (err < 0) { return err; }
     // ...and flush them
-    err = eggsfs_file_flush(enode, dentry);
+    err = ternfs_file_flush(enode, dentry);
     if (err < 0) { return err; }
 
     // Now we link the dentry in
@@ -594,68 +594,68 @@ static int COMPAT_FUNC_UNS_IMP(eggsfs_symlink, struct inode* dir, struct dentry*
     return 0;
 }
 
-static const char* eggsfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
+static const char* ternfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
     // Can't be bothered to think about RCU
     if (dentry == NULL) { return ERR_PTR(-ECHILD); }
 
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
-    char* buf = eggsfs_read_link(enode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
+    char* buf = ternfs_read_link(enode);
 
     if (IS_ERR(buf)) { return buf; }
 
-    destructor->fn = eggsfs_link_destructor;
+    destructor->fn = ternfs_link_destructor;
     destructor->arg = buf;
 
     return buf;
 }
 
-static const struct inode_operations eggsfs_dir_inode_ops = {
-    .create = eggsfs_create,
-    .lookup = eggsfs_lookup,
-    .unlink = eggsfs_unlink,
-    .mkdir = eggsfs_mkdir,
-    .rmdir = eggsfs_rmdir,
-    .rename = eggsfs_rename,
-    .getattr = eggsfs_getattr,
-    .symlink = eggsfs_symlink,
+static const struct inode_operations ternfs_dir_inode_ops = {
+    .create = ternfs_create,
+    .lookup = ternfs_lookup,
+    .unlink = ternfs_unlink,
+    .mkdir = ternfs_mkdir,
+    .rmdir = ternfs_rmdir,
+    .rename = ternfs_rename,
+    .getattr = ternfs_getattr,
+    .symlink = ternfs_symlink,
 };
 
-static const struct inode_operations eggsfs_file_inode_ops = {
-    .getattr = eggsfs_getattr,
-    .setattr = eggsfs_setattr,
+static const struct inode_operations ternfs_file_inode_ops = {
+    .getattr = ternfs_getattr,
+    .setattr = ternfs_setattr,
 };
 
-static const struct inode_operations eggsfs_symlink_inode_ops = {
-    .getattr = eggsfs_getattr,
-    .setattr = eggsfs_setattr,
-    .get_link = eggsfs_get_link,
+static const struct inode_operations ternfs_symlink_inode_ops = {
+    .getattr = ternfs_getattr,
+    .setattr = ternfs_setattr,
+    .get_link = ternfs_get_link,
 };
 
-extern struct file_operations eggsfs_dir_operations;
+extern struct file_operations ternfs_dir_operations;
 
-struct inode* eggsfs_get_inode(
+struct inode* ternfs_get_inode(
     struct super_block* sb,
     bool allow_no_parent,
-    struct eggsfs_inode* parent,
+    struct ternfs_inode* parent,
     u64 ino
 ) {
     trace_eggsfs_get_inode_enter(ino);
 
-    struct eggsfs_fs_info* fs_info = (struct eggsfs_fs_info*)sb->s_fs_info;
+    struct ternfs_fs_info* fs_info = (struct ternfs_fs_info*)sb->s_fs_info;
 
     struct inode* inode = iget_locked(sb, ino); // new_inode when possible?
     if (!inode) {
         trace_eggsfs_get_inode_exit(ino, NULL, false, 0);
         return ERR_PTR(-ENOMEM);
     }
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
     bool new = inode->i_state & I_NEW;
     if (new) {
-        switch (eggsfs_inode_type(ino)) {
-        case EGGSFS_INODE_DIRECTORY: inode->i_mode = S_IFDIR; break;
-        case EGGSFS_INODE_FILE: inode->i_mode = S_IFREG; break;
-        case EGGSFS_INODE_SYMLINK: inode->i_mode = S_IFLNK; break;
+        switch (ternfs_inode_type(ino)) {
+        case TERNFS_INODE_DIRECTORY: inode->i_mode = S_IFDIR; break;
+        case TERNFS_INODE_FILE: inode->i_mode = S_IFREG; break;
+        case TERNFS_INODE_SYMLINK: inode->i_mode = S_IFLNK; break;
         default: BUG();
         }
         inode->i_mode |= 0777 & ~(S_ISDIR(inode->i_mode) ? fs_info->dmask : fs_info->fmask);
@@ -671,22 +671,22 @@ struct inode* eggsfs_get_inode(
         enode->mtime = 0;
         enode->edge_creation_time = 0;
         if (S_ISDIR(inode->i_mode)) {
-            inode->i_op = &eggsfs_dir_inode_ops;
-            inode->i_fop = &eggsfs_dir_operations;
+            inode->i_op = &ternfs_dir_inode_ops;
+            inode->i_fop = &ternfs_dir_operations;
 
             rcu_assign_pointer(enode->dir.dirents, NULL);
-            eggsfs_latch_init(&enode->dir.dirents_latch);
+            ternfs_latch_init(&enode->dir.dirents_latch);
             enode->dir.mtime_expiry = 0;
         } else if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
             if (unlikely(S_ISLNK(inode->i_mode))) {
-                inode->i_op = &eggsfs_symlink_inode_ops;
+                inode->i_op = &ternfs_symlink_inode_ops;
             } else {
-                inode->i_op = &eggsfs_file_inode_ops;
+                inode->i_op = &ternfs_file_inode_ops;
             }
-            inode->i_fop = &eggsfs_file_operations;
-            inode->i_mapping->a_ops = &eggsfs_mmap_operations;
+            inode->i_fop = &ternfs_file_operations;
+            inode->i_mapping->a_ops = &ternfs_mmap_operations;
 
-            enode->file.status = EGGSFS_FILE_STATUS_NONE;
+            enode->file.status = TERNFS_FILE_STATUS_NONE;
 
             // Init normal file stuff -- that's always there. The transient
             // file stuff is only filled in if needed.
@@ -707,7 +707,7 @@ struct inode* eggsfs_get_inode(
         // solution is to store the correct policy on
         // `d_splice_alias`, but we can only do that if we
         // also remember if the current enode policy is its
-        // own or not. In fact, I just realized that `eggsfs_rename`
+        // own or not. In fact, I just realized that `ternfs_rename`
         // is wrong: it unconditionally sets the policy of the
         // child directory to that of the parent, but that's
         // not right, it should do that _only if the child
@@ -719,14 +719,14 @@ struct inode* eggsfs_get_inode(
             enode->span_policy = parent->span_policy;
             enode->stripe_policy = parent->stripe_policy;
         } else {
-            bool is_root = ino == EGGSFS_ROOT_INODE;
+            bool is_root = ino == TERNFS_ROOT_INODE;
             BUG_ON(!allow_no_parent && !is_root);
             if (is_root) { // we've just created the root inode, policy will be filled in later
                 enode->block_policy = NULL;
                 enode->span_policy = NULL;
                 enode->stripe_policy = NULL;
             } else {
-                struct eggsfs_inode* root = EGGSFS_I(sb->s_root->d_inode);
+                struct ternfs_inode* root = TERNFS_I(sb->s_root->d_inode);
                 enode->block_policy = root->block_policy;
                 enode->span_policy = root->span_policy;
                 enode->stripe_policy = root->stripe_policy;

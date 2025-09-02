@@ -34,6 +34,6 @@ uint64_t EdgeKey::computeNameHash(HashMode mode, const BincodeBytesRef& bytes) {
     case HashMode::XXH3_63:
         return XXH3_64bits(bytes.data(), bytes.size()) & ~(1ull<<63);
     default:
-        throw EGGS_EXCEPTION("bad hash mode %s", (int)mode);
+        throw TERN_EXCEPTION("bad hash mode %s", (int)mode);
     }
 }

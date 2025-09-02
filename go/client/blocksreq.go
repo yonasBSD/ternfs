@@ -6,8 +6,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 // A low-level utility for directly communication with block services.
@@ -88,7 +88,7 @@ func readBlocksResponse(
 			log.Info("could not read error: %v", err)
 			return err
 		}
-		return msgs.EggsError(err)
+		return msgs.TernError(err)
 	}
 	kind := msgs.BlocksMessageKind(kindByte[0])
 	if kind != resp.BlocksResponseKind() {

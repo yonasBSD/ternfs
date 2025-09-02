@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/msgs"
 )
 
 type subexpr struct {
@@ -269,24 +269,24 @@ type reqRespType struct {
 }
 
 // Start from 10 to play nice with kernel drivers and such.
-const eggsErrorCodeOffset = 10
+const ternErrorCodeOffset = 10
 
 func generateGoErrorCodes(out io.Writer, errors []string) {
 	fmt.Fprintf(out, "const (\n")
 	for i, err := range errors {
-		fmt.Fprintf(out, "\t%s EggsError = %d\n", err, i+eggsErrorCodeOffset)
+		fmt.Fprintf(out, "\t%s TernError = %d\n", err, i+ternErrorCodeOffset)
 	}
 	fmt.Fprintf(out, ")\n")
 	fmt.Fprintf(out, "\n")
 
-	fmt.Fprintf(out, "func (err EggsError) String() string {\n")
+	fmt.Fprintf(out, "func (err TernError) String() string {\n")
 	fmt.Fprintf(out, "\tswitch err {\n")
 	for i, err := range errors {
-		fmt.Fprintf(out, "\tcase %d:\n", i+eggsErrorCodeOffset)
+		fmt.Fprintf(out, "\tcase %d:\n", i+ternErrorCodeOffset)
 		fmt.Fprintf(out, "\t\treturn \"%s\"\n", err)
 	}
 	fmt.Fprintf(out, "\tdefault:\n")
-	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"EggsError(%%d)\", err)\n")
+	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"TernError(%%d)\", err)\n")
 	fmt.Fprintf(out, "\t}\n")
 	fmt.Fprintf(out, "}\n\n")
 }
@@ -331,15 +331,15 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 
 func generateKmodMsgKind(hOut io.Writer, cOut io.Writer, what string, reqResps []reqRespType) {
 	for _, reqResp := range reqResps {
-		fmt.Fprintf(hOut, "#define EGGSFS_%s_%s 0x%X\n", what, reqRespEnum(reqResp), reqResp.kind)
+		fmt.Fprintf(hOut, "#define TERNFS_%s_%s 0x%X\n", what, reqRespEnum(reqResp), reqResp.kind)
 	}
-	fmt.Fprintf(hOut, "#define __print_eggsfs_%s_kind(k) __print_symbolic(k", strings.ToLower(what))
+	fmt.Fprintf(hOut, "#define __print_ternfs_%s_kind(k) __print_symbolic(k", strings.ToLower(what))
 	for _, reqResp := range reqResps {
 		fmt.Fprintf(hOut, ", { %d, %q }", reqResp.kind, reqRespEnum(reqResp))
 	}
 	fmt.Fprintf(hOut, ")\n")
-	fmt.Fprintf(hOut, "#define EGGSFS_%s_KIND_MAX %d\n", what, len(reqResps))
-	fmt.Fprintf(hOut, "static const u8 __eggsfs_%s_kind_index_mappings[256] = {", strings.ToLower(what))
+	fmt.Fprintf(hOut, "#define TERNFS_%s_KIND_MAX %d\n", what, len(reqResps))
+	fmt.Fprintf(hOut, "static const u8 __ternfs_%s_kind_index_mappings[256] = {", strings.ToLower(what))
 	var idx [256]uint8
 	for k, _ := range idx {
 		idx[k] = 0xff
@@ -355,9 +355,9 @@ func generateKmodMsgKind(hOut io.Writer, cOut io.Writer, what string, reqResps [
 	}
 	fmt.Fprintf(hOut, "};\n")
 
-	fmt.Fprintf(hOut, "const char* eggsfs_%s_kind_str(int kind);\n\n", strings.ToLower(what))
+	fmt.Fprintf(hOut, "const char* ternfs_%s_kind_str(int kind);\n\n", strings.ToLower(what))
 
-	fmt.Fprintf(cOut, "const char* eggsfs_%s_kind_str(int kind) {\n", strings.ToLower(what))
+	fmt.Fprintf(cOut, "const char* ternfs_%s_kind_str(int kind) {\n", strings.ToLower(what))
 	fmt.Fprintf(cOut, "    switch (kind) {\n")
 	for _, reqResp := range reqResps {
 		fmt.Fprintf(cOut, "    case %d: return %q;\n", reqResp.kind, reqRespEnum(reqResp))
@@ -375,19 +375,19 @@ func kmodFieldName(s string) string {
 func kmodStructName(typ reflect.Type) string {
 	re := regexp.MustCompile(`(.)([A-Z])`)
 	s := strings.ToLower(string(re.ReplaceAll([]byte(typ.Name()), []byte("${1}_${2}"))))
-	return fmt.Sprintf("eggsfs_%s", s)
+	return fmt.Sprintf("ternfs_%s", s)
 }
 
 func kmodStaticSizeName(typ reflect.Type) string {
 	re := regexp.MustCompile(`(.)([A-Z])`)
 	s := strings.ToUpper(string(re.ReplaceAll([]byte(typ.Name()), []byte("${1}_${2}"))))
-	return fmt.Sprintf("EGGSFS_%s_SIZE", s)
+	return fmt.Sprintf("TERNFS_%s_SIZE", s)
 }
 
 func kmodMaxSizeName(typ reflect.Type) string {
 	re := regexp.MustCompile(`(.)([A-Z])`)
 	s := strings.ToUpper(string(re.ReplaceAll([]byte(typ.Name()), []byte("${1}_${2}"))))
-	return fmt.Sprintf("EGGSFS_%s_MAX_SIZE", s)
+	return fmt.Sprintf("TERNFS_%s_MAX_SIZE", s)
 }
 
 func generateKmodStructOpaque(w io.Writer, typ reflect.Type, suffix string) {
@@ -477,7 +477,7 @@ func kmodType(t reflect.Type) string {
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(t)
 		if elem.Kind() == reflect.Uint8 {
-			return "eggsfs_bytes*"
+			return "ternfs_bytes*"
 		} else {
 			return kmodType(elem)
 		}
@@ -518,17 +518,17 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 		} else if fldK == reflect.Slice || fldK == reflect.String {
 			elemTyp := sliceTypeElem(fldTyp)
 			if elemTyp.Kind() == reflect.Uint8 {
-				generateKmodStruct(h, typ, fldName, "struct eggsfs_bincode_bytes str")
+				generateKmodStruct(h, typ, fldName, "struct ternfs_bincode_bytes str")
 				nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
-				fmt.Fprintf(h, "static inline void _%s_get_%s(struct eggsfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "static inline void _%s_get_%s(struct ternfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
 				fmt.Fprintf(h, "    if (likely(ctx->err == 0)) {\n")
 				fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < 1)) {\n")
-				fmt.Fprintf(h, "            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;\n")
+				fmt.Fprintf(h, "            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;\n")
 				fmt.Fprintf(h, "        } else {\n")
 				fmt.Fprintf(h, "            next->str.len = *(u8*)(ctx->buf);\n")
 				fmt.Fprintf(h, "            ctx->buf++;\n")
 				fmt.Fprintf(h, "            if (unlikely(ctx->end - ctx->buf < next->str.len)) {\n")
-				fmt.Fprintf(h, "                ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;\n")
+				fmt.Fprintf(h, "                ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;\n")
 				fmt.Fprintf(h, "            } else {\n")
 				fmt.Fprintf(h, "                next->str.buf = ctx->buf;\n")
 				fmt.Fprintf(h, "                ctx->buf += next->str.len;\n")
@@ -543,10 +543,10 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 			} else {
 				generateKmodStruct(h, typ, fldName, "u16 len")
 				nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
-				fmt.Fprintf(h, "static inline void _%s_get_%s(struct eggsfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "static inline void _%s_get_%s(struct ternfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
 				fmt.Fprintf(h, "    if (likely(ctx->err == 0)) {\n")
 				fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < 2)) {\n")
-				fmt.Fprintf(h, "            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;\n")
+				fmt.Fprintf(h, "            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;\n")
 				fmt.Fprintf(h, "        } else {\n")
 				fmt.Fprintf(h, "            next->len = get_unaligned_le16(ctx->buf);\n")
 				fmt.Fprintf(h, "            ctx->buf += 2;\n")
@@ -563,10 +563,10 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 		} else if fldK == reflect.Bool || fldK == reflect.Uint8 || fldK == reflect.Uint16 || fldK == reflect.Uint32 || fldK == reflect.Uint64 {
 			generateKmodStruct(h, typ, fldName, fmt.Sprintf("%s x", fldKTyp))
 			nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
-			fmt.Fprintf(h, "static inline void _%s_get_%s(struct eggsfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
+			fmt.Fprintf(h, "static inline void _%s_get_%s(struct ternfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
 			fmt.Fprintf(h, "    if (likely(ctx->err == 0)) {\n")
 			fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < %d)) {\n", fldTyp.Size())
-			fmt.Fprintf(h, "            ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;\n")
+			fmt.Fprintf(h, "            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;\n")
 			fmt.Fprintf(h, "        } else {\n")
 			switch fldK {
 			case reflect.Bool:
@@ -596,9 +596,9 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 	fmt.Fprintf(h, "#define %s_get_end(ctx, prev, next) \\\n", kmodStructName(typ))
 	fmt.Fprintf(h, "    { %s* __dummy __attribute__((unused)) = &(prev); }\\\n", prevType)
 	fmt.Fprintf(h, "    struct %s_end* next = NULL\n\n", kmodStructName(typ))
-	fmt.Fprintf(h, "static inline void %s_get_finish(struct eggsfs_bincode_get_ctx* ctx, struct %s_end* end) {\n", kmodStructName(typ), kmodStructName(typ))
+	fmt.Fprintf(h, "static inline void %s_get_finish(struct ternfs_bincode_get_ctx* ctx, struct %s_end* end) {\n", kmodStructName(typ), kmodStructName(typ))
 	fmt.Fprintf(h, "    if (unlikely(ctx->buf != ctx->end)) {\n")
-	fmt.Fprintf(h, "        ctx->err = EGGSFS_ERR_MALFORMED_RESPONSE;\n")
+	fmt.Fprintf(h, "        ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;\n")
 	fmt.Fprintf(h, "    }\n")
 	fmt.Fprintf(h, "}\n\n")
 }
@@ -635,7 +635,7 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 			elemTyp := sliceTypeElem(fldTyp)
 			nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
 			if elemTyp.Kind() == reflect.Uint8 {
-				fmt.Fprintf(h, "static inline void _%s_put_%s(struct eggsfs_bincode_put_ctx* ctx, %s* prev, %s* next, const char* str, int str_len) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "static inline void _%s_put_%s(struct ternfs_bincode_put_ctx* ctx, %s* prev, %s* next, const char* str, int str_len) {\n", kmodStructName(typ), fldName, prevType, nextType)
 				fmt.Fprintf(h, "    next = NULL;\n")
 				fmt.Fprintf(h, "    BUG_ON(str_len < 0 || str_len > 255);\n")
 				fmt.Fprintf(h, "    BUG_ON(ctx->end - ctx->cursor < (1 + str_len));\n")
@@ -647,7 +647,7 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 				fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
 				fmt.Fprintf(h, "    _%s_put_%s(ctx, &(prev), &(next), str, str_len)\n\n", kmodStructName(typ), fldName)
 			} else {
-				fmt.Fprintf(h, "static inline void _%s_put_%s(struct eggsfs_bincode_put_ctx* ctx, %s* prev, %s* next, int len) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "static inline void _%s_put_%s(struct ternfs_bincode_put_ctx* ctx, %s* prev, %s* next, int len) {\n", kmodStructName(typ), fldName, prevType, nextType)
 				fmt.Fprintf(h, "    next = NULL;\n")
 				fmt.Fprintf(h, "    BUG_ON(len < 0 || len >= 1<<16);\n")
 				fmt.Fprintf(h, "    BUG_ON(ctx->end - ctx->cursor < 2);\n")
@@ -661,7 +661,7 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 			prevType = nextType
 		} else if fldK == reflect.Bool || fldK == reflect.Uint8 || fldK == reflect.Uint16 || fldK == reflect.Uint32 || fldK == reflect.Uint64 {
 			nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
-			fmt.Fprintf(h, "static inline void _%s_put_%s(struct eggsfs_bincode_put_ctx* ctx, %s* prev, %s* next, %s x) {\n", kmodStructName(typ), fldName, prevType, nextType, fldKTyp)
+			fmt.Fprintf(h, "static inline void _%s_put_%s(struct ternfs_bincode_put_ctx* ctx, %s* prev, %s* next, %s x) {\n", kmodStructName(typ), fldName, prevType, nextType, fldKTyp)
 			fmt.Fprintf(h, "    next = NULL;\n")
 			fmt.Fprintf(h, "    BUG_ON(ctx->end - ctx->cursor < %d);\n", fldTyp.Size())
 			switch fldK {
@@ -700,20 +700,20 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	fmt.Fprintln(hOut)
 
 	for i, err := range errors {
-		fmt.Fprintf(hOut, "#define EGGSFS_ERR_%s %d\n", err, eggsErrorCodeOffset+i)
+		fmt.Fprintf(hOut, "#define TERNFS_ERR_%s %d\n", err, ternErrorCodeOffset+i)
 	}
 	fmt.Fprintf(hOut, "\n")
-	fmt.Fprintf(hOut, "#define __print_eggsfs_err(i) __print_symbolic(i")
+	fmt.Fprintf(hOut, "#define __print_ternfs_err(i) __print_symbolic(i")
 	for i, err := range errors {
-		fmt.Fprintf(hOut, ", { %d, %q }", eggsErrorCodeOffset+i, err)
+		fmt.Fprintf(hOut, ", { %d, %q }", ternErrorCodeOffset+i, err)
 	}
 	fmt.Fprintf(hOut, ")\n")
-	fmt.Fprintf(hOut, "const char* eggsfs_err_str(int err);\n\n")
+	fmt.Fprintf(hOut, "const char* ternfs_err_str(int err);\n\n")
 
-	fmt.Fprintf(cOut, "const char* eggsfs_err_str(int err) {\n")
+	fmt.Fprintf(cOut, "const char* ternfs_err_str(int err) {\n")
 	fmt.Fprintf(cOut, "    switch (err) {\n")
 	for i, err := range errors {
-		fmt.Fprintf(cOut, "    case %d: return %q;\n", eggsErrorCodeOffset+i, err)
+		fmt.Fprintf(cOut, "    case %d: return %q;\n", ternErrorCodeOffset+i, err)
 	}
 	fmt.Fprintf(cOut, "    default: return \"UNKNOWN\";\n")
 	fmt.Fprintf(cOut, "    }\n")
@@ -755,10 +755,10 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 
 func cppType(t reflect.Type) string {
 	if t.Name() == "InodeId" || t.Name() == "InodeIdExtra" || t.Name() == "Parity" ||
-		t.Name() == "EggsTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" ||
+		t.Name() == "TernTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" ||
 		t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" ||
 		t.Name() == "ShardReplicaId" || t.Name() == "LogIdx" || t.Name() == "LeaderToken" ||
-		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" || t.Name() == "EggsError" {
+		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" || t.Name() == "TernError" {
 		return t.Name()
 	}
 	if t.Name() == "Blob" {
@@ -836,7 +836,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	// we want InodeId/InodeIdExtra/Parity to be here because of some checks we perform
 	// when unpacking
 	if k == reflect.Struct || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" ||
-		expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardId" ||
+		expr.typ.Name() == "Parity" || expr.typ.Name() == "TernTime" || expr.typ.Name() == "ShardId" ||
 		expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" || expr.typ.Name() == "ReplicaId" ||
 		expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" ||
 		expr.typ.Name() == "Ip" || expr.typ.Name() == "IpPort" || expr.typ.Name() == "AddrsInfo" {
@@ -870,7 +870,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	switch k {
 	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		if expr.typ.Name() == "ShardId" || expr.typ.Name() == "InodeId" || expr.typ.Name() == "InodeIdExtra" ||
-			expr.typ.Name() == "Parity" || expr.typ.Name() == "EggsTime" || expr.typ.Name() == "ShardReplicaId" ||
+			expr.typ.Name() == "Parity" || expr.typ.Name() == "TernTime" || expr.typ.Name() == "ShardReplicaId" ||
 			expr.typ.Name() == "ReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" ||
 			expr.typ.Name() == "Ip" || expr.typ.Name() == "IpPort" || expr.typ.Name() == "AddrsInfo" {
 			cg.cline(fmt.Sprintf("%s = %s()", expr.fld, cppType(expr.typ)))
@@ -994,37 +994,37 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 }
 
 func generateCppErr(hpp io.Writer, cpp io.Writer, errors []string) {
-	fmt.Fprintf(hpp, "enum class EggsError : uint16_t {\n")
+	fmt.Fprintf(hpp, "enum class TernError : uint16_t {\n")
 	fmt.Fprintf(hpp, "    NO_ERROR = 0,\n")
 	for i, err := range errors {
-		fmt.Fprintf(hpp, "    %s = %d,\n", err, eggsErrorCodeOffset+i)
+		fmt.Fprintf(hpp, "    %s = %d,\n", err, ternErrorCodeOffset+i)
 	}
 	fmt.Fprintf(hpp, "};\n\n")
-	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, EggsError err);\n\n")
-	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, EggsError err) {\n")
+	fmt.Fprintf(hpp, "std::ostream& operator<<(std::ostream& out, TernError err);\n\n")
+	fmt.Fprintf(cpp, "std::ostream& operator<<(std::ostream& out, TernError err) {\n")
 	fmt.Fprintf(cpp, "    switch (err) {\n")
-	fmt.Fprintf(cpp, "    case EggsError::NO_ERROR:\n")
+	fmt.Fprintf(cpp, "    case TernError::NO_ERROR:\n")
 	fmt.Fprintf(cpp, "        out << \"NO_ERROR\";\n")
 	fmt.Fprintf(cpp, "        break;\n")
 	for _, err := range errors {
-		fmt.Fprintf(cpp, "    case EggsError::%s:\n", err)
+		fmt.Fprintf(cpp, "    case TernError::%s:\n", err)
 		fmt.Fprintf(cpp, "        out << \"%s\";\n", err)
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        out << \"EggsError(\" << ((int)err) << \")\";\n")
+	fmt.Fprintf(cpp, "        out << \"TernError(\" << ((int)err) << \")\";\n")
 	fmt.Fprintf(cpp, "        break;\n")
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "    return out;\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
-	fmt.Fprintf(hpp, "const std::vector<EggsError> allEggsErrors {\n")
+	fmt.Fprintf(hpp, "const std::vector<TernError> allTernErrors {\n")
 	for _, err := range errors {
-		fmt.Fprintf(hpp, "    EggsError::%s,\n", err)
+		fmt.Fprintf(hpp, "    TernError::%s,\n", err)
 	}
 	fmt.Fprintf(hpp, "};\n\n")
 
-	fmt.Fprintf(hpp, "constexpr int maxEggsError = %d;\n\n", eggsErrorCodeOffset+len(errors))
+	fmt.Fprintf(hpp, "constexpr int maxTernError = %d;\n\n", ternErrorCodeOffset+len(errors))
 }
 
 func generateCppKind(hpp io.Writer, cpp io.Writer, name string, reqResps []reqRespType) {
@@ -1085,7 +1085,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		if i > 0 {
 			fmt.Fprintf(hpp, ", ")
 		}
-		if typ.typ.Name() == "EggsError" {
+		if typ.typ.Name() == "TernError" {
 			fmt.Fprintf(hpp, "sizeof(%s)", cppType(typ.typ))
 		} else {
 			fmt.Fprintf(hpp, "%s::STATIC_SIZE", cppType(typ.typ))
@@ -1155,7 +1155,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", other.kind());\n", kindTypeName)
+	fmt.Fprintf(cpp, "        throw TERN_EXCEPTION(\"bad %s kind %%s\", other.kind());\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
@@ -1169,14 +1169,14 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		if typ.typ.Name() == "EggsError" {
+		if typ.typ.Name() == "TernError" {
 			fmt.Fprintf(cpp, "        return sizeof(%s) + sizeof(%s);\n", kindTypeName, cppType(typ.typ))
 		} else {
 			fmt.Fprintf(cpp, "        return sizeof(%s) + std::get<%d>(_data).packedSize();\n", kindTypeName, i)
 		}
 	}
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "        throw TERN_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
@@ -1185,7 +1185,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		if typ.typ.Name() == "EggsError" {
+		if typ.typ.Name() == "TernError" {
 			fmt.Fprintf(cpp, "        buf.packScalar<%s>(std::get<%d>(_data));\n", cppType(typ.typ), i)
 		} else {
 			fmt.Fprintf(cpp, "        std::get<%d>(_data).pack(buf);\n", i)
@@ -1193,7 +1193,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 		fmt.Fprintf(cpp, "        break;\n")
 	}
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
+	fmt.Fprintf(cpp, "        throw TERN_EXCEPTION(\"bad %s kind %%s\", _kind);\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "}\n\n")
 
@@ -1202,7 +1202,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "    switch (_kind) {\n")
 	for i, typ := range types {
 		fmt.Fprintf(cpp, "    case %s::%s:\n", kindTypeName, typ.enum)
-		if typ.typ.Name() == "EggsError" {
+		if typ.typ.Name() == "TernError" {
 			fmt.Fprintf(cpp, "        _data.emplace<%d>(buf.unpackScalar<%s>());\n", i, cppType(typ.typ))
 		} else {
 			fmt.Fprintf(cpp, "        _data.emplace<%d>().unpack(buf);\n", i)
@@ -1238,7 +1238,7 @@ func generateCppContainer(hpp io.Writer, cpp io.Writer, name string, kindTypeNam
 	fmt.Fprintf(cpp, "        out << \"EMPTY\";\n")
 	fmt.Fprintf(cpp, "        break;\n")
 	fmt.Fprintf(cpp, "    default:\n")
-	fmt.Fprintf(cpp, "        throw EGGS_EXCEPTION(\"bad %s kind %%s\", x.kind());\n", kindTypeName)
+	fmt.Fprintf(cpp, "        throw TERN_EXCEPTION(\"bad %s kind %%s\", x.kind());\n", kindTypeName)
 	fmt.Fprintf(cpp, "    }\n")
 	fmt.Fprintf(cpp, "    return out;\n")
 	fmt.Fprintf(cpp, "}\n\n")
@@ -1293,7 +1293,7 @@ func generateCppReqResp(hpp io.Writer, cpp io.Writer, what string, reqResps []re
 	}
 	generateCppContainer(hpp, cpp, what+"ReqContainer", what+"MessageKind", reqContainerTypes)
 	respContainerTypes := make([]containerType, len(reqResps)+1)
-	var errType msgs.EggsError
+	var errType msgs.TernError
 	respContainerTypes[0] = containerType{
 		name: "Error",
 		enum: "ERROR",

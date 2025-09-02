@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 	"time"
-	"xtx/eggsfs/assert"
+	"xtx/ternfs/assert"
 )
 
 func TestTimingsBins(t *testing.T) {

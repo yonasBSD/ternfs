@@ -436,13 +436,13 @@ struct TempShardDB {
     }
 };
 
-#define NO_EGGS_ERROR(expr) \
+#define NO_TERN_ERROR(expr) \
     do { \
-        EggsError err = (expr); \
-        ALWAYS_ASSERT(err == EggsError::NO_ERROR, #expr ", unexpected error %s", err); \
+        TernError err = (expr); \
+        ALWAYS_ASSERT(err == TernError::NO_ERROR, #expr ", unexpected error %s", err); \
     } while(false)
 
-#define NO_EGGS_ERROR_IN_RESPONSE(resp, expr) \
+#define NO_TERN_ERROR_IN_RESPONSE(resp, expr) \
     do { \
         (expr); \
         ALWAYS_ASSERT((int)((resp).kind()) != 0, #expr ", unexpected error %s", (resp).getError()); \
@@ -458,15 +458,15 @@ TEST_CASE("touch file") {
 
     InodeId id;
     BincodeFixedBytes<8> cookie;
-    EggsTime constructTime, linkTime;
+    TernTime constructTime, linkTime;
     BincodeBytes name("filename");
     {
         auto& req = reqContainer->setConstructFile();
         req.type = (uint8_t)InodeType::FILE;
         req.note = "test note";
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         constructTime = logEntry->time;
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
         db->flush(false);
         auto& resp = respContainer->getConstructFile();
         id = resp.id;
@@ -474,7 +474,7 @@ TEST_CASE("touch file") {
     }
     {
         auto& req = reqContainer->setVisitTransientFiles();
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getVisitTransientFiles();
         REQUIRE(resp.nextId == NULL_INODE_ID);
         REQUIRE(resp.files.els.size() == 1);
@@ -487,16 +487,16 @@ TEST_CASE("touch file") {
         req.cookie = cookie;
         req.ownerId = ROOT_DIR_INODE_ID;
         req.name = name;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
         linkTime = logEntry->time;
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
         db->flush(false);
     }
     {
         auto& req = reqContainer->setReadDir();
         req.dirId = ROOT_DIR_INODE_ID;
         req.startHash = 0;
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getReadDir();
         REQUIRE(resp.nextHash == 0);
         REQUIRE(resp.results.els.size() == 1);
@@ -509,14 +509,14 @@ TEST_CASE("touch file") {
         auto& req = reqContainer->setLookup();
         req.dirId = ROOT_DIR_INODE_ID;
         req.name = name;
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getLookup();
         REQUIRE(resp.targetId == id);
     }
     {
         auto& req = reqContainer->setStatFile();
         req.id = id;
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getStatFile();
         REQUIRE(resp.size == 0);
         REQUIRE(resp.mtime == linkTime);
@@ -531,15 +531,15 @@ TEST_CASE("override") {
     auto logEntry = std::make_unique<ShardLogEntry>();
     uint64_t logEntryIndex = 0;
 
-    const auto createFile = [&](const char* name) -> std::tuple<InodeId, EggsTime> {
+    const auto createFile = [&](const char* name) -> std::tuple<InodeId, TernTime> {
         InodeId id;
         BincodeFixedBytes<8> cookie;
         {
             auto& req = reqContainer->setConstructFile();
             req.type = (uint8_t)InodeType::FILE;
             req.note = "test note";
-            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-            NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
+            NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+            NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
             db->flush(false);
             auto& resp = respContainer->getConstructFile();
             id = resp.id;
@@ -547,17 +547,17 @@ TEST_CASE("override") {
         }
         {
             auto& req = reqContainer->setVisitTransientFiles();
-            NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
+            NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
         }
-        EggsTime creationTime;
+        TernTime creationTime;
         {
             auto& req = reqContainer->setLinkFile();
             req.fileId = id;
             req.cookie = cookie;
             req.ownerId = ROOT_DIR_INODE_ID;
             req.name = name;
-            NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-            NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
+            NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+            NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
             db->flush(false);
             creationTime = respContainer->getLinkFile().creationTime;
         }
@@ -574,14 +574,14 @@ TEST_CASE("override") {
         req.oldName = "foo";
         req.oldCreationTime = fooCreationTime;
         req.newName = "bar";
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
+        NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->applyLogEntry(++logEntryIndex, *logEntry, *respContainer));
         db->flush(false);
     }
     {
         auto& req = reqContainer->setFullReadDir();
         req.dirId = ROOT_DIR_INODE_ID;
-        NO_EGGS_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
+        NO_TERN_ERROR_IN_RESPONSE(*respContainer, db->read(*reqContainer, *respContainer));
         auto& resp = respContainer->getFullReadDir();
         REQUIRE(
             resp.results.els.size() ==
@@ -595,12 +595,12 @@ TEST_CASE("override") {
 TEST_CASE("test fmt") {
     {
         std::stringstream ss;
-        ss << EggsTime(0);
+        ss << TernTime(0);
         REQUIRE(ss.str() == "1970-01-01T00:00:00.000000000");
     }
     {
         std::stringstream ss;
-        ss << EggsTime(1234567891ull);
+        ss << TernTime(1234567891ull);
         REQUIRE(ss.str() == "1970-01-01T00:00:01.234567891");
     }
 }
@@ -624,21 +624,21 @@ TEST_CASE("make/rm directory") {
         req.id = id;
         req.info.inherited = true;
         req.ownerId = ROOT_DIR_INODE_ID;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+        NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_TERN_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
         respContainer->getCreateDirectoryInode();
     }
     {
         auto& req = reqContainer->setRemoveDirectoryOwner();
         req.dirId = id;
         req.info = defaultInfo;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+        NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_TERN_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
     {
         auto& req = reqContainer->setStatDirectory();
         req.id = id;
-        NO_EGGS_ERROR(db->read(*reqContainer, *respContainer));
+        NO_TERN_ERROR(db->read(*reqContainer, *respContainer));
         const auto& resp = respContainer->getStatDirectory();
         CHECK(resp.info == defaultInfo);
     }
@@ -646,8 +646,8 @@ TEST_CASE("make/rm directory") {
         auto& req = reqContainer->setSetDirectoryOwner();
         req.dirId = id;
         req.ownerId = ROOT_DIR_INODE_ID;
-        NO_EGGS_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
-        NO_EGGS_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
+        NO_TERN_ERROR(db->prepareLogEntry(*reqContainer, *logEntry));
+        NO_TERN_ERROR(db->applyLogEntry(true, ++logEntryIndex, *logEntry, *respContainer));
     }
 }
 */

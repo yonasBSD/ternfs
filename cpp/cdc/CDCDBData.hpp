@@ -109,9 +109,9 @@ struct DirsToTxnsKey {
 struct MakeDirectoryState {
     FIELDS(
         LE, InodeId,   dirId, setDirId,
-        LE, EggsTime,  oldCreationTime, setOldCreationTime,
-        LE, EggsTime,  creationTime, setCreationTime,
-        LE, EggsError, exitError, setExitError, // error if we're rolling back
+        LE, TernTime,  oldCreationTime, setOldCreationTime,
+        LE, TernTime,  creationTime, setCreationTime,
+        LE, TernError, exitError, setExitError, // error if we're rolling back
         END_STATIC
     )
 
@@ -119,49 +119,49 @@ struct MakeDirectoryState {
         setDirId(NULL_INODE_ID);
         setOldCreationTime({});
         setCreationTime({});
-        setExitError(EggsError::NO_ERROR);
+        setExitError(TernError::NO_ERROR);
     }
 };
 
 struct RenameFileState {
     FIELDS(
-        LE, EggsTime,  newOldCreationTime, setNewOldCreationTime,
-        LE, EggsTime,  newCreationTime, setNewCreationTime,
-        LE, EggsError, exitError, setExitError,
+        LE, TernTime,  newOldCreationTime, setNewOldCreationTime,
+        LE, TernTime,  newCreationTime, setNewCreationTime,
+        LE, TernError, exitError, setExitError,
         END_STATIC
     )
 
     void start() {
         setNewOldCreationTime({});
         setNewCreationTime({});
-        setExitError(EggsError::NO_ERROR);
+        setExitError(TernError::NO_ERROR);
     }
 };
 
 struct SoftUnlinkDirectoryState {
     FIELDS(
         LE, InodeId,   statDirId, setStatDirId,
-        LE, EggsError, exitError, setExitError,
+        LE, TernError, exitError, setExitError,
         END_STATIC
     )
 
     void start() {
-        setExitError(EggsError::NO_ERROR);
+        setExitError(TernError::NO_ERROR);
     }
 };
 
 struct RenameDirectoryState {
     FIELDS(
-        LE, EggsTime,  newOldCreationTime, setNewOldCreationTime,
-        LE, EggsTime,  newCreationTime, setNewCreationTime,
-        LE, EggsError, exitError, setExitError,
+        LE, TernTime,  newOldCreationTime, setNewOldCreationTime,
+        LE, TernTime,  newCreationTime, setNewCreationTime,
+        LE, TernError, exitError, setExitError,
         END_STATIC
     )
 
     void start() {
         setNewOldCreationTime({});
         setNewCreationTime({});
-        setExitError(EggsError::NO_ERROR);
+        setExitError(TernError::NO_ERROR);
     }
 };
 
@@ -211,7 +211,7 @@ struct TxnState {
         case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
             sz += CrossShardHardUnlinkFileState::MAX_SIZE; break;
         default:
-            throw EGGS_EXCEPTION("bad cdc message kind %s", reqKind());
+            throw TERN_EXCEPTION("bad cdc message kind %s", reqKind());
         }
         return sz;
     }
@@ -256,7 +256,7 @@ struct TxnState {
         case CDCMessageKind::HARD_UNLINK_DIRECTORY: startHardUnlinkDirectory(); break;
         case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE: startCrossShardHardUnlinkFile(); break;
         default:
-            throw EGGS_EXCEPTION("bad cdc message kind %s", reqKind());
+            throw TERN_EXCEPTION("bad cdc message kind %s", reqKind());
         }
         memset(_data+MIN_SIZE, 0, size()-MIN_SIZE);
     }

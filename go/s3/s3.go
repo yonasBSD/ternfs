@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/client"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -459,7 +459,7 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 		return &S3Error{Code: "NoSuchKey", Message: "The specified key does not exist.", StatusCode: http.StatusNotFound}
 	}
 
-	var lastModified msgs.EggsTime
+	var lastModified msgs.TernTime
 	var size uint64
 	var bodyReader io.ReadSeeker
 
@@ -535,7 +535,7 @@ func (s *S3Server) handleGetObjectAttributes(ctx context.Context, w http.Respons
 
 	inode := dentry.TargetId
 	var size uint64
-	var lastModified msgs.EggsTime
+	var lastModified msgs.TernTime
 
 	if inode.Type() == msgs.DIRECTORY {
 		statResp := &msgs.StatDirectoryResp{}

@@ -1,5 +1,5 @@
-#ifndef _EGGSFS_INODE_COMPAT_H
-#define _EGGSFS_INODE_COMPAT_H
+#ifndef _TERNFS_INODE_COMPAT_H
+#define _TERNFS_INODE_COMPAT_H
 #include <linux/version.h>
 #include <linux/fs.h>
 
@@ -118,4 +118,4 @@ static inline struct timespec64 inode_set_mtime(struct inode *inode,
 
 #endif
 
-#endif /* _EGGSFS_INODE_COMPAT_H */
+#endif /* _TERNFS_INODE_COMPAT_H */

@@ -3,9 +3,9 @@ package client
 import (
 	"sync/atomic"
 	"time"
-	"xtx/eggsfs/bincode"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/bincode"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 // Starts from 1, we use 0 as a placeholder in `requestIds`
@@ -71,23 +71,23 @@ func (c *Client) metadataRequest(
 			counters.Timings.Add(elapsed)
 		}
 		// If we're past the first attempt, there are cases where errors are not what they seem.
-		var eggsError msgs.EggsError
+		var ternError msgs.TernError
 		if resp.err != nil {
-			var isEggsError bool
-			eggsError, isEggsError = resp.err.(msgs.EggsError)
-			if isEggsError && attempts > 0 {
+			var isTernError bool
+			ternError, isTernError = resp.err.(msgs.TernError)
+			if isTernError && attempts > 0 {
 				if shid >= 0 {
-					eggsError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), eggsError)
+					ternError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), ternError)
 				} else {
-					eggsError = c.checkRepeatedCDCRequestError(log, reqBody.(msgs.CDCRequest), respBody.(msgs.CDCResponse), eggsError)
+					ternError = c.checkRepeatedCDCRequestError(log, reqBody.(msgs.CDCRequest), respBody.(msgs.CDCResponse), ternError)
 				}
 			}
 		}
 		// Check if it's an error or not. We only use debug here because some errors are legitimate
 		// responses (e.g. FILE_EMPTY)
-		if eggsError != 0 {
-			log.DebugStack(1, "got error %v for req %T id %v from shard %v (took %v)", eggsError, reqBody, requestId, shid, elapsed)
-			return eggsError
+		if ternError != 0 {
+			log.DebugStack(1, "got error %v for req %T id %v from shard %v (took %v)", ternError, reqBody, requestId, shid, elapsed)
+			return ternError
 		}
 		log.Debug("got response %T from shard %v (took %v)", respBody, shid, elapsed)
 		log.Trace("respBody %+v", respBody)

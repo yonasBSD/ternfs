@@ -3,7 +3,7 @@ package cleanup
 import (
 	"fmt"
 	"time"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/msgs"
 )
 
 // Returns how many edges to remove according to the policy (as a prefix of the input).
@@ -14,7 +14,7 @@ import (
 // It is assumed that every delete in the input will be be preceeded by a non-delete.
 //
 // If it returns N, edges[N:] will be well formed too in the sense above.
-func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.EggsTime, edges []msgs.Edge, minEdgeAge time.Duration) int {
+func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.TernTime, edges []msgs.Edge, minEdgeAge time.Duration) int {
 	if len(edges) == 0 {
 		return 0
 	}

@@ -20,7 +20,7 @@ std::ostream& operator<<(std::ostream& out, LogLevel ll) {
         out << "ERROR";
         break;
     default:
-        throw EGGS_EXCEPTION("bad log level %s", (uint32_t)ll);
+        throw TERN_EXCEPTION("bad log level %s", (uint32_t)ll);
     }
     return out;
 }
@@ -44,7 +44,7 @@ static void loggerSignalHandler(int signal_number) {
 void installLoggerSignalHandler(void* logger) {
     Logger* old = nullptr;
     if (!debuggableLogger.compare_exchange_strong(old, (Logger*)logger)) {
-        throw EGGS_EXCEPTION("Could not install logger signal handler, some other logger is already here.");
+        throw TERN_EXCEPTION("Could not install logger signal handler, some other logger is already here.");
     }
 
     struct sigaction act;
@@ -63,7 +63,7 @@ void installLoggerSignalHandler(void* logger) {
 void tearDownLoggerSignalHandler(void* logger) {
     Logger* old = (Logger*)logger;
     if (!debuggableLogger.compare_exchange_strong(old, nullptr)) {
-        throw EGGS_EXCEPTION("Could not tear down logger signal handler, bad preexisting logger");
+        throw TERN_EXCEPTION("Could not tear down logger signal handler, bad preexisting logger");
     }
 
     struct sigaction act;

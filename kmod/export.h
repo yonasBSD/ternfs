@@ -1,8 +1,8 @@
-#ifndef _EGGSFS_EXPORT_H
-#define _EGGSFS_EXPORT_H
+#ifndef _TERNFS_EXPORT_H
+#define _TERNFS_EXPORT_H
 
 #include <linux/fs.h>
 
-extern struct export_operations eggsfs_export_ops;
+extern struct export_operations ternfs_export_ops;
 
-#endif /* _EGGSFS_EXPORT_H */
+#endif /* _TERNFS_EXPORT_H */

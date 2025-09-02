@@ -1,24 +1,24 @@
-#ifndef _EGGSFS_DENTRY_H
-#define _EGGSFS_DENTRY_H
+#ifndef _TERNFS_DENTRY_H
+#define _TERNFS_DENTRY_H
 
 #include <linux/fs.h>
 
 #include "counter.h"
 #include "inode_compat.h"
 
-EGGSFS_DECLARE_COUNTER(eggsfs_stat_dir_revalidations);
+TERNFS_DECLARE_COUNTER(ternfs_stat_dir_revalidations);
 
-extern struct dentry_operations eggsfs_dentry_ops;
+extern struct dentry_operations ternfs_dentry_ops;
 
-struct dentry* eggsfs_lookup(struct inode* dir, struct dentry* dentry, unsigned int flags);
-int eggsfs_rmdir(struct inode* dir, struct dentry* dentry);
-int eggsfs_unlink(struct inode* dir, struct dentry* dentry);
-int COMPAT_FUNC_UNS(eggsfs_mkdir, struct inode* dir, struct dentry* dentry, umode_t mode);
+struct dentry* ternfs_lookup(struct inode* dir, struct dentry* dentry, unsigned int flags);
+int ternfs_rmdir(struct inode* dir, struct dentry* dentry);
+int ternfs_unlink(struct inode* dir, struct dentry* dentry);
+int COMPAT_FUNC_UNS(ternfs_mkdir, struct inode* dir, struct dentry* dentry, umode_t mode);
 int COMPAT_FUNC_UNS(
-    eggsfs_rename,
+    ternfs_rename,
     struct inode* old_dir, struct dentry* old_dentry,
     struct inode* new_dir, struct dentry* new_dentry,
     unsigned int flags
 );
 
-#endif /* _EGGSFS_DENTRY_H */
+#endif /* _TERNFS_DENTRY_H */

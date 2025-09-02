@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"xtx/eggsfs/crc32c"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/crc32c"
+	"xtx/ternfs/msgs"
 )
 
 var buf []byte

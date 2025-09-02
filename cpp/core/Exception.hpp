@@ -7,7 +7,7 @@
 #include "FormatTuple.hpp"
 #include "strerror.h"
 
-#define EGGS_EXCEPTION(...) EggsException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), VALIDATE_FORMAT(__VA_ARGS__))
+#define TERN_EXCEPTION(...) TernException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), VALIDATE_FORMAT(__VA_ARGS__))
 #define SYSCALL_EXCEPTION(...) SyscallException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), errno, VALIDATE_FORMAT(__VA_ARGS__))
 #define EXPLICIT_SYSCALL_EXCEPTION(rc, ...) SyscallException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), rc, VALIDATE_FORMAT(__VA_ARGS__))
 #define FATAL_EXCEPTION(...) FatalException(__LINE__, SHORT_FILE, removeTemplates(__PRETTY_FUNCTION__).c_str(), VALIDATE_FORMAT(__VA_ARGS__))
@@ -21,10 +21,10 @@ public:
 };
 
 
-class EggsException : public AbstractException {
+class TernException : public AbstractException {
 public:
     template <typename TFmt, typename ... Args>
-    EggsException(int line, const char *file, const char *function, TFmt fmt, Args ... args);
+    TernException(int line, const char *file, const char *function, TFmt fmt, Args ... args);
     virtual const char *what() const throw() override;
 
 private:
@@ -67,10 +67,10 @@ private:
 };
 
 template <typename TFmt, typename ... Args>
-EggsException::EggsException(int line, const char *file, const char *function, TFmt fmt, Args ... args) {
+TernException::TernException(int line, const char *file, const char *function, TFmt fmt, Args ... args) {
 
     std::stringstream ss;
-    ss << "EggsException(" << file << "@" << line << " in " << function << "):\n";
+    ss << "TernException(" << file << "@" << line << " in " << function << "):\n";
     format_pack(ss, fmt, args...);
 
     _msg = ss.str();

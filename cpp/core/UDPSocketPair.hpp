@@ -164,7 +164,7 @@ public:
 
     template<typename Fill>
     void prepareOutgoingMessage(Env& env, const AddrsInfo& srcAddr, const AddrsInfo& dstAddr, Fill f) {
-        auto now = eggsNow(); // randomly pick one of the dest addrs and one of our sockets
+        auto now = ternNow(); // randomly pick one of the dest addrs and one of our sockets
         uint8_t srcSockIdx = now.ns & (srcAddr[1].port != 0);
         uint8_t dstSockIdx = (now.ns>>1) & (dstAddr[1].port != 0);
         prepareOutgoingMessage(env, srcAddr, srcSockIdx, dstAddr[dstSockIdx], f);

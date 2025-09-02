@@ -1,1 +1,1 @@
-add_executable(eggsktools eggsktools.cpp)
+add_executable(ternktools ternktools.cpp)

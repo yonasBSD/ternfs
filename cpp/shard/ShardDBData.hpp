@@ -51,8 +51,8 @@ struct TransientFileBody {
     FIELDS(
         LE, uint8_t,   version, setVersion,
         LE, uint64_t,  fileSize, setFileSize,
-        LE, EggsTime,  mtime, setMtime,
-        LE, EggsTime,  deadline, setDeadline,
+        LE, TernTime,  mtime, setMtime,
+        LE, TernTime,  deadline, setDeadline,
         LE, SpanState, lastSpanState, setLastSpanState,
         EMIT_OFFSET, STATIC_SIZE,
         BYTES, note, setNoteDangerous, // dangerous because we might not have enough space
@@ -75,8 +75,8 @@ struct FileBody {
     FIELDS(
         LE, uint8_t,  version, setVersion,
         LE, uint64_t, fileSize, setFileSize,
-        LE, EggsTime, mtime, setMtime,
-        LE, EggsTime, atime, setAtime,
+        LE, TernTime, mtime, setMtime,
+        LE, TernTime, atime, setAtime,
         END_STATIC
     )
 };
@@ -529,7 +529,7 @@ struct DirectoryBody {
     FIELDS(
         LE, uint8_t,  version, setVersion,
         LE, InodeId,  ownerId, setOwnerId,
-        LE, EggsTime, mtime, setMtime,
+        LE, TernTime, mtime, setMtime,
         LE, HashMode, hashMode, setHashMode,
         LE, uint16_t, infoLength, setInfoLength,
         EMIT_OFFSET, MIN_SIZE,
@@ -571,7 +571,7 @@ struct EdgeKey {
         BYTES,        name, setName,
         // only present for snapshot edges -- current edges have
         // the creation time in the body.
-        BE, EggsTime, creationTimeUnchecked, setCreationTimeUnchecked,
+        BE, TernTime, creationTimeUnchecked, setCreationTimeUnchecked,
         END
     )
 
@@ -579,12 +579,12 @@ struct EdgeKey {
         STATIC_SIZE +
         sizeof(uint8_t);    // nameLength
     // max name size, and an optional creation time if current=false
-    static constexpr size_t MAX_SIZE = MIN_SIZE + 255 + sizeof(EggsTime);
+    static constexpr size_t MAX_SIZE = MIN_SIZE + 255 + sizeof(TernTime);
 
     size_t size() const {
         size_t sz = MIN_SIZE + name().size();
         if (snapshot()) {
-            sz += sizeof(EggsTime);
+            sz += sizeof(TernTime);
         }
         return sz;
     }
@@ -610,12 +610,12 @@ struct EdgeKey {
         return InodeId::FromU64(dirIdWithCurrentU64() >> 1);
     }
 
-    EggsTime creationTime() const {
+    TernTime creationTime() const {
         ALWAYS_ASSERT(snapshot());
         return creationTimeUnchecked();
     }
 
-    void setCreationTime(EggsTime creationTime) {
+    void setCreationTime(TernTime creationTime) {
         ALWAYS_ASSERT(snapshot());
         setCreationTimeUnchecked(creationTime);
     }
@@ -637,7 +637,7 @@ struct CurrentEdgeBody {
     FIELDS(
         LE, uint8_t,      version, setVersion,
         LE, InodeIdExtra, targetIdWithLocked, setTargetIdWithLocked,
-        LE, EggsTime,     creationTime, setCreationTime,
+        LE, TernTime,     creationTime, setCreationTime,
         END_STATIC
     )
 

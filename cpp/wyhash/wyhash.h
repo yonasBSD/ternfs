@@ -2,8 +2,8 @@
 // and it only has one addition in the dependency chain.
 //
 // Actual code from <https://github.com/lemire/testingRNG/blob/450eea89646c056415686e3b8b58c662a3cdc2d2/source/wyhash.h>.
-#ifndef EGGS_WYHASH
-#define EGGS_WYHASH
+#ifndef TERN_WYHASH
+#define TERN_WYHASH
 
 #include <stdint.h>
 #include <stddef.h>

@@ -18,7 +18,7 @@ void generateSecretKey(std::array<uint8_t, 16>& key) {
     }
     if (read != key.size()) {
         // getrandom(2) states that once initialized you can always get up to 256 bytes.
-        throw EGGS_EXCEPTION("could not read %s random bytes, read %s instead!", key.size(), read);
+        throw TERN_EXCEPTION("could not read %s random bytes, read %s instead!", key.size(), read);
     }
 }
 

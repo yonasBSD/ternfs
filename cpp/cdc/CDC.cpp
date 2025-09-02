@@ -57,7 +57,7 @@ struct CDCShared {
 
 struct InFlightShardRequest {
     CDCTxnId txnId; // the txn id that requested this shard request
-    EggsTime sentAt;
+    TernTime sentAt;
     ShardId shid;
 };
 
@@ -66,7 +66,7 @@ struct InFlightCDCRequest {
     uint64_t lastSentRequestId;
     // if hasClient=false, the following is all garbage.
     uint64_t cdcRequestId;
-    EggsTime receivedAt;
+    TernTime receivedAt;
     IpPort clientAddr;
     CDCMessageKind kind;
     int sockIx;
@@ -77,8 +77,8 @@ struct InFlightCDCRequest {
 // MISMATCHING_CREATION_TIME can happen if we generate a timeout
 // in CDC.cpp, but the edge was actually created, and when we
 // try to recreate it we get a bad creation time.
-static bool innocuousShardError(EggsError err) {
-    return err == EggsError::NAME_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_EMPTY || err == EggsError::MISMATCHING_CREATION_TIME;
+static bool innocuousShardError(TernError err) {
+    return err == TernError::NAME_NOT_FOUND || err == TernError::EDGE_NOT_FOUND || err == TernError::DIRECTORY_NOT_EMPTY || err == TernError::MISMATCHING_CREATION_TIME;
 }
 
 // These can happen but should be rare.
@@ -90,8 +90,8 @@ static bool innocuousShardError(EggsError err) {
 // after first transaction finished but before it got the response (or response got lost).
 // This will create a new transaction which can race with gc fully cleaning up the directory
 // (which can happen if it was empty).
-static bool rareInnocuousShardError(EggsError err) {
-    return err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::DIRECTORY_NOT_FOUND;
+static bool rareInnocuousShardError(TernError err) {
+    return err == TernError::DIRECTORY_HAS_OWNER || err == TernError::DIRECTORY_NOT_FOUND;
 }
 
 struct InFlightCDCRequestKey {
@@ -123,7 +123,7 @@ private:
     using RequestsMap = std::unordered_map<uint64_t, InFlightShardRequest>;
     RequestsMap _reqs;
 
-    std::map<EggsTime, uint64_t> _pq;
+    std::map<TernTime, uint64_t> _pq;
 
 public:
 
@@ -136,7 +136,7 @@ public:
             return *this;
         }
 
-        TimeIterator(const RequestsMap& reqs, const std::map<EggsTime, uint64_t>& pq) : _reqs(reqs), _pq(pq), _it(_pq.begin()) {}
+        TimeIterator(const RequestsMap& reqs, const std::map<TernTime, uint64_t>& pq) : _reqs(reqs), _pq(pq), _it(_pq.begin()) {}
         bool operator==(const TimeIterator& other) const {
             return _it == other._it;
         }
@@ -147,10 +147,10 @@ public:
             return TimeIterator{_reqs, _pq, _pq.end()};
         }
     private:
-        TimeIterator(const RequestsMap& reqs, const std::map<EggsTime, uint64_t>& pq, std::map<EggsTime, uint64_t>::const_iterator it) : _reqs(reqs), _pq(pq), _it(it) {}
+        TimeIterator(const RequestsMap& reqs, const std::map<TernTime, uint64_t>& pq, std::map<TernTime, uint64_t>::const_iterator it) : _reqs(reqs), _pq(pq), _it(it) {}
         const RequestsMap& _reqs;
-        const std::map<EggsTime, uint64_t>& _pq;
-        std::map<EggsTime, uint64_t>::const_iterator _it;
+        const std::map<TernTime, uint64_t>& _pq;
+        std::map<TernTime, uint64_t>::const_iterator _it;
     };
 
     void clear() {
@@ -204,7 +204,7 @@ public:
 struct CDCReqInfo {
     uint64_t reqId;
     IpPort clientAddr;
-    EggsTime receivedAt;
+    TernTime receivedAt;
     int sockIx;
 };
 
@@ -305,7 +305,7 @@ public:
 
         // Timeout ShardRequests
         {
-            auto now = eggsNow();
+            auto now = ternNow();
             auto oldest = _inFlightShardReqs.oldest();
             while (_updateSize() < MAX_UPDATE_SIZE && oldest != oldest.end()) {
 
@@ -316,7 +316,7 @@ public:
                 auto resp = _prepareCDCShardResp(requestId);
                 ALWAYS_ASSERT(resp != nullptr); // must be there, we've just timed it out
                 resp->checkPoint = 0;
-                resp->resp.setError() = EggsError::TIMEOUT;
+                resp->resp.setError() = TernError::TIMEOUT;
                 _recordCDCShardResp(requestId, *resp);
                 ++oldest;
             }
@@ -375,7 +375,7 @@ public:
 
         if (_logsDB.isLeader()) {
             auto err = _logsDB.appendEntries(entries);
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             // we need to drop information about entries which might have been dropped due to append window being full
             bool foundLastInserted = false;
             for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
@@ -559,12 +559,12 @@ private:
     }
 
     void _recordCDCShardResp(uint64_t requestId, CDCShardResp& resp) {
-        auto err = resp.resp.kind() != ShardMessageKind::ERROR ? EggsError::NO_ERROR : resp.resp.getError();
+        auto err = resp.resp.kind() != ShardMessageKind::ERROR ? TernError::NO_ERROR : resp.resp.getError();
         _shared.shardErrors.add(err);
-        if (err == EggsError::NO_ERROR) {
+        if (err == TernError::NO_ERROR) {
             LOG_DEBUG(_env, "successfully parsed shard response %s with kind %s, process soon", requestId, resp.resp.kind());
             return;
-        } else if (err == EggsError::TIMEOUT) {
+        } else if (err == TernError::TIMEOUT) {
             LOG_DEBUG(_env, "txn %s shard req %s, timed out", resp.txnId, requestId);
         } else if (innocuousShardError(err)) {
             LOG_DEBUG(_env, "txn %s shard req %s, finished with innocuous error %s", resp.txnId, requestId, err);
@@ -665,7 +665,7 @@ private:
             }
 
             LOG_DEBUG(_env, "received request id %s, kind %s", cdcMsg.id, cdcMsg.body.kind());
-            auto receivedAt = eggsNow();
+            auto receivedAt = ternNow();
 
             if (unlikely(cdcMsg.body.kind() == CDCMessageKind::CDC_SNAPSHOT)) {
                 _processCDCSnapshotMessage(cdcMsg, msg);
@@ -730,7 +730,7 @@ private:
             auto err = _shared.sharedDb.snapshot(_basePath +"/snapshot-" + std::to_string(msg.body.getCdcSnapshot().snapshotId));
             CDCRespMsg respMsg;
             respMsg.id = msg.id;
-            if (err == EggsError::NO_ERROR) {
+            if (err == TernError::NO_ERROR) {
                 respMsg.body.setCdcSnapshot();
             } else {
                 respMsg.body.setError() = err;
@@ -754,8 +754,8 @@ private:
             // we need to send the response back to the client
             auto inFlight = _inFlightTxns.find(txnId);
             if (inFlight->second.hasClient) {
-                _shared.timingsTotal[(int)inFlight->second.kind].add(eggsNow() - inFlight->second.receivedAt);
-                _shared.errors[(int)inFlight->second.kind].add(resp.kind() != CDCMessageKind::ERROR ? EggsError::NO_ERROR : resp.getError());
+                _shared.timingsTotal[(int)inFlight->second.kind].add(ternNow() - inFlight->second.receivedAt);
+                _shared.errors[(int)inFlight->second.kind].add(resp.kind() != CDCMessageKind::ERROR ? TernError::NO_ERROR : resp.getError());
                 CDCRespMsg respMsg;
                 respMsg.id = inFlight->second.cdcRequestId;
                 respMsg.body = std::move(resp);
@@ -803,7 +803,7 @@ private:
             // Record the in-flight req
             _inFlightShardReqs.insert(shardReqMsg.id, InFlightShardRequest{
                 .txnId = txnId,
-                .sentAt = eggsNow(),
+                .sentAt = ternNow(),
                 .shid = shardReq.shid,
             });
             inFlightTxn->second.lastSentRequestId = shardReqMsg.id;
@@ -814,7 +814,7 @@ private:
         if (unlikely(respMsg.body.kind() == CDCMessageKind::ERROR)) {
             auto err = respMsg.body.getError();
             LOG_DEBUG(_env, "will send error %s to %s", err, clientAddr);
-            if (err != EggsError::DIRECTORY_NOT_EMPTY && err != EggsError::EDGE_NOT_FOUND && err != EggsError::MISMATCHING_CREATION_TIME) {
+            if (err != TernError::DIRECTORY_NOT_EMPTY && err != TernError::EDGE_NOT_FOUND && err != TernError::MISMATCHING_CREATION_TIME) {
                 RAISE_ALERT(_env, "request %s of kind %s from client %s failed with err %s", respMsg.id, reqKind, clientAddr, err);
             } else {
                 LOG_INFO(_env, "request %s of kind %s from client %s failed with err %s", respMsg.id, reqKind, clientAddr, err);
@@ -869,7 +869,7 @@ public:
             }
         }
         if (badShard) {
-            EggsTime successfulIterationAt = 0;
+            TernTime successfulIterationAt = 0;
             _env.updateAlert(_alert, "Shard info is still not present in shuckle, will keep trying");
             return false;
         }
@@ -956,7 +956,7 @@ public:
     }
 };
 
-static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ReplicaId replicaId, EggsTime now) {
+static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ReplicaId replicaId, TernTime now) {
     {
         metricsBuilder.measurement("eggsfs_cdc_logsdb");
         metricsBuilder.tag("replica", replicaId);
@@ -1089,7 +1089,7 @@ public:
         } else {
             _env.clearAlert(_updateSizeAlert);
         }
-        auto now = eggsNow();
+        auto now = ternNow();
         for (CDCMessageKind kind : allCDCMessageKind) {
             const ErrorCount& errs = _shared.errors[(int)kind];
             for (int i = 0; i < errs.count.size(); i++) {
@@ -1101,7 +1101,7 @@ public:
                 if (i == 0) {
                     _metricsBuilder.tag("error", "NO_ERROR");
                 } else {
-                    _metricsBuilder.tag("error", (EggsError)i);
+                    _metricsBuilder.tag("error", (TernError)i);
                 }
                 _metricsBuilder.fieldU64("count", count);
                 _metricsBuilder.timestamp(now);
@@ -1127,7 +1127,7 @@ public:
             if (i == 0) {
                 _metricsBuilder.tag("error", "NO_ERROR");
             } else {
-                _metricsBuilder.tag("error", (EggsError)i);
+                _metricsBuilder.tag("error", (TernError)i);
             }
             _metricsBuilder.fieldU64("count", count);
             _metricsBuilder.timestamp(now);

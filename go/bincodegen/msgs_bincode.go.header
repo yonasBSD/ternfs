@@ -5,7 +5,7 @@ package msgs
 import (
 	"fmt"
 	"io"
-	"xtx/eggsfs/bincode"
+	"xtx/ternfs/bincode"
 )
 
 // This file specifies
@@ -54,20 +54,20 @@ func TagToDirInfoEntry(tag DirectoryInfoTag) IsDirectoryInfoEntry {
 	}
 }
 
-func (err EggsError) Error() string {
+func (err TernError) Error() string {
 	return err.String()
 }
 
-func (err *EggsError) Pack(w io.Writer) error {
+func (err *TernError) Pack(w io.Writer) error {
 	return bincode.PackScalar(w, uint16(*err))
 }
 
-func (errCode *EggsError) Unpack(r io.Reader) error {
+func (errCode *TernError) Unpack(r io.Reader) error {
 	var c uint16
 	if err := bincode.UnpackScalar(r, &c); err != nil {
 		return err
 	}
-	*errCode = EggsError(c)
+	*errCode = TernError(c)
 	return nil
 }
 

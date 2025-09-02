@@ -1,5 +1,5 @@
-#ifndef _EGGSFS_BLOCK_H
-#define _EGGSFS_BLOCK_H
+#ifndef _TERNFS_BLOCK_H
+#define _TERNFS_BLOCK_H
 
 #include <linux/kernel.h>
 #include <linux/completion.h>
@@ -9,13 +9,13 @@
 #include "bincode.h"
 #include "inode.h"
 
-#define EGGSFS_MAX_BLOCK_SIZE (100 << 20) // 100MiB
+#define TERNFS_MAX_BLOCK_SIZE (100 << 20) // 100MiB
 
-extern int eggsfs_fetch_block_timeout_jiffies;
-extern int eggsfs_write_block_timeout_jiffies;
-extern int eggsfs_block_service_connect_timeout_jiffies;
+extern int ternfs_fetch_block_timeout_jiffies;
+extern int ternfs_write_block_timeout_jiffies;
+extern int ternfs_block_service_connect_timeout_jiffies;
 
-struct eggsfs_block_service {
+struct ternfs_block_service {
     u64 id;
     u32 ip1;
     u32 ip2;
@@ -34,10 +34,10 @@ struct eggsfs_block_service {
 // `pages` is the list of pages to be filled when fetching blocks. Pages from
 // the supplied list are transferred to block request and then returned back
 // via the callback in `pages `parameter in the callback itself.
-int eggsfs_fetch_block_pages_with_crc(
+int ternfs_fetch_block_pages_with_crc(
     void (*callback)(void* data, u64 block_id, struct list_head* pages, int err),
     void* data,
-    struct eggsfs_block_service* bs,
+    struct ternfs_block_service* bs,
     struct list_head* pages,
     u64 file_id,
     u64 block_id,
@@ -49,15 +49,15 @@ int eggsfs_fetch_block_pages_with_crc(
 // Returns how many sockets were dropped. Note that the sockets won't be
 // dropped immediately, they will just be scheduled for deletion (but dropping
 // them _will_ fail the requests within them).
-int eggsfs_drop_fetch_block_sockets(void);
+int ternfs_drop_fetch_block_sockets(void);
 
 // Returns an error immediately if it can't connect to the block service or anyway
 // if it thinks the block service is no good.
-int eggsfs_write_block(
+int ternfs_write_block(
     // This callback _must_ take ownership of the pages (and free them if necessary)
     void (*callback)(void* data, struct list_head* pages, u64 block_id, u64 proof, int err),
     void* data,
-    struct eggsfs_block_service* bs,
+    struct ternfs_block_service* bs,
     u64 block_id,
     u64 certificate,
     u32 size,
@@ -68,9 +68,9 @@ int eggsfs_write_block(
     struct list_head* pages
 );
 
-int eggsfs_drop_write_block_sockets(void);
+int ternfs_drop_write_block_sockets(void);
 
-int __init eggsfs_block_init(void);
-void __cold eggsfs_block_exit(void);
+int __init ternfs_block_init(void);
+void __cold ternfs_block_exit(void);
 
 #endif

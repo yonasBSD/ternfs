@@ -19,18 +19,18 @@ ${PWD}/go/build.py
 
 # copy binaries
 binaries=(
-    cpp/build/$build_variant/shard/eggsshard
-    cpp/build/$build_variant/dbtools/eggsdbtools
-    cpp/build/$build_variant/cdc/eggscdc
-    cpp/build/$build_variant/ktools/eggsktools
-    go/eggsshuckle/eggsshuckle
-    go/eggsrun/eggsrun
-    go/eggsblocks/eggsblocks
-    go/eggsfuse/eggsfuse
-    go/eggscli/eggscli
-    go/eggsgc/eggsgc
-    go/eggstests/eggstests
-    go/eggsshuckleproxy/eggsshuckleproxy
+    cpp/build/$build_variant/shard/ternshard
+    cpp/build/$build_variant/dbtools/terndbtools
+    cpp/build/$build_variant/cdc/terncdc
+    cpp/build/$build_variant/ktools/ternktools
+    go/ternshuckle/ternshuckle
+    go/ternrun/ternrun
+    go/ternblocks/ternblocks
+    go/ternfuse/ternfuse
+    go/terncli/terncli
+    go/terngc/terngc
+    go/terntests/terntests
+    go/ternshuckleproxy/ternshuckleproxy
 )
 
 for binary in "${binaries[@]}"; do

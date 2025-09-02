@@ -120,24 +120,24 @@ private:
     std::unordered_set<int64_t> _binnableAlerts;
     // quiet alerts we're waiting to send out
     struct QuietAlert {
-        EggsTime quietUntil;
+        TernTime quietUntil;
         XmonAppType appType;
         std::string message;
     };
     std::unordered_map<int64_t, QuietAlert> _quietAlerts;
     // last heartbeat from xmon
-    EggsTime _gotHeartbeatAt;
+    TernTime _gotHeartbeatAt;
     // what the timer fd expiration is currently set to
-    EggsTime _timerExpiresAt;
+    TernTime _timerExpiresAt;
 
     XmonBuf _buf;
 
     void _packLogon(XmonBuf& buf);
     void _packUpdate(XmonBuf& buf);
     void _packRequest(XmonBuf& buf, const XmonRequest& req);
-    void _ensureTimer(EggsTime now, EggsTime t);
+    void _ensureTimer(TernTime now, TernTime t);
 
-    EggsTime _stepNextWakeup();
+    TernTime _stepNextWakeup();
 public:
     Xmon(
         Logger& logger,

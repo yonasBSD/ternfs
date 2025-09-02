@@ -142,7 +142,7 @@ struct BlockServiceBody {
         switch (version()) {
         case 0: return V0_OFFSET;
         case 1: return V1_OFFSET;
-        default: throw EGGS_EXCEPTION("bad version %s", version());
+        default: throw TERN_EXCEPTION("bad version %s", version());
         }
     }
 

@@ -1,0 +1,24 @@
+{{define "body"}}
+    <h2 id="cdc">CDC</h2>
+    <div id="cdc-table"><em>Loading...</em></div>
+    <h2 id="shards">Shards</h2>
+    <div id="shards-table"><em>Loading...</em></div>
+    <h2 id="block-services">Block services</h2>
+    <p>
+        Flags legend:
+        <ul>
+            <li><code>S</code>: <code>STALE</code>, shuckle hasn't seen this in a while. We won't try to read from/write to it.</li>
+            <li><code>NR</code>: <code>NO_READ</code>, a human has explicitly set the block service to not be read from.</li>
+            <li><code>NW</code>: <code>NO_WRITE</code>, a human has explicitly set the block service to not be written to.</li>
+            <li><code>D</code>: <code>DECOMMISSIONED</code>, a human has explicitly marked this block service as decommissioned, it won't be touched from now on.</li>
+        </ul>
+    </p>
+    <p>
+        The most common occasion where a human sets block services flags is disk failure, see <a href="https://internal-repo/blob/main/docs/disk-failure.md">the docs</a> for more info.
+    </p>
+    <div id="block-services-table"><em>Loading...</em></div>
+    <script type="module">
+        import { renderIndex } from '/static/scripts.js';
+        renderIndex();
+    </script>
+{{end}}

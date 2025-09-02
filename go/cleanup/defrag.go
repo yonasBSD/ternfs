@@ -8,11 +8,11 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
-	"xtx/eggsfs/cleanup/scratch"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/crc32c"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/cleanup/scratch"
+	"xtx/ternfs/client"
+	"xtx/ternfs/crc32c"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type DefragStats struct {
@@ -189,7 +189,7 @@ func DefragFile(
 
 type DefragOptions struct {
 	WorkersPerShard int
-	StartFrom       msgs.EggsTime
+	StartFrom       msgs.TernTime
 	MinSpanSize     uint32
 	StorageClass    msgs.StorageClass // EMPTY = no filter
 }
@@ -207,7 +207,7 @@ func DefragFiles(
 	timeStats := newTimeStats()
 	return client.Parwalk(
 		log, c, &client.ParwalkOptions{WorkersPerShard: options.WorkersPerShard}, root,
-		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
+		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil
 			}
@@ -322,7 +322,7 @@ func DefragSpans(
 	timeStats := newTimeStats()
 	return client.Parwalk(
 		log, c, &client.ParwalkOptions{WorkersPerShard: 5}, root,
-		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error {
+		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil
 			}

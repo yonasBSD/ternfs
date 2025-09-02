@@ -27,7 +27,7 @@ static const char* appTypeString(XmonAppType appType) {
     case XmonAppType::CRITICAL:
         return "restech_eggsfs.critical";
     default:
-        throw EGGS_EXCEPTION("Bad xmon app type %s", (int)appType);
+        throw TERN_EXCEPTION("Bad xmon app type %s", (int)appType);
     }
 }
 
@@ -60,7 +60,7 @@ Xmon::Xmon(
     _xmonPort(5004)
 {
     if (_appInstance.empty()) {
-        throw EGGS_EXCEPTION("empty app name");
+        throw TERN_EXCEPTION("empty app name");
     }
     {
         char buf[HOST_NAME_MAX];
@@ -100,7 +100,7 @@ Xmon::Xmon(
 
     // arm initial timer
     {
-        auto now = eggsNow();
+        auto now = ternNow();
         _timerExpiresAt = std::numeric_limits<uint64_t>::max();
         _ensureTimer(now, now);
     }
@@ -117,7 +117,7 @@ Xmon::~Xmon() {
     }
 }
 
-void Xmon::_ensureTimer(EggsTime now, EggsTime t) {
+void Xmon::_ensureTimer(TernTime now, TernTime t) {
     if (_timerExpiresAt <= t) { return; }
     Duration d = std::max<Duration>(1, t - now);
     LOG_DEBUG(_env, "arming timer in %s", d);
@@ -268,9 +268,9 @@ void XmonBuf::readIn(int fd, size_t sz, std::string& errString) {
 
 constexpr int MAX_BINNABLE_ALERTS = 20;
 
-EggsTime Xmon::_stepNextWakeup() {
+TernTime Xmon::_stepNextWakeup() {
     std::string errString;
-    EggsTime nextWakeup = std::numeric_limits<uint64_t>::max();
+    TernTime nextWakeup = std::numeric_limits<uint64_t>::max();
 
 #define CHECK_ERR_STRING(__what) \
     if (errString.size()) { \
@@ -302,7 +302,7 @@ EggsTime Xmon::_stepNextWakeup() {
         LOG_INFO(_env, "sent logon to xmon, appType=%s appInstance=%s", appTypeString(_parent), _appInstance);
 
         _gotHeartbeatAt = 0;
-        nextWakeup = std::min(nextWakeup, eggsNow() + HEARTBEAT_INTERVAL*2);
+        nextWakeup = std::min(nextWakeup, ternNow() + HEARTBEAT_INTERVAL*2);
     }
 
     if (poll(_fds, NUM_FDS, -1) < 0) {
@@ -310,7 +310,7 @@ EggsTime Xmon::_stepNextWakeup() {
         throw SYSCALL_EXCEPTION("poll");
     }
 
-    auto now = eggsNow();
+    auto now = ternNow();
 
     if (_fds[SOCK_FD].revents & (POLLIN|POLLHUP|POLLERR)) {
         LOG_DEBUG(_env, "got event in sock fd");
@@ -373,7 +373,7 @@ EggsTime Xmon::_stepNextWakeup() {
             _binnableAlerts.erase(alertId);
             break; }
         default:
-            throw EGGS_EXCEPTION("unknown message type %s", msgType);
+            throw TERN_EXCEPTION("unknown message type %s", msgType);
         }
     }
 
@@ -441,7 +441,7 @@ EggsTime Xmon::_stepNextWakeup() {
                 if (req.quietPeriod > 0) {
                     ALWAYS_ASSERT(!req.binnable, "got alert with quietPeriod=%s, but it is binnable", req.quietPeriod);
                     LOG_INFO(_env, "got non-binnable alertId=%s message=%s quietPeriod=%s, will wait", req.alertId, req.message, req.quietPeriod);
-                    EggsTime quietUntil = now + req.quietPeriod;
+                    TernTime quietUntil = now + req.quietPeriod;
                     nextWakeup = std::min(nextWakeup, quietUntil);
                     _quietAlerts[req.alertId] = QuietAlert{
                         .quietUntil = quietUntil,
@@ -490,7 +490,7 @@ EggsTime Xmon::_stepNextWakeup() {
                 }
                 LOG_INFO(_env, "clearing alert, aid=%s", req.alertId);
             } else {
-                throw EGGS_EXCEPTION("bad req type %s", (int)req.msgType);
+                throw TERN_EXCEPTION("bad req type %s", (int)req.msgType);
             }
             _packRequest(_buf, req);
         write_request:
@@ -509,6 +509,6 @@ EggsTime Xmon::_stepNextWakeup() {
 }
 
 void Xmon::step() {
-    EggsTime nextTimer = _stepNextWakeup();
-    _ensureTimer(eggsNow(), nextTimer);
+    TernTime nextTimer = _stepNextWakeup();
+    _ensureTimer(ternNow(), nextTimer);
 }

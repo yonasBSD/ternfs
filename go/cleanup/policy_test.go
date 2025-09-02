@@ -3,16 +3,16 @@ package cleanup
 import (
 	"testing"
 	"time"
-	"xtx/eggsfs/assert"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/assert"
+	"xtx/ternfs/msgs"
 )
 
 func inodeId(id uint64, extra bool) msgs.InodeIdExtra {
 	return msgs.MakeInodeIdExtra(msgs.MakeInodeId(msgs.FILE, 0, id), extra)
 }
 
-func date(day int) msgs.EggsTime {
-	return msgs.MakeEggsTime(time.Date(2021, time.January, day, 0, 0, 0, 0, time.UTC))
+func date(day int) msgs.TernTime {
+	return msgs.MakeTernTime(time.Date(2021, time.January, day, 0, 0, 0, 0, time.UTC))
 }
 
 func TestDeleteAll(t *testing.T) {

@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 func goDir(repoDir string) string {
@@ -371,7 +371,7 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 	}
 	args = append(args, mountPoint)
 	procs.Start(ll, &ManagedProcessArgs{
-		Name:            "eggsfuse",
+		Name:            "ternfuse",
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Path, "stdout"),
@@ -379,7 +379,7 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 		TerminateOnExit: true,
 	})
 	if opts.Wait {
-		ll.Info("waiting for eggsfuse")
+		ll.Info("waiting for ternfuse")
 		<-signalChan
 		signal.Stop(signalChan)
 	}
@@ -483,7 +483,7 @@ type GoExes struct {
 }
 
 func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
-	args := []string{"eggsshuckle", "eggsblocks", "eggsfuse"}
+	args := []string{"ternshuckle", "ternblocks", "ternfuse"}
 	if race {
 		args = append(args, "--race")
 	}
@@ -496,10 +496,10 @@ func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
 		panic(fmt.Errorf("could not build shucke/blocks/fuse: %w", err))
 	}
 	return &GoExes{
-		ShuckleExe:       path.Join(goDir(repoDir), "eggsshuckle", "eggsshuckle"),
-		BlocksExe:        path.Join(goDir(repoDir), "eggsblocks", "eggsblocks"),
-		FuseExe:          path.Join(goDir(repoDir), "eggsfuse", "eggsfuse"),
-		ShuckleProxyExe:  path.Join(goDir(repoDir), "eggsshuckleproxy", "eggsshuckleproxy"),
+		ShuckleExe:       path.Join(goDir(repoDir), "ternshuckle", "ternshuckle"),
+		BlocksExe:        path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
+		FuseExe:          path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
+		ShuckleProxyExe:  path.Join(goDir(repoDir), "ternshuckleproxy", "ternshuckleproxy"),
 	}
 }
 
@@ -716,10 +716,10 @@ type CppExes struct {
 }
 
 func BuildCppExes(ll *lib.Logger, repoDir string, buildType string) *CppExes {
-	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/eggsshard", "cdc/eggscdc", "dbtools/eggsdbtools"})
+	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/ternshard", "cdc/terncdc", "dbtools/terndbtools"})
 	return &CppExes{
-		ShardExe:   path.Join(buildDir, "shard/eggsshard"),
-		CDCExe:     path.Join(buildDir, "cdc/eggscdc"),
-		DBToolsExe: path.Join(buildDir, "dbtools/eggsdbtools"),
+		ShardExe:   path.Join(buildDir, "shard/ternshard"),
+		CDCExe:     path.Join(buildDir, "cdc/terncdc"),
+		DBToolsExe: path.Join(buildDir, "dbtools/terndbtools"),
 	}
 }

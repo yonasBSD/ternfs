@@ -1,9 +1,9 @@
 KDIR ?= /lib/modules/$(shell uname -r)/build
 LLVM ?= 0
 
-obj-m += eggsfs.o
+obj-m += ternfs.o
 
-eggsfs-objs += \
+ternfs-objs += \
 	dir.o \
 	err.o \
 	export.o \
@@ -35,7 +35,7 @@ export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopoi
 
 .PHONY: revision.c
 revision.c:
-	printf "#include \"sysfs.h\"\nconst char* eggsfs_revision = \"$(shell git describe --always --dirty)\";\n" > revision.c
+	printf "#include \"sysfs.h\"\nconst char* ternfs_revision = \"$(shell git describe --always --dirty)\";\n" > revision.c
 
 # C=1 builds with sparse
 kmod: revision.c

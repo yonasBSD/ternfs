@@ -1,12 +1,12 @@
-#ifndef _EGGSFS_SYSFS_H
-#define _EGGSFS_SYSFS_H
+#ifndef _TERNFS_SYSFS_H
+#define _TERNFS_SYSFS_H
 
 #include <linux/init.h>
 
-extern const char* eggsfs_revision;
+extern const char* ternfs_revision;
 
-int __init eggsfs_sysfs_init(void);
-void __cold eggsfs_sysfs_exit(void);
+int __init ternfs_sysfs_init(void);
+void __cold ternfs_sysfs_exit(void);
 
 #endif
 

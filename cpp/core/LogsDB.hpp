@@ -52,7 +52,7 @@ std::ostream& operator<<(std::ostream& out, const LogsDBLogEntry& entry);
 
 struct LogsDBRequest {
     ReplicaId replicaId;
-    EggsTime sentTime;
+    TernTime sentTime;
     LogReqMsg msg;
 };
 
@@ -122,7 +122,7 @@ public:
 
     bool isLeader() const;
 
-    EggsError appendEntries(std::vector<LogsDBLogEntry>& entries);
+    TernError appendEntries(std::vector<LogsDBLogEntry>& entries);
 
     // returns index of last entry available for read
     LogIdx getLastContinuous() const;

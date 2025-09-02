@@ -39,7 +39,7 @@
 struct ShardReq {
     uint32_t protocol;
     ShardReqMsg msg;
-    EggsTime receivedAt;
+    TernTime receivedAt;
     IpPort clientAddr;
     int sockIx; // which sock to use to reply
 };
@@ -328,9 +328,9 @@ static void packShardResponse(
 ) {
     auto respKind = msg.body.kind();
     auto reqKind = req.msg.body.kind();
-    auto elapsed = eggsNow() - req.receivedAt;
+    auto elapsed = ternNow() - req.receivedAt;
     shared.timings[(int)reqKind].add(elapsed);
-    shared.errors[(int)reqKind].add( respKind != ShardMessageKind::ERROR ? EggsError::NO_ERROR : msg.body.getError());
+    shared.errors[(int)reqKind].add( respKind != ShardMessageKind::ERROR ? TernError::NO_ERROR : msg.body.getError());
     if (unlikely(dropArtificially)) {
         LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
@@ -371,9 +371,9 @@ static void packCheckPointedShardResponse(
 ) {
     auto respKind = msg.body.resp.kind();
     auto reqKind = req.msg.body.kind();
-    auto elapsed = eggsNow() - req.receivedAt;
+    auto elapsed = ternNow() - req.receivedAt;
     shared.timings[(int)reqKind].add(elapsed);
-    shared.errors[(int)reqKind].add( respKind != ShardMessageKind::ERROR ? EggsError::NO_ERROR : msg.body.resp.getError());
+    shared.errors[(int)reqKind].add( respKind != ShardMessageKind::ERROR ? TernError::NO_ERROR : msg.body.resp.getError());
     if (unlikely(dropArtificially)) {
         LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
@@ -583,7 +583,7 @@ private:
             return;
         }
 
-        auto t0 = eggsNow();
+        auto t0 = ternNow();
 
         LOG_DEBUG(_env, "received request id %s, kind %s, from %s", req.id, req.body.kind(), msg.clientAddr);
 
@@ -623,7 +623,7 @@ private:
             return;
         }
 
-        auto t0 = eggsNow();
+        auto t0 = ternNow();
         LOG_DEBUG(_env, "parsed shard response from %s: %s", msg.clientAddr, resp);
     }
 
@@ -725,10 +725,10 @@ struct std::hash<InFlightRequestKey> {
 
 struct ProxyShardReq {
     ShardReq req;
-    EggsTime lastSent;
-    EggsTime created;
-    EggsTime gotLogIdx;
-    EggsTime finished;
+    TernTime lastSent;
+    TernTime created;
+    TernTime gotLogIdx;
+    TernTime finished;
 };
 
 struct ShardWriter : Loop {
@@ -775,7 +775,7 @@ private:
 
     static constexpr Duration PROXIED_REUQEST_TIMEOUT = 100_ms;
     std::unordered_map<uint64_t, ProxyShardReq> _proxyShardRequests; // outstanding proxied shard requests
-    std::unordered_map<uint64_t, std::pair<LogIdx, EggsTime>> _proxyCatchupRequests; // outstanding logsdb catchup requests to primary leader
+    std::unordered_map<uint64_t, std::pair<LogIdx, TernTime>> _proxyCatchupRequests; // outstanding logsdb catchup requests to primary leader
     std::unordered_map<uint64_t, std::pair<ShardRespContainer, ProxyShardReq>> _proxiedResponses; // responses from primary location that we need to send back to client
 
     std::vector<ProxyLogsDBRequest> _proxyReadRequests; // currently processing proxied read requests
@@ -808,7 +808,7 @@ public:
         _basePath(shared.options.dbDir),
         _shared(shared),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
-        _packetDropRand(eggsNow().ns),
+        _packetDropRand(ternNow().ns),
         _outgoingPacketDropProbability(0),
         _maxWorkItemsAtOnce(LogsDB::IN_FLIGHT_APPEND_WINDOW * 10),
         _logsDB(shared.logsDB),
@@ -853,7 +853,7 @@ public:
             return;
         }
         // catchup requests first as progressing state is more important then sending new requests
-        auto now = eggsNow();
+        auto now = ternNow();
         for(auto& req : _proxyCatchupRequests) {
             if (now - req.second.second < PROXIED_REUQEST_TIMEOUT) {
                 continue;
@@ -1009,7 +1009,7 @@ public:
                                 auto it = _proxiedResponses.find(logsDBEntry.idx.u64);
                                 if (it != _proxiedResponses.end()) {
                                     ALWAYS_ASSERT(_shared.options.isProxyLocation());
-                                    it->second.second.finished = eggsNow();
+                                    it->second.second.finished = ternNow();
                                     logSlowProxyReq(it->second.second);
                                     resp.body = std::move(it->second.first);
                                     _proxiedResponses.erase(it);
@@ -1104,7 +1104,7 @@ public:
             LogRespMsg resp;
             resp.id = request.request.msg.id;
             auto& readResp = resp.body.setLogRead();
-            readResp.result = EggsError::NO_ERROR;
+            readResp.result = TernError::NO_ERROR;
             readResp.value.els = _logsDBEntries[i].value;
             _sender.prepareOutgoingMessage(
                 _env,
@@ -1179,7 +1179,7 @@ public:
         _logsDB.processIncomingMessages(_logsDBRequests,_logsDBResponses);
         _knownLastReleased = std::max(_knownLastReleased,_logsDB.getLastReleased());
         _nextTimeout = _logsDB.getNextTimeout();
-        auto now = eggsNow();
+        auto now = ternNow();
 
         // check for leadership state change and clean up internal state
         if (unlikely(_isLogsDBLeader != _logsDB.isLeader())) {
@@ -1259,7 +1259,7 @@ public:
             auto& entry = _shardEntries.emplace_back();
 
             auto err = _shared.shardDB.prepareLogEntry(req.msg.body, entry);
-            if (unlikely(err != EggsError::NO_ERROR)) {
+            if (unlikely(err != TernError::NO_ERROR)) {
                 _shardEntries.pop_back(); // back out the log entry
                 LOG_ERROR(_env, "error preparing log entry for request: %s from: %s err: %s", req.msg, req.clientAddr, err);
                 // depending on protocol we need different kind of responses
@@ -1463,7 +1463,7 @@ public:
                 logsDBEntry.value.assign(buf.data, buf.cursor);
             }
             auto err = _logsDB.appendEntries(_logsDBEntries);
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             for (size_t i = 0; i < _shardEntries.size(); ++i) {
                 ALWAYS_ASSERT(_logsDBEntries[i].idx == _shardEntries[i].idx);
                 _inFlightEntries.emplace(_shardEntries[i].idx.u64, std::move(_shardEntries[i]));
@@ -1504,7 +1504,7 @@ public:
             resp.id = snapshotReq.msg.id;
             auto err = _shared.sharedDB.snapshot(_basePath +"/snapshot-" + std::to_string(snapshotReq.msg.body.getShardSnapshot().snapshotId));
 
-            if (err == EggsError::NO_ERROR) {
+            if (err == TernError::NO_ERROR) {
                 resp.body.setShardSnapshot();
             } else {
                 resp.body.setError() = err;
@@ -1593,7 +1593,7 @@ public:
 
         _replicaInfo = _shared.replicas;
         uint32_t pulled = _shared.writerRequestsQueue.pull(_workItems, _maxWorkItemsAtOnce, _nextTimeout);
-        auto start = eggsNow();
+        auto start = ternNow();
         if (likely(pulled > 0)) {
             LOG_DEBUG(_env, "pulled %s requests from write queue", pulled);
             _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)pulled)*0.05;
@@ -1627,7 +1627,7 @@ public:
             }
         }
         logsDBStep();
-        auto loopTime = eggsNow() - start;
+        auto loopTime = ternNow() - start;
     }
 };
 
@@ -1654,7 +1654,7 @@ public:
         Loop(logger, xmon, "reader"),
         _shared(shared),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
-        _packetDropRand(eggsNow().ns),
+        _packetDropRand(ternNow().ns),
         _outgoingPacketDropProbability(0)
     {
         expandKey(ShardKey, _expandedShardKey);
@@ -1675,7 +1675,7 @@ public:
     virtual void step() override {
         _requests.clear();
         uint32_t pulled = _shared.readerRequestsQueue.pull(_requests, MAX_RECV_MSGS * 2);
-        auto start = eggsNow();
+        auto start = ternNow();
         if (likely(pulled > 0)) {
             LOG_DEBUG(_env, "pulled %s requests from read queue", pulled);
             _shared.pulledReadRequests = _shared.pulledReadRequests*0.95 + ((double)pulled)*0.05;
@@ -1875,7 +1875,7 @@ public:
     }
 };
 
-static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ShardReplicaId shrid, uint8_t location, EggsTime now) {
+static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const LogsDBStats& stats, ShardReplicaId shrid, uint8_t location, TernTime now) {
     {
         metricsBuilder.measurement("eggsfs_shard_logsdb");
         metricsBuilder.tag("shard", shrid);
@@ -2035,7 +2035,7 @@ public:
         } else {
             _env.clearAlert(_writeQueueAlert);
         }
-        auto now = eggsNow();
+        auto now = ternNow();
         for (ShardMessageKind kind : allShardMessageKind) {
             const ErrorCount& errs = _shared.errors[(int)kind];
             for (int i = 0; i < errs.count.size(); i++) {
@@ -2049,7 +2049,7 @@ public:
                 if (i == 0) {
                     _metricsBuilder.tag("error", "NO_ERROR");
                 } else {
-                    _metricsBuilder.tag("error", (EggsError)i);
+                    _metricsBuilder.tag("error", (TernError)i);
                 }
                 _metricsBuilder.fieldU64("count", count);
                 _metricsBuilder.timestamp(now);

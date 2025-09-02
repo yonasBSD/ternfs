@@ -178,7 +178,7 @@ std::string removeTemplates(const std::string & s) {
 
 }
 
-const char *EggsException::what() const throw() {
+const char *TernException::what() const throw() {
     return _msg.c_str();
 }
 

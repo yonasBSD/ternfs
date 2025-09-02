@@ -3,8 +3,8 @@ package client
 import (
 	"fmt"
 	"net"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 func (c *Client) checkRepeatedCDCRequestError(
@@ -12,8 +12,8 @@ func (c *Client) checkRepeatedCDCRequestError(
 	// these are already filled in by now
 	reqBody msgs.CDCRequest,
 	resp msgs.CDCResponse,
-	respErr msgs.EggsError,
-) msgs.EggsError {
+	respErr msgs.TernError,
+) msgs.TernError {
 	switch reqBody := reqBody.(type) {
 	case *msgs.RenameDirectoryReq:
 		// We repeat the request, but the previous had actually gone through:

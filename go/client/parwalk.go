@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"path"
 	"sync"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type parwarlkReq struct {
@@ -22,7 +22,7 @@ type parwalkEnv struct {
 	chans    []chan parwarlkReq
 	client   *Client
 	snapshot bool
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error
+	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error
 }
 
 func (env *parwalkEnv) visit(
@@ -31,7 +31,7 @@ func (env *parwalkEnv) visit(
 	parent msgs.InodeId,
 	parentPath string,
 	name string,
-	creationTime msgs.EggsTime,
+	creationTime msgs.TernTime,
 	id msgs.InodeId,
 	current bool,
 	owned bool,
@@ -136,7 +136,7 @@ func Parwalk(
 	client *Client,
 	options *ParwalkOptions,
 	root string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.EggsTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
 	if options.WorkersPerShard < 1 {
 		panic(fmt.Errorf("workersPerShard=%d < 1", options.WorkersPerShard))

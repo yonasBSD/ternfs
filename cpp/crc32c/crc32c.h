@@ -5,8 +5,8 @@
 // we just invert the crc at the beginning and at the end.
 //
 // See <https://en.wikipedia.org/wiki/Computation_of_cyclic_redundancy_checks#CRC_variants>.
-#ifndef EGGS_CRC32C
-#define EGGS_CRC32C
+#ifndef TERN_CRC32C
+#define TERN_CRC32C
 
 #include <stdint.h>
 #include <sys/types.h>

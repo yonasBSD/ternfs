@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"xtx/eggsfs/crc32c"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
-	"xtx/eggsfs/rs"
+	"xtx/ternfs/crc32c"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
+	"xtx/ternfs/rs"
 )
 
 type blockReader struct {
@@ -94,8 +94,6 @@ func ensureLen(buf *[]byte, l int) {
 	}
 }
 
-const eggsFsPageSize int = 4096
-
 type SpanParameters struct {
 	Parity       rs.Parity
 	StorageClass msgs.StorageClass
@@ -116,7 +114,7 @@ func ComputeSpanParameters(
 	blockSize := (int(spanSize) + D - 1) / D
 	cellSize := (blockSize + S - 1) / S
 	// Round up cell to page size
-	cellSize = eggsFsPageSize * ((cellSize + eggsFsPageSize - 1) / eggsFsPageSize)
+	cellSize = int(msgs.TERN_PAGE_SIZE) * ((cellSize + int(msgs.TERN_PAGE_SIZE) - 1) / int(msgs.TERN_PAGE_SIZE))
 	blockSize = cellSize * S
 	storageClass := blockPolicies.Pick(uint32(blockSize)).StorageClass
 	return &SpanParameters{

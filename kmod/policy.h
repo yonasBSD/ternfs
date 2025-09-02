@@ -1,26 +1,26 @@
 // We index policies by (inode, tag), so that the automatically get updated
 // when the getattr for the inode runs. They never get freed, there should
 // be very few of them.
-#ifndef _EGGSFS_POLICY_H
-#define _EGGSFS_POLICY_H
+#ifndef _TERNFS_POLICY_H
+#define _TERNFS_POLICY_H
 
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 
-struct eggsfs_policy;
+struct ternfs_policy;
 
 // Creates or update a specific policy. Very fast unless the policy is unseen so
 // far, which is a rare occurrence.
-struct eggsfs_policy* eggsfs_upsert_policy(u64 inode, u8 tag, char* body, int len);
+struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int len);
 
-struct eggsfs_policy_body {
+struct ternfs_policy_body {
     u8 len;
     char body[255];
 };
 
-void eggsfs_get_policy_body(struct eggsfs_policy* policy, struct eggsfs_policy_body* body);
+void ternfs_get_policy_body(struct ternfs_policy* policy, struct ternfs_policy_body* body);
 
-int __init eggsfs_policy_init(void);
-void __cold eggsfs_policy_exit(void);
+int __init ternfs_policy_init(void);
+void __cold ternfs_policy_exit(void);
 
 #endif

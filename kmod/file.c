@@ -20,20 +20,20 @@
 #include "dir.h"
 #include "inode_compat.h"
 
-unsigned eggsfs_atime_update_interval_sec = 0;
+unsigned ternfs_atime_update_interval_sec = 0;
 
-unsigned eggsfs_file_io_timeout_sec = 86400;
+unsigned ternfs_file_io_timeout_sec = 86400;
 
-unsigned eggsfs_file_io_retry_refresh_span_interval_sec = 60; // 1 minute interval for refreshing spans during IO retries
+unsigned ternfs_file_io_retry_refresh_span_interval_sec = 60; // 1 minute interval for refreshing spans during IO retries
 
-unsigned eggsfs_max_write_span_attempts = 5;
+unsigned ternfs_max_write_span_attempts = 5;
 
-static struct kmem_cache* eggsfs_transient_span_cachep;
+static struct kmem_cache* ternfs_transient_span_cachep;
 
-struct eggsfs_transient_span {
+struct ternfs_transient_span {
     // The transient span holds a reference to this. As long as the
     // transient span lives, the enode must live.
-    struct eggsfs_inode* enode;
+    struct ternfs_inode* enode;
     // Offset in the file for this span
     u64 offset;
     // Linear list of pages with the body of the span, used when we're still gathering
@@ -43,15 +43,15 @@ struct eggsfs_transient_span {
     atomic_t refcount;
 
     // These are finalized when we start flushing out a span.
-    char failure_domains[EGGSFS_MAX_BLOCKS][16]; // failure domains for current run so we can blacklist failures
-    char blacklisted_failure_domains[EGGSFS_MAX_BLACKLIST_LENGTH][16]; // blacklisted failure domains
-    struct list_head blocks[EGGSFS_MAX_BLOCKS]; // the pages for each block
-    u64 block_ids[EGGSFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
+    char failure_domains[TERNFS_MAX_BLOCKS][16]; // failure domains for current run so we can blacklist failures
+    char blacklisted_failure_domains[TERNFS_MAX_BLACKLIST_LENGTH][16]; // blacklisted failure domains
+    struct list_head blocks[TERNFS_MAX_BLOCKS]; // the pages for each block
+    u64 block_ids[TERNFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
     spinlock_t lock; // we use this for various modifications
-    u64 blocks_proofs[EGGSFS_MAX_BLOCKS]; // when completing blocks, one of proof or err is set.
-    int blocks_errs[EGGSFS_MAX_BLOCKS];
+    u64 blocks_proofs[TERNFS_MAX_BLOCKS]; // when completing blocks, one of proof or err is set.
+    int blocks_errs[TERNFS_MAX_BLOCKS];
     u32 span_crc;
-    u32 cell_crcs[EGGSFS_MAX_BLOCKS*EGGSFS_MAX_STRIPES];
+    u32 cell_crcs[TERNFS_MAX_BLOCKS*TERNFS_MAX_STRIPES];
     u32 block_size;
     u8 attempts;
     u8 stripes;
@@ -61,19 +61,19 @@ struct eggsfs_transient_span {
     bool started_flushing;
 };
 // just a sanity check, this is just two per page rn
-static_assert(sizeof(struct eggsfs_transient_span) < (2<<10));
+static_assert(sizeof(struct ternfs_transient_span) < (2<<10));
 
 // open_mutex held here
 // really want atomic open for this
 static int file_open(struct inode* inode, struct file* filp) {
     inode_lock(inode); // for the .status modification below
 
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
-    eggsfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
+    ternfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
     int err = 0;
 
-    if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == EGGSFS_FILE_STATUS_WRITING)) {
+    if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == TERNFS_FILE_STATUS_WRITING)) {
         // this is the "common" writing case, we've just created a file to write it.
         // note that we never change the file owner, which might lead to confusing behavior
         // but is probably the only sensible thing to do.
@@ -82,28 +82,28 @@ static int file_open(struct inode* inode, struct file* filp) {
         // in f_mode here and we just fail when operations that can't be done (e.g. writing
         // to files) are attempted. the reason is that some workflows (such as open write +
         // setattr) _will_ work.
-        enode->file.status = EGGSFS_FILE_STATUS_READING;
+        enode->file.status = TERNFS_FILE_STATUS_READING;
         // also, set atime, if requested
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();
             struct timespec64 atime_ts = ns_to_timespec64(atime_ns);
-            u64 diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
-            if (diff < eggsfs_atime_update_interval_sec) {
+            u64 diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            if (diff < ternfs_atime_update_interval_sec) {
                 // we don't think we should update
                 goto out;
             }
 
-            // internal-repo/issues/292
+            // https://internal-repo/issues/292
             // we might have cached data and another client updated atime.
-            // eggsfs_do_getattr is orders of magnitude cheaper than eggsfs_shard_set_time,
+            // ternfs_do_getattr is orders of magnitude cheaper than ternfs_shard_set_time,
             // so we might as well refresh and re-check
-            int err = eggsfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
+            int err = ternfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
             if (err) {
                 inode_unlock(inode);
                 return err;
             }
-            diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
-            if (diff < eggsfs_atime_update_interval_sec) {
+            diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            if (diff < ternfs_atime_update_interval_sec) {
                 // out local time changed and we see we don't need to update
                 goto out;
             }
@@ -117,7 +117,7 @@ static int file_open(struct inode* inode, struct file* filp) {
                 goto out;
             }
             u64 atime = atime_ns | (1ull<<63);
-            err = eggsfs_shard_set_time((struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
+            err = ternfs_shard_set_time((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
             if (err) {
                 goto out;
             }
@@ -131,10 +131,10 @@ out:
 }
 
 static void init_transient_span(void* p) {
-    struct eggsfs_transient_span* span = (struct eggsfs_transient_span*)p;
+    struct ternfs_transient_span* span = (struct ternfs_transient_span*)p;
     INIT_LIST_HEAD(&span->pages);
     int i;
-    for (i = 0; i < EGGSFS_MAX_BLOCKS; i++) {
+    for (i = 0; i < TERNFS_MAX_BLOCKS; i++) {
         INIT_LIST_HEAD(&span->blocks[i]);
     }
     // we set it to 0, we bug if not 0 when getting from cache
@@ -143,8 +143,8 @@ static void init_transient_span(void* p) {
 }
 
 // starts out with refcount = 1
-static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* enode, u64 offset) {
-    struct eggsfs_transient_span* span = kmem_cache_alloc(eggsfs_transient_span_cachep, GFP_KERNEL);
+static struct ternfs_transient_span* new_transient_span(struct ternfs_inode* enode, u64 offset) {
+    struct ternfs_transient_span* span = kmem_cache_alloc(ternfs_transient_span_cachep, GFP_KERNEL);
     if (span == NULL) { return span; }
     span->enode = enode;
     BUG_ON(atomic_read(&span->refcount) != 0);
@@ -167,11 +167,11 @@ static struct eggsfs_transient_span* new_transient_span(struct eggsfs_inode* eno
     return span;
 }
 
-static void hold_transient_span(struct eggsfs_transient_span* span) {
+static void hold_transient_span(struct ternfs_transient_span* span) {
     atomic_inc(&span->refcount);
 }
 
-static bool put_transient_span(struct eggsfs_transient_span* span) {
+static bool put_transient_span(struct ternfs_transient_span* span) {
     if (atomic_dec_return(&span->refcount) == 0) {
         BUG_ON(spin_is_locked(&span->lock));
         // free pages, adjust OOM score
@@ -191,7 +191,7 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
         }
         FREE_PAGES(&span->pages);
         int b;
-        for (b = 0; b < eggsfs_blocks(span->parity); b++) {
+        for (b = 0; b < ternfs_blocks(span->parity); b++) {
             FREE_PAGES(&span->blocks[b]);
         }
 #undef FREE_PAGES
@@ -200,30 +200,30 @@ static bool put_transient_span(struct eggsfs_transient_span* span) {
             up(&span->enode->file.flushing_span_sema);
         }
         // Free the span itself
-        kmem_cache_free(eggsfs_transient_span_cachep, span);
+        kmem_cache_free(ternfs_transient_span_cachep, span);
         return true;
     }
     return false;
 }
 
-static int add_span_initiate(struct eggsfs_transient_span* span);
+static int add_span_initiate(struct ternfs_transient_span* span);
 
-static int move_span_and_restart(struct eggsfs_transient_span* span) {
-    struct eggsfs_inode* enode = span->enode;
+static int move_span_and_restart(struct ternfs_transient_span* span) {
+    struct ternfs_inode* enode = span->enode;
 
     // create new file
     u64 ino;
     u64 cookie;
     const char* name = "move_span";
-    int err = eggsfs_error_to_linux(eggsfs_shard_create_file(
-        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
-        eggsfs_inode_shard(enode->inode.i_ino), EGGSFS_INODE_FILE, name, strlen(name), &ino, &cookie
+    int err = ternfs_error_to_linux(ternfs_shard_create_file(
+        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
+        ternfs_inode_shard(enode->inode.i_ino), TERNFS_INODE_FILE, name, strlen(name), &ino, &cookie
     ));
     if (err) { goto out_err; }
 
     // move span
-    err = eggsfs_error_to_linux(eggsfs_shard_move_span(
-        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+    err = ternfs_error_to_linux(ternfs_shard_move_span(
+        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
         enode->inode.i_ino, span->offset, enode->file.cookie, ino, 0, cookie, span->written
     ));
     if (err) { goto out_err; }
@@ -235,19 +235,19 @@ static int move_span_and_restart(struct eggsfs_transient_span* span) {
     return 0;
 
 out_err:
-    eggsfs_info("moving span failed %d", err);
+    ternfs_info("moving span failed %d", err);
     return err;
 }
 
-static int retry_after_block_error(struct eggsfs_transient_span* span) {
+static int retry_after_block_error(struct ternfs_transient_span* span) {
     int i;
-    int B = eggsfs_blocks(span->parity);
+    int B = ternfs_blocks(span->parity);
     int err = 0;
 
     for (i = 0; i < B; i++) {
         if (span->blocks_errs[i]) {
             if (err) {
-                eggsfs_info("dropping err %d, since we already returned %d", span->blocks_errs[i], err);
+                ternfs_info("dropping err %d, since we already returned %d", span->blocks_errs[i], err);
             } else {
                 err = span->blocks_errs[i];
             }
@@ -255,21 +255,21 @@ static int retry_after_block_error(struct eggsfs_transient_span* span) {
     }
     BUG_ON(err == 0);
 
-    if (span->attempts < eggsfs_max_write_span_attempts) {
-        eggsfs_info("writing span failed with err %d after %d attempts, will try again", err, span->attempts);
+    if (span->attempts < ternfs_max_write_span_attempts) {
+        ternfs_info("writing span failed with err %d after %d attempts, will try again", err, span->attempts);
         return move_span_and_restart(span);
     } else {
-        eggsfs_warn("writing span failed with err %d after %d attempts, giving up", err, span->attempts);
+        ternfs_warn("writing span failed with err %d after %d attempts, giving up", err, span->attempts);
         return err;
     }
 }
 
-static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 proof, int block_write_err) {
+static void write_block_finalize(struct ternfs_transient_span* span, int b, u64 proof, int block_write_err) {
     int i;
-    int B = eggsfs_blocks(span->parity);
-    struct eggsfs_inode* enode = span->enode;
+    int B = ternfs_blocks(span->parity);
+    struct ternfs_inode* enode = span->enode;
 
-    eggsfs_debug("block=%d proof=%016llx err=%d", b, proof, block_write_err);
+    ternfs_debug("block=%d proof=%016llx err=%d", b, proof, block_write_err);
 
     bool finished_writing = true;
     bool any_block_errs = false;
@@ -295,8 +295,8 @@ static void write_block_finalize(struct eggsfs_transient_span* span, int b, u64 
     int err = 0;
     if (finished_writing && likely(!any_block_errs)) {
         // TODO just like in the other case, would be nicer to have this async, since we're in a queue here.
-        err = eggsfs_error_to_linux(eggsfs_shard_add_span_certify(
-            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+        err = ternfs_error_to_linux(ternfs_shard_add_span_certify(
+            (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
             enode->inode.i_ino, enode->file.cookie, span->offset, span->parity,
             span->block_ids, span->blocks_proofs
         ));
@@ -323,11 +323,11 @@ static void write_block_done(void* data, struct list_head* pages, u64 block_id, 
         block_write_err = -EIO; // we need to get _very_ unlucky for this to happen!
     }
 
-    struct eggsfs_transient_span* span = (struct eggsfs_transient_span*)data;
+    struct ternfs_transient_span* span = (struct ternfs_transient_span*)data;
 
-    eggsfs_debug("block_id=%016llx proof=%016llx err=%d", block_id, proof, block_write_err);
+    ternfs_debug("block_id=%016llx proof=%016llx err=%d", block_id, proof, block_write_err);
 
-    int B = eggsfs_blocks(span->parity);
+    int B = ternfs_blocks(span->parity);
 
     // find the index that concerns us now
     int b;
@@ -346,21 +346,21 @@ static void write_block_done(void* data, struct list_head* pages, u64 block_id, 
     write_block_finalize(span, b, proof, block_write_err);
 }
 
-static int add_span_initiate(struct eggsfs_transient_span* span) {
+static int add_span_initiate(struct ternfs_transient_span* span) {
     int i;
-    struct eggsfs_inode* enode = span->enode;
-    int B = eggsfs_blocks(span->parity);
+    struct ternfs_inode* enode = span->enode;
+    int B = ternfs_blocks(span->parity);
 
     int cell_size = span->block_size / span->stripes;
 
-    eggsfs_debug("add span initiate");
+    ternfs_debug("add span initiate");
 
     // fill in blacklist
     for (i = 0; i < B; i++) {
         if (span->blocks_errs[i]) {
-            if (span->blacklist_length == EGGSFS_MAX_BLACKLIST_LENGTH) {
+            if (span->blacklist_length == TERNFS_MAX_BLACKLIST_LENGTH) {
                 // it's ok to try again, we have limit on number of attempts
-                eggsfs_warn("span initiate blacklist full, dropping other errored out blocks");
+                ternfs_warn("span initiate blacklist full, dropping other errored out blocks");
                 break;
             }
             static_assert(sizeof(span->blacklisted_failure_domains[span->blacklist_length]) == sizeof(span->failure_domains[i]));
@@ -375,9 +375,9 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
     memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
     memset(span->blocks_errs, 0, sizeof(span->blocks_errs));
 
-    struct eggsfs_add_span_initiate_block blocks[EGGSFS_MAX_BLOCKS];
-    int err = eggsfs_error_to_linux(eggsfs_shard_add_span_initiate(
-        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info,
+    struct ternfs_add_span_initiate_block blocks[TERNFS_MAX_BLOCKS];
+    int err = ternfs_error_to_linux(ternfs_shard_add_span_initiate(
+        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
         span, enode->inode.i_ino, enode->file.cookie, span->offset, span->written,
         span->span_crc, span->storage_class, span->parity, span->stripes, cell_size, span->cell_crcs,
         span->blacklist_length, span->blacklisted_failure_domains,
@@ -396,19 +396,19 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
         // first mark the downloading blocks. required to do this upfront
         // so that we'll mark everything as finished only once we've gone
         // through all the requests.
-        struct eggsfs_add_span_initiate_block* block = &blocks[i];
+        struct ternfs_add_span_initiate_block* block = &blocks[i];
         span->block_ids[i] = block->block_id;
         static_assert(sizeof(span->failure_domains[i]) == sizeof(block->failure_domain));
         memcpy(span->failure_domains[i], block->failure_domain, sizeof(block->failure_domain));
     }
     for (i = 0; i < B; i++) { // then start uploading
-        struct eggsfs_add_span_initiate_block* block = &blocks[i];
+        struct ternfs_add_span_initiate_block* block = &blocks[i];
         u32 block_crc = 0;
         int s;
         for (s = 0; s < span->stripes; s++) {
-            block_crc = eggsfs_crc32c_append(block_crc, span->cell_crcs[s*B + i], cell_size);
+            block_crc = ternfs_crc32c_append(block_crc, span->cell_crcs[s*B + i], cell_size);
         }
-        struct eggsfs_block_service bs = {
+        struct ternfs_block_service bs = {
             .id = block->block_service_id,
             .ip1 = block->ip1,
             .port1 = block->port1,
@@ -416,7 +416,7 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
             .port2 = block->port2,
         };
         hold_transient_span(span); // for the callback when block is done
-        int err = eggsfs_write_block(
+        int err = ternfs_write_block(
             &write_block_done,
             span,
             &bs,
@@ -432,11 +432,11 @@ static int add_span_initiate(struct eggsfs_transient_span* span) {
     }
 
     // Now we wait.
-    eggsfs_debug("sent all block writing requests");
+    ternfs_debug("sent all block writing requests");
     return 0;
 }
 
-static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
+static struct page* alloc_write_page(struct ternfs_inode_file* file) {
     // The zeroing is to assume that in the blocks we have trailing zeros,
     // and we also use this to just append zeros to the blocks without
     // copying. The former is definitely not needed, but anyway, simpler
@@ -449,17 +449,17 @@ static struct page* alloc_write_page(struct eggsfs_inode_file* file) {
 }
 
 static int compute_span_parameters(
-    struct eggsfs_policy* block_policy_p,
-    struct eggsfs_policy* span_policy_p,
-    struct eggsfs_policy* stripe_policy_p,
-    struct eggsfs_transient_span* span
+    struct ternfs_policy* block_policy_p,
+    struct ternfs_policy* span_policy_p,
+    struct ternfs_policy* stripe_policy_p,
+    struct ternfs_transient_span* span
 ) {
     u32 span_size = span->written;
-    eggsfs_debug("span_size=%u", span_size);
+    ternfs_debug("span_size=%u", span_size);
 
     // Easy case: inline span (or empty, can happen for empty files)
     if (span_size < 256) {
-        span->storage_class = span_size > 0 ? EGGSFS_INLINE_STORAGE : EGGSFS_EMPTY_STORAGE;
+        span->storage_class = span_size > 0 ? TERNFS_INLINE_STORAGE : TERNFS_EMPTY_STORAGE;
         span->block_size = 0;
         span->stripes = 0;
         span->parity = 0;
@@ -467,36 +467,36 @@ static int compute_span_parameters(
     }
 
     // fetch the bodies of the policies
-    struct eggsfs_policy_body block_policy;
-    eggsfs_get_policy_body(block_policy_p, &block_policy);
-    struct eggsfs_policy_body span_policy;
-    eggsfs_get_policy_body(span_policy_p, &span_policy);
-    struct eggsfs_policy_body stripe_policy;
-    eggsfs_get_policy_body(stripe_policy_p, &stripe_policy);
+    struct ternfs_policy_body block_policy;
+    ternfs_get_policy_body(block_policy_p, &block_policy);
+    struct ternfs_policy_body span_policy;
+    ternfs_get_policy_body(span_policy_p, &span_policy);
+    struct ternfs_policy_body stripe_policy;
+    ternfs_get_policy_body(stripe_policy_p, &stripe_policy);
 
     // Pick parity
-    int num_span_policies = eggsfs_span_policy_len(span_policy.body, span_policy.len);
+    int num_span_policies = ternfs_span_policy_len(span_policy.body, span_policy.len);
     BUG_ON(num_span_policies == 0);
     int i;
     u8 parity = 0;
     for (i = num_span_policies - 2; i >= 0; i--) {
         u32 max_size;
         u8 this_parity;
-        eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &this_parity);
+        ternfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &this_parity);
         if (span_size > max_size) {
             i++;
-            eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
+            ternfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
             break;
         }
     }
     if (parity == 0) {
         i = 0;
         u32 max_size;
-        eggsfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
+        ternfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
         BUG_ON(span_size > max_size);
     }
-    if (unlikely(eggsfs_data_blocks(parity) > EGGSFS_MAX_DATA || eggsfs_parity_blocks(parity) > EGGSFS_MAX_PARITY)) {
-        eggsfs_info("got asked to write with parity (%d,%d), which is beyond max blocks (%d,%d)", eggsfs_data_blocks(parity), eggsfs_parity_blocks(parity), EGGSFS_MAX_DATA, EGGSFS_MAX_PARITY);
+    if (unlikely(ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY)) {
+        ternfs_info("got asked to write with parity (%d,%d), which is beyond max blocks (%d,%d)", ternfs_data_blocks(parity), ternfs_parity_blocks(parity), TERNFS_MAX_DATA, TERNFS_MAX_PARITY);
         return -EINVAL;
     }
 
@@ -504,9 +504,9 @@ static int compute_span_parameters(
     // blocks/stripes/spans are multiples of PAGE_SIZE. We might also have some extra pages
     // at the end to have things to line up correctly. This should only happens for big spans
     // anyway (small spans will just use mirroring).
-    u32 target_stripe_size = eggsfs_stripe_policy(stripe_policy.body, stripe_policy.len);
+    u32 target_stripe_size = ternfs_stripe_policy(stripe_policy.body, stripe_policy.len);
     int S;
-    if (eggsfs_data_blocks(parity) == 1) {
+    if (ternfs_data_blocks(parity) == 1) {
         // If we only have one data block, things are also pretty simple (just mirroring).
         // It doesn't make sense to have stripes in this case.
         S = 1;
@@ -516,7 +516,7 @@ static int compute_span_parameters(
         // than TargetStripeSize)
         S = min(max((u32)1, span_size / target_stripe_size), (u32)15);
     }
-    int D = eggsfs_data_blocks(parity);
+    int D = ternfs_data_blocks(parity);
     int block_size = (span_size + D - 1) / D;
     int cell_size = (block_size + S - 1) / S;
     // Round up to cell to page size
@@ -524,13 +524,13 @@ static int compute_span_parameters(
     block_size = cell_size * S;
 
     // Pick storage class
-    BUG_ON(span_size > EGGSFS_MAX_BLOCK_SIZE);
-    int num_block_policies = eggsfs_block_policy_len(block_policy.body, block_policy.len);
+    BUG_ON(span_size > TERNFS_MAX_BLOCK_SIZE);
+    int num_block_policies = ternfs_block_policy_len(block_policy.body, block_policy.len);
     BUG_ON(num_block_policies == 0);
     u8 storage_class;
     for (i = num_block_policies-1; i >= 0; i--) {
         u32 min_size;
-        eggsfs_block_policy_get(block_policy.body, block_policy.len, i, &storage_class, &min_size);
+        ternfs_block_policy_get(block_policy.body, block_policy.len, i, &storage_class, &min_size);
         if (block_size > min_size) {
             break;
         }
@@ -545,7 +545,7 @@ static int compute_span_parameters(
 }
 
 // To be called with the inode lock. Acquires the flushing sema.
-static int wait_flushed(struct eggsfs_inode* enode, bool non_blocking) {
+static int wait_flushed(struct ternfs_inode* enode, bool non_blocking) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     // make sure we're free to go
@@ -559,21 +559,21 @@ static int wait_flushed(struct eggsfs_inode* enode, bool non_blocking) {
     return 0;
 }
 
-static int write_blocks(struct eggsfs_transient_span* span) {
+static int write_blocks(struct ternfs_transient_span* span) {
     int i, j;
     int err = 0;
 
-    struct eggsfs_inode* enode = span->enode;
+    struct ternfs_inode* enode = span->enode;
 
     // transient file is already borked
     err = atomic_read(&enode->file.transient_err);
     if (err) { goto out; }
 
-    int D = eggsfs_data_blocks(span->parity);
-    int B = eggsfs_blocks(span->parity);
+    int D = ternfs_data_blocks(span->parity);
+    int B = ternfs_blocks(span->parity);
     int S = span->stripes;
 
-    eggsfs_debug("size=%d, D=%d, B=%d, S=%d", span->written, D, B, S);
+    ternfs_debug("size=%d, D=%d, B=%d, S=%d", span->written, D, B, S);
     loff_t offset = enode->inode.i_size - span->written;
     trace_eggsfs_span_flush_enter(
         enode->inode.i_ino, offset, span->written, span->parity, span->stripes, span->storage_class
@@ -582,7 +582,7 @@ static int write_blocks(struct eggsfs_transient_span* span) {
     u32 pages_per_block = span->block_size/PAGE_SIZE;
     u32 data_pages = pages_per_block*D;
     u32 current_data_pages = (span->written + PAGE_SIZE - 1) / PAGE_SIZE;
-    eggsfs_debug("allocating padding pages_per_block=%u total_pages=%u current_pages=%u", pages_per_block, data_pages, current_data_pages);
+    ternfs_debug("allocating padding pages_per_block=%u total_pages=%u current_pages=%u", pages_per_block, data_pages, current_data_pages);
     // This can happen if we have trailing zeros because of how we arrange the
     // stripes.
     for (i = current_data_pages; i < data_pages; i++) {
@@ -595,7 +595,7 @@ static int write_blocks(struct eggsfs_transient_span* span) {
         list_add_tail(&zpage->lru, &span->pages);
     }
     int cell_size = span->block_size / S;
-    eggsfs_debug("arranging pages");
+    ternfs_debug("arranging pages");
     // First, we arrange the data blocks appropriatedly.
     {
         int cell_offset = 0;
@@ -621,10 +621,10 @@ static int write_blocks(struct eggsfs_transient_span* span) {
             list_add_tail(&ppage->lru, &span->blocks[i]);
         }
     }
-    eggsfs_debug("computing parity");
+    ternfs_debug("computing parity");
     // Then, we compute the parity blocks and the CRCs for each block.
     {
-        char* pages_bufs[EGGSFS_MAX_BLOCKS];
+        char* pages_bufs[TERNFS_MAX_BLOCKS];
         kernel_fpu_begin();
         // traverse each block, page by page, rotating as we go along
         for (j = 0; j < pages_per_block; j++) {
@@ -634,10 +634,10 @@ static int write_blocks(struct eggsfs_transient_span* span) {
                 pages_bufs[i] = kmap_atomic(list_first_entry(&span->blocks[i], struct page, lru));
             }
             // compute parity
-            err = eggsfs_compute_parity(span->parity, PAGE_SIZE, (const char**)&pages_bufs[0], &pages_bufs[D]);
+            err = ternfs_compute_parity(span->parity, PAGE_SIZE, (const char**)&pages_bufs[0], &pages_bufs[D]);
             // compute CRCs
             for (i = 0; i < B; i++) {
-                span->cell_crcs[s*B + i] = eggsfs_crc32c(span->cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
+                span->cell_crcs[s*B + i] = ternfs_crc32c(span->cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
             }
             for (i = 0; i < B; i++) {
                 kunmap_atomic(pages_bufs[i]);
@@ -650,10 +650,10 @@ static int write_blocks(struct eggsfs_transient_span* span) {
         int s;
         for (s = 0; s < S; s++) {
             for (i = 0; i < D; i++) {
-                span->span_crc = eggsfs_crc32c_append(span->span_crc, span->cell_crcs[s*B + i], cell_size);
+                span->span_crc = ternfs_crc32c_append(span->span_crc, span->cell_crcs[s*B + i], cell_size);
             }
         }
-        span->span_crc = eggsfs_crc32c_zero_extend(span->span_crc, (int)span->written - (int)(span->block_size*D));
+        span->span_crc = ternfs_crc32c_zero_extend(span->span_crc, (int)span->written - (int)(span->block_size*D));
         kernel_fpu_end();
     }
     // Start the first attempt
@@ -676,7 +676,7 @@ out_err_fpu:
 }
 
 // To be called with the inode lock.
-static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
+static int start_flushing(struct ternfs_inode* enode, bool non_blocking) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     // Wait for the existing thing to be flushed
@@ -684,7 +684,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
     if (err < 0) { return err; }
 
     // Now turn the writing span into a flushing span
-    struct eggsfs_transient_span* span = enode->file.writing_span;
+    struct ternfs_transient_span* span = enode->file.writing_span;
 
     if (span == NULL) {
         up(&enode->file.flushing_span_sema);
@@ -707,17 +707,17 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
     // blocking, since we don't have async metadata requests yet, which is
     // a bit unfortunate.
 
-    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
+    if (span->storage_class == TERNFS_INLINE_STORAGE) {
         // this is an easy one, just add the inline span
         struct page* page = list_first_entry(&span->pages, struct page, lru);
         char* data = kmap(page);
-        eggsfs_debug("adding inline span of length %d", span->written);
-        err = eggsfs_error_to_linux(eggsfs_shard_add_inline_span(
-            (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, enode->file.cookie,
+        ternfs_debug("adding inline span of length %d", span->written);
+        err = ternfs_error_to_linux(ternfs_shard_add_inline_span(
+            (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino, enode->file.cookie,
             span->offset, span->written, data, span->written
         ));
         kunmap(page);
-    } else if (span->storage_class != EGGSFS_EMPTY_STORAGE) {
+    } else if (span->storage_class != TERNFS_EMPTY_STORAGE) {
         // The real deal, we need to write blocks. Note that
         // this guy is tasked with releasing the flushing semaphore
         // if things fail (otherwise we're not done yet).
@@ -726,7 +726,7 @@ static int start_flushing(struct eggsfs_inode* enode, bool non_blocking) {
 
 out:
     if (err) {
-        eggsfs_info("attempting to flush failed permanently, err=%d ino=%016lx", err, enode->inode.i_ino);
+        ternfs_info("attempting to flush failed permanently, err=%d ino=%016lx", err, enode->inode.i_ino);
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
     // we don't need this anymore (the requests might though)
@@ -737,7 +737,7 @@ out:
 // To be called with the inode lock.
 //
 // This accepts a NULL `from`, in which case zeros will be written.
-ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from, size_t count) {
+ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from, size_t count) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
     int err;
@@ -745,9 +745,9 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
 
     loff_t ppos_before = *ppos;
 
-    eggsfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld status=%d", enode, enode->inode.i_ino, count, enode->inode.i_size, *ppos, enode->file.status);
+    ternfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld status=%d", enode, enode->inode.i_ino, count, enode->inode.i_size, *ppos, enode->file.status);
 
-    if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
+    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
         err = -EROFS;
         goto out_err;
     }
@@ -765,10 +765,10 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
     // Precompute the bound for spans
     u32 max_span_size;
     {
-        struct eggsfs_policy_body span_policy;
-        eggsfs_get_policy_body(enode->span_policy, &span_policy);
+        struct ternfs_policy_body span_policy;
+        ternfs_get_policy_body(enode->span_policy, &span_policy);
         u8 p;
-        eggsfs_span_policy_last(span_policy.body, span_policy.len, &max_span_size, &p);
+        ternfs_span_policy_last(span_policy.body, span_policy.len, &max_span_size, &p);
     }
     BUG_ON(max_span_size%PAGE_SIZE != 0); // needed for "new span" logic paired with page copying below, we could avoid it
 
@@ -780,7 +780,7 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
             goto out_err;
         }
     }
-    struct eggsfs_transient_span* span = enode->file.writing_span;
+    struct ternfs_transient_span* span = enode->file.writing_span;
 
     // Update mtime
     struct timespec64 mtime;
@@ -810,7 +810,7 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
             ret = min(count, PAGE_SIZE - page->index);
         }
         if (ret < 0) { err = ret; goto out_err_permanent; }
-        eggsfs_debug("written %d to page %p", ret, page);
+        ternfs_debug("written %d to page %p", ret, page);
         enode->inode.i_size += ret;
         span->written += ret;
         page->index = (page->index + ret) % PAGE_SIZE;
@@ -827,13 +827,13 @@ ssize_t eggsfs_file_write_internal(struct eggsfs_inode* enode, int flags, loff_t
     int written;
 out:
     written = *ppos - ppos_before;
-    eggsfs_debug("written=%d", written);
+    ternfs_debug("written=%d", written);
     return written;
 
 out_err_permanent:
     atomic_cmpxchg(&enode->file.transient_err, 0, err);
 out_err:
-    eggsfs_debug("err=%d", err);
+    ternfs_debug("err=%d", err);
     if (err == -EAGAIN && *ppos > ppos_before) {
         // We can just return what we've already written. In fact, it's important
         // that we do so, otherwise repeated calls might fail because they'd be
@@ -843,14 +843,14 @@ out_err:
     return err;
 }
 
-ssize_t eggsfs_file_write(struct eggsfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from) {
-    return eggsfs_file_write_internal(enode, flags, ppos, from, iov_iter_count(from));
+ssize_t ternfs_file_write(struct ternfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from) {
+    return ternfs_file_write_internal(enode, flags, ppos, from, iov_iter_count(from));
 }
 
 static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
     struct file* file = iocb->ki_filp;
     struct inode* inode = file->f_inode;
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
     if (!inode_trylock(inode)) {
         if (iocb->ki_flags & IOCB_NOWAIT) {
@@ -858,26 +858,26 @@ static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
         }
         inode_lock(inode);
     }
-    ssize_t res = eggsfs_file_write(enode, iocb->ki_flags, &iocb->ki_pos, from);
+    ssize_t res = ternfs_file_write(enode, iocb->ki_flags, &iocb->ki_pos, from);
     inode_unlock(inode);
 
     return res;
 }
 
-int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
+int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
     inode_lock(&enode->inode);
 
     int err = 0;
 
     // Not writing, there's nothing to do, there's nothing to do, files are immutable
-    if (enode->file.status != EGGSFS_FILE_STATUS_WRITING) {
-        eggsfs_debug("status=%d, won't flush", enode->file.status);
+    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
+        ternfs_debug("status=%d, won't flush", enode->file.status);
         goto out_early;
     }
 
     // We are in another process, skip
     if (enode->file.owner != current->group_leader) {
-        eggsfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
+        ternfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
         goto out_early;
     }
 
@@ -910,9 +910,9 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     if (err < 0) { goto out; }
 
     // now we actually need to link
-    eggsfs_debug("linking file");
-    err = eggsfs_error_to_linux(eggsfs_shard_link_file(
-        (struct eggsfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
+    ternfs_debug("linking file");
+    err = ternfs_error_to_linux(ternfs_shard_link_file(
+        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
         enode->file.cookie, dentry->d_parent->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len,
         &enode->edge_creation_time
     ));
@@ -923,14 +923,14 @@ int eggsfs_file_flush(struct eggsfs_inode* enode, struct dentry* dentry) {
     inode_set_ctime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
 
     // Switch the file to a normal file
-    enode->file.status = EGGSFS_FILE_STATUS_READING;
+    enode->file.status = TERNFS_FILE_STATUS_READING;
     smp_store_release(&enode->getattr_expiry, 0);
 
     // expire the directory listing -- we know for a fact that it
     // is wrong, it now contains this file.
     {
         struct dentry* parent = dget_parent(dentry);
-        WRITE_ONCE(EGGSFS_I(d_inode(parent))->dir.mtime_expiry, 0);
+        WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
         dput(parent);
     }
 
@@ -973,46 +973,46 @@ out_early:
 }
 
 static int file_flush_internal(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
-    struct eggsfs_inode* enode = EGGSFS_I(filp->f_inode);
+    struct ternfs_inode* enode = TERNFS_I(filp->f_inode);
     struct dentry* dentry = filp->f_path.dentry;
-    return eggsfs_file_flush(enode, dentry);
+    return ternfs_file_flush(enode, dentry);
 }
 
 static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     struct file* file = iocb->ki_filp;
     struct inode* inode = file->f_inode;
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
     if (unlikely(iocb->ki_flags & IOCB_DIRECT)) { return -ENOSYS; }
 
     // make sure we have size information
-    int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+    int err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return err; }
 
     return generic_file_read_iter(iocb, to);
 }
 
-void eggsfs_link_destructor(void* buf) {
+void ternfs_link_destructor(void* buf) {
     kfree(buf);
 }
 
-char* eggsfs_read_link(struct eggsfs_inode* enode) {
-    eggsfs_debug("ino=%016lx", enode->inode.i_ino);
+char* ternfs_read_link(struct ternfs_inode* enode) {
+    ternfs_debug("ino=%016lx", enode->inode.i_ino);
 
-    BUG_ON(eggsfs_inode_type(enode->inode.i_ino) != EGGSFS_INODE_SYMLINK);
+    BUG_ON(ternfs_inode_type(enode->inode.i_ino) != TERNFS_INODE_SYMLINK);
 
     // make sure we have size information
-    int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+    int err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return ERR_PTR(err); }
 
     BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
     size_t size = enode->inode.i_size;
 
-    eggsfs_debug("size=%lu", size);
+    ternfs_debug("size=%lu", size);
 
-    struct eggsfs_span* span = eggsfs_get_span(enode, 0);
+    struct ternfs_span* span = ternfs_get_span(enode, 0);
     if (span == NULL) {
-        eggsfs_debug("got no span, empty file?");
+        ternfs_debug("got no span, empty file?");
         return "";
     }
     if (IS_ERR(span)) { return ERR_CAST(span); }
@@ -1022,11 +1022,11 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
     char* buf = kmalloc(size+1, GFP_KERNEL);
     if (buf == NULL) { err = -ENOMEM; goto out_err; }
 
-    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-        memcpy(buf, EGGSFS_INLINE_SPAN(span)->body, size);
+    if (span->storage_class == TERNFS_INLINE_STORAGE) {
+        memcpy(buf, TERNFS_INLINE_SPAN(span)->body, size);
     } else {
         struct page* page;
-        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+        struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         LIST_HEAD(pages);
         page = alloc_page(GFP_KERNEL);
         if(IS_ERR(page)) {
@@ -1036,7 +1036,7 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
         page->index = 0;
         list_add_tail(&page->lru, &pages);
         LIST_HEAD(extra_pages);
-        err = eggsfs_span_get_pages(block_span, enode->inode.i_mapping, &pages, 1, &extra_pages);
+        err = ternfs_span_get_pages(block_span, enode->inode.i_mapping, &pages, 1, &extra_pages);
         if (err) goto out_err;
         list_del(&page->lru);
         put_pages_list(&pages);
@@ -1047,12 +1047,12 @@ char* eggsfs_read_link(struct eggsfs_inode* enode) {
     }
     buf[size] = '\0';
 
-    eggsfs_debug("link %*pE", (int)size, buf);
+    ternfs_debug("link %*pE", (int)size, buf);
 
     return buf;
 
 out_err:
-    eggsfs_debug("get_link err=%d", err);
+    ternfs_debug("get_link err=%d", err);
     return ERR_PTR(err);
 }
 
@@ -1061,11 +1061,11 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
     // When seeking a file we're writing, we only allow to seek forward,
     // which is the same as writing zeros past the end.
     struct inode* inode = file->f_inode;
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
 
-    if (likely(smp_load_acquire(&enode->file.status) == EGGSFS_FILE_STATUS_READING)) {
+    if (likely(smp_load_acquire(&enode->file.status) == TERNFS_FILE_STATUS_READING)) {
         // make sure we have size information
-        int err = eggsfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+        int err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
         if (err) { return err; }
         return generic_file_llseek(file, offset, whence);
     }
@@ -1091,7 +1091,7 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
         goto out_err;
     }
     while (ppos < offset) {
-        ssize_t written = eggsfs_file_write_internal(enode, 0, &ppos, NULL, offset - ppos);
+        ssize_t written = ternfs_file_write_internal(enode, 0, &ppos, NULL, offset - ppos);
         if (unlikely(written < 0)) {
             offset = written;
             goto out;
@@ -1114,7 +1114,7 @@ static int file_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
     return 0;
 }
 
-const struct file_operations eggsfs_file_operations = {
+const struct file_operations ternfs_file_operations = {
     .open = file_open,
     .read_iter = file_read_iter,
     .write_iter = file_write_iter,
@@ -1134,13 +1134,13 @@ static void process_file_pages(struct address_space *mapping, struct list_head *
         }
         list_del(&page->lru);
         u32 refct = atomic_read(&page->_refcount);
-        if(refct != 1) eggsfs_warn("page refcount=%d, expected 1 at index %ld, pages=%d", refct, page->index, nr_pages);
+        if(refct != 1) ternfs_warn("page refcount=%d, expected 1 at index %ld, pages=%d", refct, page->index, nr_pages);
         err = add_to_page_cache_lru(page,
                         mapping,
                         page->index,
                         readahead_gfp_mask(mapping));
         if (err != 0) {
-            eggsfs_debug("failed adding page at index=%ld, err=%d", page->index, err);
+            ternfs_debug("failed adding page at index=%ld, err=%d", page->index, err);
         } else {
             unlock_page(page);
             SetPageUptodate(page);
@@ -1153,15 +1153,15 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
     int err = 0;
 
     struct inode* inode = file_inode(filp);
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
     loff_t off = page_offset(lru_to_page(pages));
-    eggsfs_debug("enode=%p, ino=%ld, offset=%lld, nr_pages=%u", enode, inode->i_ino, off, nr_pages);
+    ternfs_debug("enode=%p, ino=%ld, offset=%lld, nr_pages=%u", enode, inode->i_ino, off, nr_pages);
 
-    struct eggsfs_span* span = NULL;
+    struct ternfs_span* span = NULL;
 
-    span = eggsfs_get_span(enode, off);
+    span = ternfs_get_span(enode, off);
     if (IS_ERR(span)) {
-        eggsfs_warn("eggsfs_get_span_failed at pos %llu", off);
+        ternfs_warn("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
         goto out_err;
     }
@@ -1170,15 +1170,15 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         goto out_err;
     }
     if (span->start%PAGE_SIZE != 0) {
-        eggsfs_warn("span start is not a multiple of page size %llu", span->start);
+        ternfs_warn("span start is not a multiple of page size %llu", span->start);
         span = NULL;
         err = -EIO;
         goto out_err;
     }
 
     LIST_HEAD(extra_pages);
-    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-        struct eggsfs_inline_span* inline_span = EGGSFS_INLINE_SPAN(span);
+    if (span->storage_class == TERNFS_INLINE_STORAGE) {
+        struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
         struct page *page = lru_to_page(pages);
         if (page == NULL) {
             err = -EIO;
@@ -1194,15 +1194,15 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         memcpy(dst, inline_span->body, inline_span->len);
         kunmap_atomic(dst);
     } else {
-        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+        struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         if (block_span->cell_size%PAGE_SIZE != 0) {
-            eggsfs_warn("cell size not multiple of page size %u", block_span->cell_size);
+            ternfs_warn("cell size not multiple of page size %u", block_span->cell_size);
             err = -EIO;
             goto out_err;
         }
-        err = eggsfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
+        err = ternfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
         if (err) {
-            eggsfs_warn("readahead of %d pages at off=%lld in file %016lx failed with error %d", nr_pages, off, enode->inode.i_ino, err);
+            ternfs_warn("readahead of %d pages at off=%lld in file %016lx failed with error %d", nr_pages, off, enode->inode.i_ino, err);
             put_pages_list(&extra_pages);
             goto out_err;
         }
@@ -1218,19 +1218,19 @@ out_err:
 
 static int file_readpage(struct file* filp, struct page* page) {
     struct inode* inode = file_inode(filp);
-    struct eggsfs_inode* enode = EGGSFS_I(inode);
+    struct ternfs_inode* enode = TERNFS_I(inode);
     u64 off = page_offset(page);
     int err = 0;
 
-    struct eggsfs_span* span = NULL;
+    struct ternfs_span* span = NULL;
 
     struct timespec64 start_ts = ns_to_timespec64(ktime_get_real_ns());
     struct timespec64 last_span_refresh_ts = ns_to_timespec64(0);
 
 retry:
-    span = eggsfs_get_span(enode, off);
+    span = ternfs_get_span(enode, off);
     if (IS_ERR(span)) {
-        eggsfs_debug("eggsfs_get_span_failed at pos %llu", off);
+        ternfs_debug("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
         goto out;
     }
@@ -1239,7 +1239,7 @@ retry:
         goto out;
     }
     if (span->start%PAGE_SIZE != 0) {
-        eggsfs_warn("span start is not a multiple of page size %llu", span->start);
+        ternfs_warn("span start is not a multiple of page size %llu", span->start);
         span = NULL;
         err = -EIO;
         goto out;
@@ -1247,17 +1247,17 @@ retry:
 
     u64 span_offset = off - span->start;
 
-    if (span->storage_class == EGGSFS_INLINE_STORAGE) {
-        struct eggsfs_inline_span* inline_span = EGGSFS_INLINE_SPAN(span);
+    if (span->storage_class == TERNFS_INLINE_STORAGE) {
+        struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
         size_t to_copy = inline_span->len - span_offset;
         BUG_ON(to_copy > PAGE_SIZE);
         char* dst = kmap_atomic(page);
         memcpy(dst, inline_span->body + span_offset, to_copy);
         kunmap_atomic(dst);
     } else {
-        struct eggsfs_block_span* block_span = EGGSFS_BLOCK_SPAN(span);
+        struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         if (block_span->cell_size%PAGE_SIZE != 0) {
-            eggsfs_warn("cell size not multiple of page size %u", block_span->cell_size);
+            ternfs_warn("cell size not multiple of page size %u", block_span->cell_size);
             err = -EIO;
             goto out;
         }
@@ -1273,19 +1273,19 @@ retry:
         stripe_page->index = page->index;
         list_add_tail(&stripe_page->lru, &pages);
         LIST_HEAD(extra_pages);
-        err = eggsfs_span_get_pages(block_span, filp->f_mapping, &pages, 1, &extra_pages);
+        err = ternfs_span_get_pages(block_span, filp->f_mapping, &pages, 1, &extra_pages);
         process_file_pages(filp->f_mapping, &extra_pages, 0);
         if (err) {
             put_pages_list(&pages);
             struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
-            eggsfs_warn("reading page %lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
-            if ((end_ts.tv_sec - start_ts.tv_sec) > eggsfs_file_io_timeout_sec) {
-                eggsfs_warn("io timeout while reading page at off=%lld in file %016lx last error %d", off, enode->inode.i_ino, err);
+            ternfs_warn("reading page %lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
+            if ((end_ts.tv_sec - start_ts.tv_sec) > ternfs_file_io_timeout_sec) {
+                ternfs_warn("io timeout while reading page at off=%lld in file %016lx last error %d", off, enode->inode.i_ino, err);
                 goto out;
             }
-            if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > eggsfs_file_io_retry_refresh_span_interval_sec) {
-                eggsfs_info("refreshing span %lld of file %016lx as the span structure or block service flags could have changed in the meantime", off, enode->inode.i_ino);
-                eggsfs_unlink_span(enode, span);
+            if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > ternfs_file_io_retry_refresh_span_interval_sec) {
+                ternfs_info("refreshing span %lld of file %016lx as the span structure or block service flags could have changed in the meantime", off, enode->inode.i_ino);
+                ternfs_unlink_span(enode, span);
                 last_span_refresh_ts = end_ts;
             }
             goto retry;
@@ -1313,27 +1313,27 @@ out:
     return err;
 }
 
-const struct address_space_operations eggsfs_mmap_operations = {
+const struct address_space_operations ternfs_mmap_operations = {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
     .readpages = file_readpages,
 #endif
     .readpage = file_readpage
 };
 
-int __init eggsfs_file_init(void) {
-    eggsfs_transient_span_cachep = kmem_cache_create(
-        "eggsfs_transient_span_cache",
-        sizeof(struct eggsfs_transient_span),
+int __init ternfs_file_init(void) {
+    ternfs_transient_span_cachep = kmem_cache_create(
+        "ternfs_transient_span_cache",
+        sizeof(struct ternfs_transient_span),
         0,
         SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
         &init_transient_span
     );
-    if (!eggsfs_transient_span_cachep) { return -ENOMEM; }
+    if (!ternfs_transient_span_cachep) { return -ENOMEM; }
     return 0;
 }
 
-void __cold eggsfs_file_exit(void) {
-    eggsfs_debug("file exit");
+void __cold ternfs_file_exit(void) {
+    ternfs_debug("file exit");
     // TODO: handle case where there still are requests in flight.
-    kmem_cache_destroy(eggsfs_transient_span_cachep);
+    kmem_cache_destroy(ternfs_transient_span_cachep);
 }

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/client"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type DestructFilesStats struct {
@@ -37,7 +37,7 @@ func DestructFile(
 	c *client.Client,
 	stats *DestructFilesStats,
 	id msgs.InodeId,
-	deadline msgs.EggsTime,
+	deadline msgs.TernTime,
 	cookie [8]byte,
 ) error {
 	log.Debug("%v: destructing file, cookie=%v", id, cookie)
@@ -77,7 +77,7 @@ func DestructFile(
 			var proof [8]byte
 			for i := range initResp.Blocks {
 				block := &initResp.Blocks[i]
-				if block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+				if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
 					proof, err = c.EraseDecommissionedBlock(block)
 					if err != nil {
 						return err
@@ -86,7 +86,7 @@ func DestructFile(
 					// There's no point trying to erase blocks for stale block services -- they're
 					// almost certainly temporarly offline, and we'll be stuck forever since in GC we run
 					// with infinite timeout. Just skip.
-					if block.BlockServiceFlags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_STALE) {
+					if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_STALE) {
 						log.Debug("skipping block %v in file %v since its block service %v is stale", block.BlockId, id, block.BlockServiceId)
 						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
 						continue
@@ -133,7 +133,7 @@ func DestructFile(
 
 type destructFileRequest struct {
 	id       msgs.InodeId
-	deadline msgs.EggsTime
+	deadline msgs.TernTime
 	cookie   [8]byte
 }
 

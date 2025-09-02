@@ -58,17 +58,17 @@ static void checkClockRes() {
         throw SYSCALL_EXCEPTION("clock_getres");
     }
     if (ts.tv_sec != 0 || ts.tv_nsec != 1) {
-        throw EGGS_EXCEPTION("expected nanosecond precisions, got %s,%s", ts.tv_sec, ts.tv_nsec);
+        throw TERN_EXCEPTION("expected nanosecond precisions, got %s,%s", ts.tv_sec, ts.tv_nsec);
     }
 }
 
-static std::atomic<EggsTime> _currentTimeInTest = EggsTime(0);
+static std::atomic<TernTime> _currentTimeInTest = TernTime(0);
 
-void _setCurrentTime(EggsTime time) {
+void _setCurrentTime(TernTime time) {
     _currentTimeInTest.store(time, std::memory_order_relaxed);
 }
 
-EggsTime eggsNow() {
+TernTime ternNow() {
     auto timeInTest = _currentTimeInTest.load(std::memory_order_relaxed);
     if (unlikely( timeInTest != 0)) {
         return timeInTest;
@@ -79,12 +79,12 @@ EggsTime eggsNow() {
         throw SYSCALL_EXCEPTION("clock_gettime");
     }
 
-    return EggsTime(((uint64_t)now.tv_nsec + ((uint64_t)now.tv_sec * 1'000'000'000ull)));
+    return TernTime(((uint64_t)now.tv_nsec + ((uint64_t)now.tv_sec * 1'000'000'000ull)));
 }
 
-std::ostream& operator<<(std::ostream& out, EggsTime eggst) {
-    time_t secs = eggst.ns / 1'000'000'000ull;
-    uint64_t nsecs = eggst.ns % 1'000'000'000ull;
+std::ostream& operator<<(std::ostream& out, TernTime ternt) {
+    time_t secs = ternt.ns / 1'000'000'000ull;
+    uint64_t nsecs = ternt.ns % 1'000'000'000ull;
     struct tm tm;
     if (gmtime_r(&secs, &tm) == nullptr) {
         throw SYSCALL_EXCEPTION("gmtime_r");

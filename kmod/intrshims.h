@@ -1,5 +1,5 @@
-#ifndef _EGGS_INTRSHIMS_H
-#define _EGGS_INTRSHIMS_H
+#ifndef _TERNFS_INTRSHIMS_H
+#define _TERNFS_INTRSHIMS_H
 
 #ifdef __KERNEL__
 #include <linux/kernel.h>

@@ -79,7 +79,7 @@ void MetricsBuilder::fieldRaw(const std::string& name, const std::string& value)
     _state = State::FIELDS;
 }
 
-void MetricsBuilder::timestamp(EggsTime t) {
+void MetricsBuilder::timestamp(TernTime t) {
     ALWAYS_ASSERT(_state == State::FIELDS);
     _payload += ' ';
     static char buf[21];

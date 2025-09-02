@@ -10,7 +10,7 @@ thread_local static char strerror_buf[128];
 // Testing for _GNU_SOURCE does not work, because the alpine build
 // has that set, too.
 
-#ifdef EGGS_ALPINE
+#ifdef TERN_ALPINE
 const char* safe_strerror(int errnum) {
     int res = strerror_r(errnum, strerror_buf, sizeof(strerror_buf));
     if (res > 0) {

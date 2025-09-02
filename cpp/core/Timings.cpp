@@ -5,14 +5,14 @@ Timings::Timings(Duration firstUpperBound, double growth, int bins) :
     _invLogGrowth(1.0/log(growth)),
     _firstUpperBound(firstUpperBound.ns),
     _growthDivUpperBound(growth / (double)firstUpperBound.ns),
-    _startedAt(eggsNow()),
+    _startedAt(ternNow()),
     _bins(bins)
 {
     if (firstUpperBound < 1) {
-        throw EGGS_EXCEPTION("non-positive first upper bound %s", firstUpperBound);
+        throw TERN_EXCEPTION("non-positive first upper bound %s", firstUpperBound);
     }
     if (growth <= 1) {
-        throw EGGS_EXCEPTION("growth %s <= 1.0", growth);
+        throw TERN_EXCEPTION("growth %s <= 1.0", growth);
     }
     for (auto& bin: _bins) {
         bin.store(0);
@@ -20,7 +20,7 @@ Timings::Timings(Duration firstUpperBound, double growth, int bins) :
 }
 
 void Timings::reset() {
-    _startedAt = eggsNow();
+    _startedAt = ternNow();
     for (auto& bin : _bins) {
         bin.store(0);
     }

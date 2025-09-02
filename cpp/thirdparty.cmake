@@ -9,8 +9,7 @@ endif()
 # We build this manually because alpine doesn't have liburing-static
 ExternalProject_Add(make_uring
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    # https://github.com/axboe/liburing/archive/refs/tags/liburing-2.3.tar.gz
-    URL https://REDACTED
+    URL https://github.com/axboe/liburing/archive/refs/tags/liburing-2.3.tar.gz
     URL_HASH SHA256=60b367dbdc6f2b0418a6e0cd203ee0049d9d629a36706fcf91dfb9428bae23c8
     PREFIX thirdparty/uring
     UPDATE_COMMAND ""
@@ -37,8 +36,7 @@ set_target_properties(uring PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libu
 # Dependency of: rocksdb
 ExternalProject_Add(make_lz4
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    # https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz
-    URL https://REDACTED
+    URL https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz
     URL_HASH SHA256=0b0e3aa07c8c063ddf40b082bdf7e37a1562bda40a0ff5272957f3e987e0e54b
     PREFIX thirdparty/lz4
     UPDATE_COMMAND ""
@@ -64,8 +62,7 @@ set_target_properties(lz4 PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/liblz4
 # Dependency of: rocksdb
 ExternalProject_Add(make_zstd
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    # https://github.com/facebook/zstd/archive/refs/tags/v1.5.2.tar.gz
-    URL https://REDACTED
+    URL https://github.com/facebook/zstd/archive/refs/tags/v1.5.2.tar.gz
     URL_HASH SHA256=f7de13462f7a82c29ab865820149e778cbfe01087b3a55b5332707abf9db4a6e
     PREFIX thirdparty/zstd
     UPDATE_COMMAND ""
@@ -98,8 +95,7 @@ separate_arguments(
 )
 ExternalProject_Add(make_rocksdb
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    # https://github.com/facebook/rocksdb/archive/refs/tags/v7.9.2.tar.gz
-    URL https://REDACTED
+    URL https://github.com/facebook/rocksdb/archive/refs/tags/v7.9.2.tar.gz
     URL_HASH SHA256=886378093098a1b2521b824782db7f7dd86224c232cf9652fcaf88222420b292
     # When we upgraded dev boxes to newer arch and therefore newer clang this was
     # needed. New RocksDB (e.g. 8.10.0) compiles out of the box, but we don't have
@@ -133,8 +129,7 @@ set_target_properties(rocksdb PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/li
 # Dependency of: eggs
 ExternalProject_Add(make_xxhash
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    # https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.1.tar.gz
-    URL https://REDACTED
+    URL https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.1.tar.gz
     URL_HASH SHA256=3bb6b7d6f30c591dd65aaaff1c8b7a5b94d81687998ca9400082c739a690436c
     PREFIX thirdparty/xxhash
     UPDATE_COMMAND ""
@@ -157,8 +152,7 @@ set_target_properties(xxhash PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/lib
 
 ExternalProject_Add(make_jemalloc
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    # URL https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2
-    URL https://REDACTED
+    URL https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2
     URL_HASH SHA256=2db82d1e7119df3e71b7640219b6dfe84789bc0537983c3b7ac4f7189aecfeaa
     PREFIX thirdparty/jemalloc
     UPDATE_COMMAND ""

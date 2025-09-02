@@ -16,11 +16,11 @@
 // of Blocks.
 //
 // We also store the number of parity/data blocks in the two nibbles
-// of a uint8_t, but this is a fairly irrelevant quirk of EggsFS,
+// of a uint8_t, but this is a fairly irrelevant quirk of TernFS,
 // although it does nicely enforce that we do not go beyond what's
 // resonable for data storage purposes (rather than for error correction).
-#ifndef EGGS_RS
-#define EGGS_RS
+#ifndef TERN_RS
+#define TERN_RS
 
 #include <stdint.h>
 #include <stdbool.h>

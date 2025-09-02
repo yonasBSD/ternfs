@@ -3,7 +3,7 @@
 #pragma once
 #include "Msgs.hpp"
 
-enum class EggsError : uint16_t {
+enum class TernError : uint16_t {
     NO_ERROR = 0,
     INTERNAL_ERROR = 10,
     FATAL_ERROR = 11,
@@ -99,104 +99,104 @@ enum class EggsError : uint16_t {
     SWAP_BLOCKS_MISMATCHING_LOCATION = 101,
 };
 
-std::ostream& operator<<(std::ostream& out, EggsError err);
+std::ostream& operator<<(std::ostream& out, TernError err);
 
-const std::vector<EggsError> allEggsErrors {
-    EggsError::INTERNAL_ERROR,
-    EggsError::FATAL_ERROR,
-    EggsError::TIMEOUT,
-    EggsError::MALFORMED_REQUEST,
-    EggsError::MALFORMED_RESPONSE,
-    EggsError::NOT_AUTHORISED,
-    EggsError::UNRECOGNIZED_REQUEST,
-    EggsError::FILE_NOT_FOUND,
-    EggsError::DIRECTORY_NOT_FOUND,
-    EggsError::NAME_NOT_FOUND,
-    EggsError::EDGE_NOT_FOUND,
-    EggsError::EDGE_IS_LOCKED,
-    EggsError::TYPE_IS_DIRECTORY,
-    EggsError::TYPE_IS_NOT_DIRECTORY,
-    EggsError::BAD_COOKIE,
-    EggsError::INCONSISTENT_STORAGE_CLASS_PARITY,
-    EggsError::LAST_SPAN_STATE_NOT_CLEAN,
-    EggsError::COULD_NOT_PICK_BLOCK_SERVICES,
-    EggsError::BAD_SPAN_BODY,
-    EggsError::SPAN_NOT_FOUND,
-    EggsError::BLOCK_SERVICE_NOT_FOUND,
-    EggsError::CANNOT_CERTIFY_BLOCKLESS_SPAN,
-    EggsError::BAD_NUMBER_OF_BLOCKS_PROOFS,
-    EggsError::BAD_BLOCK_PROOF,
-    EggsError::CANNOT_OVERRIDE_NAME,
-    EggsError::NAME_IS_LOCKED,
-    EggsError::MTIME_IS_TOO_RECENT,
-    EggsError::MISMATCHING_TARGET,
-    EggsError::MISMATCHING_OWNER,
-    EggsError::MISMATCHING_CREATION_TIME,
-    EggsError::DIRECTORY_NOT_EMPTY,
-    EggsError::FILE_IS_TRANSIENT,
-    EggsError::OLD_DIRECTORY_NOT_FOUND,
-    EggsError::NEW_DIRECTORY_NOT_FOUND,
-    EggsError::LOOP_IN_DIRECTORY_RENAME,
-    EggsError::DIRECTORY_HAS_OWNER,
-    EggsError::FILE_IS_NOT_TRANSIENT,
-    EggsError::FILE_NOT_EMPTY,
-    EggsError::CANNOT_REMOVE_ROOT_DIRECTORY,
-    EggsError::FILE_EMPTY,
-    EggsError::CANNOT_REMOVE_DIRTY_SPAN,
-    EggsError::BAD_SHARD,
-    EggsError::BAD_NAME,
-    EggsError::MORE_RECENT_SNAPSHOT_EDGE,
-    EggsError::MORE_RECENT_CURRENT_EDGE,
-    EggsError::BAD_DIRECTORY_INFO,
-    EggsError::DEADLINE_NOT_PASSED,
-    EggsError::SAME_SOURCE_AND_DESTINATION,
-    EggsError::SAME_DIRECTORIES,
-    EggsError::SAME_SHARD,
-    EggsError::BAD_PROTOCOL_VERSION,
-    EggsError::BAD_CERTIFICATE,
-    EggsError::BLOCK_TOO_RECENT_FOR_DELETION,
-    EggsError::BLOCK_FETCH_OUT_OF_BOUNDS,
-    EggsError::BAD_BLOCK_CRC,
-    EggsError::BLOCK_TOO_BIG,
-    EggsError::BLOCK_NOT_FOUND,
-    EggsError::CANNOT_UNSET_DECOMMISSIONED,
-    EggsError::CANNOT_REGISTER_DECOMMISSIONED_OR_STALE,
-    EggsError::BLOCK_TOO_OLD_FOR_WRITE,
-    EggsError::BLOCK_IO_ERROR_DEVICE,
-    EggsError::BLOCK_IO_ERROR_FILE,
-    EggsError::INVALID_REPLICA,
-    EggsError::DIFFERENT_ADDRS_INFO,
-    EggsError::LEADER_PREEMPTED,
-    EggsError::LOG_ENTRY_MISSING,
-    EggsError::LOG_ENTRY_TRIMMED,
-    EggsError::LOG_ENTRY_UNRELEASED,
-    EggsError::LOG_ENTRY_RELEASED,
-    EggsError::AUTO_DECOMMISSION_FORBIDDEN,
-    EggsError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION,
-    EggsError::SWAP_BLOCKS_INLINE_STORAGE,
-    EggsError::SWAP_BLOCKS_MISMATCHING_SIZE,
-    EggsError::SWAP_BLOCKS_MISMATCHING_STATE,
-    EggsError::SWAP_BLOCKS_MISMATCHING_CRC,
-    EggsError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE,
-    EggsError::SWAP_SPANS_INLINE_STORAGE,
-    EggsError::SWAP_SPANS_MISMATCHING_SIZE,
-    EggsError::SWAP_SPANS_NOT_CLEAN,
-    EggsError::SWAP_SPANS_MISMATCHING_CRC,
-    EggsError::SWAP_SPANS_MISMATCHING_BLOCKS,
-    EggsError::EDGE_NOT_OWNED,
-    EggsError::CANNOT_CREATE_DB_SNAPSHOT,
-    EggsError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE,
-    EggsError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN,
-    EggsError::TRANSIENT_LOCATION_COUNT,
-    EggsError::ADD_SPAN_LOCATION_INLINE_STORAGE,
-    EggsError::ADD_SPAN_LOCATION_MISMATCHING_SIZE,
-    EggsError::ADD_SPAN_LOCATION_NOT_CLEAN,
-    EggsError::ADD_SPAN_LOCATION_MISMATCHING_CRC,
-    EggsError::ADD_SPAN_LOCATION_EXISTS,
-    EggsError::SWAP_BLOCKS_MISMATCHING_LOCATION,
+const std::vector<TernError> allTernErrors {
+    TernError::INTERNAL_ERROR,
+    TernError::FATAL_ERROR,
+    TernError::TIMEOUT,
+    TernError::MALFORMED_REQUEST,
+    TernError::MALFORMED_RESPONSE,
+    TernError::NOT_AUTHORISED,
+    TernError::UNRECOGNIZED_REQUEST,
+    TernError::FILE_NOT_FOUND,
+    TernError::DIRECTORY_NOT_FOUND,
+    TernError::NAME_NOT_FOUND,
+    TernError::EDGE_NOT_FOUND,
+    TernError::EDGE_IS_LOCKED,
+    TernError::TYPE_IS_DIRECTORY,
+    TernError::TYPE_IS_NOT_DIRECTORY,
+    TernError::BAD_COOKIE,
+    TernError::INCONSISTENT_STORAGE_CLASS_PARITY,
+    TernError::LAST_SPAN_STATE_NOT_CLEAN,
+    TernError::COULD_NOT_PICK_BLOCK_SERVICES,
+    TernError::BAD_SPAN_BODY,
+    TernError::SPAN_NOT_FOUND,
+    TernError::BLOCK_SERVICE_NOT_FOUND,
+    TernError::CANNOT_CERTIFY_BLOCKLESS_SPAN,
+    TernError::BAD_NUMBER_OF_BLOCKS_PROOFS,
+    TernError::BAD_BLOCK_PROOF,
+    TernError::CANNOT_OVERRIDE_NAME,
+    TernError::NAME_IS_LOCKED,
+    TernError::MTIME_IS_TOO_RECENT,
+    TernError::MISMATCHING_TARGET,
+    TernError::MISMATCHING_OWNER,
+    TernError::MISMATCHING_CREATION_TIME,
+    TernError::DIRECTORY_NOT_EMPTY,
+    TernError::FILE_IS_TRANSIENT,
+    TernError::OLD_DIRECTORY_NOT_FOUND,
+    TernError::NEW_DIRECTORY_NOT_FOUND,
+    TernError::LOOP_IN_DIRECTORY_RENAME,
+    TernError::DIRECTORY_HAS_OWNER,
+    TernError::FILE_IS_NOT_TRANSIENT,
+    TernError::FILE_NOT_EMPTY,
+    TernError::CANNOT_REMOVE_ROOT_DIRECTORY,
+    TernError::FILE_EMPTY,
+    TernError::CANNOT_REMOVE_DIRTY_SPAN,
+    TernError::BAD_SHARD,
+    TernError::BAD_NAME,
+    TernError::MORE_RECENT_SNAPSHOT_EDGE,
+    TernError::MORE_RECENT_CURRENT_EDGE,
+    TernError::BAD_DIRECTORY_INFO,
+    TernError::DEADLINE_NOT_PASSED,
+    TernError::SAME_SOURCE_AND_DESTINATION,
+    TernError::SAME_DIRECTORIES,
+    TernError::SAME_SHARD,
+    TernError::BAD_PROTOCOL_VERSION,
+    TernError::BAD_CERTIFICATE,
+    TernError::BLOCK_TOO_RECENT_FOR_DELETION,
+    TernError::BLOCK_FETCH_OUT_OF_BOUNDS,
+    TernError::BAD_BLOCK_CRC,
+    TernError::BLOCK_TOO_BIG,
+    TernError::BLOCK_NOT_FOUND,
+    TernError::CANNOT_UNSET_DECOMMISSIONED,
+    TernError::CANNOT_REGISTER_DECOMMISSIONED_OR_STALE,
+    TernError::BLOCK_TOO_OLD_FOR_WRITE,
+    TernError::BLOCK_IO_ERROR_DEVICE,
+    TernError::BLOCK_IO_ERROR_FILE,
+    TernError::INVALID_REPLICA,
+    TernError::DIFFERENT_ADDRS_INFO,
+    TernError::LEADER_PREEMPTED,
+    TernError::LOG_ENTRY_MISSING,
+    TernError::LOG_ENTRY_TRIMMED,
+    TernError::LOG_ENTRY_UNRELEASED,
+    TernError::LOG_ENTRY_RELEASED,
+    TernError::AUTO_DECOMMISSION_FORBIDDEN,
+    TernError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION,
+    TernError::SWAP_BLOCKS_INLINE_STORAGE,
+    TernError::SWAP_BLOCKS_MISMATCHING_SIZE,
+    TernError::SWAP_BLOCKS_MISMATCHING_STATE,
+    TernError::SWAP_BLOCKS_MISMATCHING_CRC,
+    TernError::SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE,
+    TernError::SWAP_SPANS_INLINE_STORAGE,
+    TernError::SWAP_SPANS_MISMATCHING_SIZE,
+    TernError::SWAP_SPANS_NOT_CLEAN,
+    TernError::SWAP_SPANS_MISMATCHING_CRC,
+    TernError::SWAP_SPANS_MISMATCHING_BLOCKS,
+    TernError::EDGE_NOT_OWNED,
+    TernError::CANNOT_CREATE_DB_SNAPSHOT,
+    TernError::BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE,
+    TernError::SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN,
+    TernError::TRANSIENT_LOCATION_COUNT,
+    TernError::ADD_SPAN_LOCATION_INLINE_STORAGE,
+    TernError::ADD_SPAN_LOCATION_MISMATCHING_SIZE,
+    TernError::ADD_SPAN_LOCATION_NOT_CLEAN,
+    TernError::ADD_SPAN_LOCATION_MISMATCHING_CRC,
+    TernError::ADD_SPAN_LOCATION_EXISTS,
+    TernError::SWAP_BLOCKS_MISMATCHING_LOCATION,
 };
 
-constexpr int maxEggsError = 102;
+constexpr int maxTernError = 102;
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,
@@ -505,7 +505,7 @@ struct CurrentEdge {
     InodeId targetId;
     uint64_t nameHash;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // targetId + nameHash + name + creationTime
 
@@ -628,7 +628,7 @@ std::ostream& operator<<(std::ostream& out, const BlockService& x);
 
 struct ShardInfo {
     AddrsInfo addrs;
-    EggsTime lastSeen;
+    TernTime lastSeen;
 
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
@@ -1087,7 +1087,7 @@ struct Edge {
     InodeIdExtra targetId;
     uint64_t nameHash;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + targetId + nameHash + name + creationTime
 
@@ -1112,7 +1112,7 @@ std::ostream& operator<<(std::ostream& out, const Edge& x);
 struct FullReadDirCursor {
     bool current;
     BincodeBytes startName;
-    EggsTime startTime;
+    TernTime startTime;
 
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE + 8; // current + startName + startTime
 
@@ -1135,7 +1135,7 @@ std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x);
 struct TransientFile {
     InodeId id;
     BincodeFixedBytes<8> cookie;
-    EggsTime deadlineTime;
+    TernTime deadlineTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
 
@@ -1187,9 +1187,9 @@ struct BlockServiceDeprecatedInfo {
     uint64_t availableBytes;
     uint64_t blocks;
     BincodeBytes path;
-    EggsTime lastSeen;
+    TernTime lastSeen;
     bool hasFiles;
-    EggsTime flagsLastChanged;
+    TernTime flagsLastChanged;
 
     static constexpr uint16_t STATIC_SIZE = 8 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 1 + 8; // id + addrs + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen + hasFiles + flagsLastChanged
 
@@ -1307,7 +1307,7 @@ struct FullShardInfo {
     ShardReplicaId id;
     bool isLeader;
     AddrsInfo addrs;
-    EggsTime lastSeen;
+    TernTime lastSeen;
     uint8_t locationId;
 
     static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 8 + 1; // id + isLeader + addrs + lastSeen + locationId
@@ -1376,7 +1376,7 @@ struct CdcInfo {
     uint8_t locationId;
     bool isLeader;
     AddrsInfo addrs;
-    EggsTime lastSeen;
+    TernTime lastSeen;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 8; // replicaId + locationId + isLeader + addrs + lastSeen
 
@@ -1442,7 +1442,7 @@ std::ostream& operator<<(std::ostream& out, const LookupReq& x);
 
 struct LookupResp {
     InodeId targetId;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
 
@@ -1481,8 +1481,8 @@ struct StatFileReq {
 std::ostream& operator<<(std::ostream& out, const StatFileReq& x);
 
 struct StatFileResp {
-    EggsTime mtime;
-    EggsTime atime;
+    TernTime mtime;
+    TernTime atime;
     uint64_t size;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // mtime + atime + size
@@ -1523,7 +1523,7 @@ struct StatDirectoryReq {
 std::ostream& operator<<(std::ostream& out, const StatDirectoryReq& x);
 
 struct StatDirectoryResp {
-    EggsTime mtime;
+    TernTime mtime;
     InodeId owner;
     DirectoryInfo info;
 
@@ -1757,7 +1757,7 @@ struct LinkFileReq {
 std::ostream& operator<<(std::ostream& out, const LinkFileReq& x);
 
 struct LinkFileResp {
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
@@ -1779,7 +1779,7 @@ struct SoftUnlinkFileReq {
     InodeId ownerId;
     InodeId fileId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + fileId + name + creationTime
 
@@ -1801,7 +1801,7 @@ struct SoftUnlinkFileReq {
 std::ostream& operator<<(std::ostream& out, const SoftUnlinkFileReq& x);
 
 struct SoftUnlinkFileResp {
-    EggsTime deleteCreationTime;
+    TernTime deleteCreationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // deleteCreationTime
 
@@ -1871,7 +1871,7 @@ struct SameDirectoryRenameReq {
     InodeId targetId;
     InodeId dirId;
     BincodeBytes oldName;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
     BincodeBytes newName;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + oldCreationTime + newName
@@ -1895,7 +1895,7 @@ struct SameDirectoryRenameReq {
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameReq& x);
 
 struct SameDirectoryRenameResp {
-    EggsTime newCreationTime;
+    TernTime newCreationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // newCreationTime
 
@@ -2005,7 +2005,7 @@ struct FullReadDirReq {
     InodeId dirId;
     uint8_t flags;
     BincodeBytes startName;
-    EggsTime startTime;
+    TernTime startTime;
     uint16_t limit;
     uint16_t mtu;
 
@@ -2103,7 +2103,7 @@ struct RemoveNonOwnedEdgeReq {
     InodeId dirId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
 
@@ -2145,7 +2145,7 @@ struct SameShardHardFileUnlinkReq {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
@@ -2203,7 +2203,7 @@ struct StatTransientFileReq {
 std::ostream& operator<<(std::ostream& out, const StatTransientFileReq& x);
 
 struct StatTransientFileResp {
-    EggsTime mtime;
+    TernTime mtime;
     uint64_t size;
     BincodeBytes note;
 
@@ -2895,7 +2895,7 @@ struct SameDirectoryRenameSnapshotReq {
     InodeId targetId;
     InodeId dirId;
     BincodeBytes oldName;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
     BincodeBytes newName;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + oldCreationTime + newName
@@ -2919,7 +2919,7 @@ struct SameDirectoryRenameSnapshotReq {
 std::ostream& operator<<(std::ostream& out, const SameDirectoryRenameSnapshotReq& x);
 
 struct SameDirectoryRenameSnapshotResp {
-    EggsTime newCreationTime;
+    TernTime newCreationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // newCreationTime
 
@@ -3001,7 +3001,7 @@ struct CreateDirectoryInodeReq {
 std::ostream& operator<<(std::ostream& out, const CreateDirectoryInodeReq& x);
 
 struct CreateDirectoryInodeResp {
-    EggsTime mtime;
+    TernTime mtime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // mtime
 
@@ -3099,7 +3099,7 @@ struct CreateLockedCurrentEdgeReq {
     InodeId dirId;
     BincodeBytes name;
     InodeId targetId;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + oldCreationTime
 
@@ -3121,7 +3121,7 @@ struct CreateLockedCurrentEdgeReq {
 std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeReq& x);
 
 struct CreateLockedCurrentEdgeResp {
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
@@ -3142,7 +3142,7 @@ std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeResp& x
 struct LockCurrentEdgeReq {
     InodeId dirId;
     InodeId targetId;
-    EggsTime creationTime;
+    TernTime creationTime;
     BincodeBytes name;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + creationTime + name
@@ -3184,7 +3184,7 @@ std::ostream& operator<<(std::ostream& out, const LockCurrentEdgeResp& x);
 struct UnlockCurrentEdgeReq {
     InodeId dirId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
     InodeId targetId;
     bool wasMoved;
 
@@ -3229,7 +3229,7 @@ struct RemoveOwnedSnapshotFileEdgeReq {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
@@ -3328,7 +3328,7 @@ std::ostream& operator<<(std::ostream& out, const MakeDirectoryReq& x);
 
 struct MakeDirectoryResp {
     InodeId id;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // id + creationTime
 
@@ -3351,7 +3351,7 @@ struct RenameFileReq {
     InodeId targetId;
     InodeId oldOwnerId;
     BincodeBytes oldName;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
     InodeId newOwnerId;
     BincodeBytes newName;
 
@@ -3377,7 +3377,7 @@ struct RenameFileReq {
 std::ostream& operator<<(std::ostream& out, const RenameFileReq& x);
 
 struct RenameFileResp {
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
@@ -3398,7 +3398,7 @@ std::ostream& operator<<(std::ostream& out, const RenameFileResp& x);
 struct SoftUnlinkDirectoryReq {
     InodeId ownerId;
     InodeId targetId;
-    EggsTime creationTime;
+    TernTime creationTime;
     BincodeBytes name;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + targetId + creationTime + name
@@ -3441,7 +3441,7 @@ struct RenameDirectoryReq {
     InodeId targetId;
     InodeId oldOwnerId;
     BincodeBytes oldName;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
     InodeId newOwnerId;
     BincodeBytes newName;
 
@@ -3467,7 +3467,7 @@ struct RenameDirectoryReq {
 std::ostream& operator<<(std::ostream& out, const RenameDirectoryReq& x);
 
 struct RenameDirectoryResp {
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
@@ -3525,7 +3525,7 @@ struct CrossShardHardUnlinkFileReq {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
@@ -3654,7 +3654,7 @@ std::ostream& operator<<(std::ostream& out, const LocalCdcReq& x);
 
 struct LocalCdcResp {
     AddrsInfo addrs;
-    EggsTime lastSeen;
+    TernTime lastSeen;
 
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
@@ -3754,7 +3754,7 @@ struct ShuckleResp {
 std::ostream& operator<<(std::ostream& out, const ShuckleResp& x);
 
 struct LocalChangedBlockServicesReq {
-    EggsTime changedSince;
+    TernTime changedSince;
 
     static constexpr uint16_t STATIC_SIZE = 8; // changedSince
 
@@ -3773,7 +3773,7 @@ struct LocalChangedBlockServicesReq {
 std::ostream& operator<<(std::ostream& out, const LocalChangedBlockServicesReq& x);
 
 struct LocalChangedBlockServicesResp {
-    EggsTime lastChange;
+    TernTime lastChange;
     BincodeList<BlockService> blockServices;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
@@ -4067,7 +4067,7 @@ std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesResp& x);
 
 struct ChangedBlockServicesAtLocationReq {
     uint8_t locationId;
-    EggsTime changedSince;
+    TernTime changedSince;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 8; // locationId + changedSince
 
@@ -4087,7 +4087,7 @@ struct ChangedBlockServicesAtLocationReq {
 std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesAtLocationReq& x);
 
 struct ChangedBlockServicesAtLocationResp {
-    EggsTime lastChange;
+    TernTime lastChange;
     BincodeList<BlockService> blockServices;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
@@ -4166,7 +4166,7 @@ std::ostream& operator<<(std::ostream& out, const CdcAtLocationReq& x);
 
 struct CdcAtLocationResp {
     AddrsInfo addrs;
-    EggsTime lastSeen;
+    TernTime lastSeen;
 
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
@@ -4943,7 +4943,7 @@ struct LogWriteReq {
 std::ostream& operator<<(std::ostream& out, const LogWriteReq& x);
 
 struct LogWriteResp {
-    EggsError result;
+    TernError result;
 
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
@@ -4983,7 +4983,7 @@ struct ReleaseReq {
 std::ostream& operator<<(std::ostream& out, const ReleaseReq& x);
 
 struct ReleaseResp {
-    EggsError result;
+    TernError result;
 
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
@@ -5021,7 +5021,7 @@ struct LogReadReq {
 std::ostream& operator<<(std::ostream& out, const LogReadReq& x);
 
 struct LogReadResp {
-    EggsError result;
+    TernError result;
     BincodeList<uint8_t> value;
 
     static constexpr uint16_t STATIC_SIZE = 2 + BincodeList<uint8_t>::STATIC_SIZE; // result + value
@@ -5061,7 +5061,7 @@ struct NewLeaderReq {
 std::ostream& operator<<(std::ostream& out, const NewLeaderReq& x);
 
 struct NewLeaderResp {
-    EggsError result;
+    TernError result;
     LogIdx lastReleased;
 
     static constexpr uint16_t STATIC_SIZE = 2 + 8; // result + lastReleased
@@ -5103,7 +5103,7 @@ struct NewLeaderConfirmReq {
 std::ostream& operator<<(std::ostream& out, const NewLeaderConfirmReq& x);
 
 struct NewLeaderConfirmResp {
-    EggsError result;
+    TernError result;
 
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
@@ -5143,7 +5143,7 @@ struct LogRecoveryReadReq {
 std::ostream& operator<<(std::ostream& out, const LogRecoveryReadReq& x);
 
 struct LogRecoveryReadResp {
-    EggsError result;
+    TernError result;
     BincodeList<uint8_t> value;
 
     static constexpr uint16_t STATIC_SIZE = 2 + BincodeList<uint8_t>::STATIC_SIZE; // result + value
@@ -5187,7 +5187,7 @@ struct LogRecoveryWriteReq {
 std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteReq& x);
 
 struct LogRecoveryWriteResp {
-    EggsError result;
+    TernError result;
 
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
@@ -5321,9 +5321,9 @@ std::ostream& operator<<(std::ostream& out, const ShardReqContainer& x);
 
 struct ShardRespContainer {
 private:
-    static constexpr std::array<size_t,45> _staticSizes = {sizeof(EggsError), LookupResp::STATIC_SIZE, StatFileResp::STATIC_SIZE, StatDirectoryResp::STATIC_SIZE, ReadDirResp::STATIC_SIZE, ConstructFileResp::STATIC_SIZE, AddSpanInitiateResp::STATIC_SIZE, AddSpanCertifyResp::STATIC_SIZE, LinkFileResp::STATIC_SIZE, SoftUnlinkFileResp::STATIC_SIZE, LocalFileSpansResp::STATIC_SIZE, SameDirectoryRenameResp::STATIC_SIZE, AddInlineSpanResp::STATIC_SIZE, SetTimeResp::STATIC_SIZE, FullReadDirResp::STATIC_SIZE, MoveSpanResp::STATIC_SIZE, RemoveNonOwnedEdgeResp::STATIC_SIZE, SameShardHardFileUnlinkResp::STATIC_SIZE, StatTransientFileResp::STATIC_SIZE, ShardSnapshotResp::STATIC_SIZE, FileSpansResp::STATIC_SIZE, AddSpanLocationResp::STATIC_SIZE, ScrapTransientFileResp::STATIC_SIZE, SetDirectoryInfoResp::STATIC_SIZE, VisitDirectoriesResp::STATIC_SIZE, VisitFilesResp::STATIC_SIZE, VisitTransientFilesResp::STATIC_SIZE, RemoveSpanInitiateResp::STATIC_SIZE, RemoveSpanCertifyResp::STATIC_SIZE, SwapBlocksResp::STATIC_SIZE, BlockServiceFilesResp::STATIC_SIZE, RemoveInodeResp::STATIC_SIZE, AddSpanInitiateWithReferenceResp::STATIC_SIZE, RemoveZeroBlockServiceFilesResp::STATIC_SIZE, SwapSpansResp::STATIC_SIZE, SameDirectoryRenameSnapshotResp::STATIC_SIZE, AddSpanAtLocationInitiateResp::STATIC_SIZE, CreateDirectoryInodeResp::STATIC_SIZE, SetDirectoryOwnerResp::STATIC_SIZE, RemoveDirectoryOwnerResp::STATIC_SIZE, CreateLockedCurrentEdgeResp::STATIC_SIZE, LockCurrentEdgeResp::STATIC_SIZE, UnlockCurrentEdgeResp::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeResp::STATIC_SIZE, MakeFileTransientResp::STATIC_SIZE};
+    static constexpr std::array<size_t,45> _staticSizes = {sizeof(TernError), LookupResp::STATIC_SIZE, StatFileResp::STATIC_SIZE, StatDirectoryResp::STATIC_SIZE, ReadDirResp::STATIC_SIZE, ConstructFileResp::STATIC_SIZE, AddSpanInitiateResp::STATIC_SIZE, AddSpanCertifyResp::STATIC_SIZE, LinkFileResp::STATIC_SIZE, SoftUnlinkFileResp::STATIC_SIZE, LocalFileSpansResp::STATIC_SIZE, SameDirectoryRenameResp::STATIC_SIZE, AddInlineSpanResp::STATIC_SIZE, SetTimeResp::STATIC_SIZE, FullReadDirResp::STATIC_SIZE, MoveSpanResp::STATIC_SIZE, RemoveNonOwnedEdgeResp::STATIC_SIZE, SameShardHardFileUnlinkResp::STATIC_SIZE, StatTransientFileResp::STATIC_SIZE, ShardSnapshotResp::STATIC_SIZE, FileSpansResp::STATIC_SIZE, AddSpanLocationResp::STATIC_SIZE, ScrapTransientFileResp::STATIC_SIZE, SetDirectoryInfoResp::STATIC_SIZE, VisitDirectoriesResp::STATIC_SIZE, VisitFilesResp::STATIC_SIZE, VisitTransientFilesResp::STATIC_SIZE, RemoveSpanInitiateResp::STATIC_SIZE, RemoveSpanCertifyResp::STATIC_SIZE, SwapBlocksResp::STATIC_SIZE, BlockServiceFilesResp::STATIC_SIZE, RemoveInodeResp::STATIC_SIZE, AddSpanInitiateWithReferenceResp::STATIC_SIZE, RemoveZeroBlockServiceFilesResp::STATIC_SIZE, SwapSpansResp::STATIC_SIZE, SameDirectoryRenameSnapshotResp::STATIC_SIZE, AddSpanAtLocationInitiateResp::STATIC_SIZE, CreateDirectoryInodeResp::STATIC_SIZE, SetDirectoryOwnerResp::STATIC_SIZE, RemoveDirectoryOwnerResp::STATIC_SIZE, CreateLockedCurrentEdgeResp::STATIC_SIZE, LockCurrentEdgeResp::STATIC_SIZE, UnlockCurrentEdgeResp::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeResp::STATIC_SIZE, MakeFileTransientResp::STATIC_SIZE};
     ShardMessageKind _kind = ShardMessageKind::EMPTY;
-    std::variant<EggsError, LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, LocalFileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, ShardSnapshotResp, FileSpansResp, AddSpanLocationResp, ScrapTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, AddSpanInitiateWithReferenceResp, RemoveZeroBlockServiceFilesResp, SwapSpansResp, SameDirectoryRenameSnapshotResp, AddSpanAtLocationInitiateResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
+    std::variant<TernError, LookupResp, StatFileResp, StatDirectoryResp, ReadDirResp, ConstructFileResp, AddSpanInitiateResp, AddSpanCertifyResp, LinkFileResp, SoftUnlinkFileResp, LocalFileSpansResp, SameDirectoryRenameResp, AddInlineSpanResp, SetTimeResp, FullReadDirResp, MoveSpanResp, RemoveNonOwnedEdgeResp, SameShardHardFileUnlinkResp, StatTransientFileResp, ShardSnapshotResp, FileSpansResp, AddSpanLocationResp, ScrapTransientFileResp, SetDirectoryInfoResp, VisitDirectoriesResp, VisitFilesResp, VisitTransientFilesResp, RemoveSpanInitiateResp, RemoveSpanCertifyResp, SwapBlocksResp, BlockServiceFilesResp, RemoveInodeResp, AddSpanInitiateWithReferenceResp, RemoveZeroBlockServiceFilesResp, SwapSpansResp, SameDirectoryRenameSnapshotResp, AddSpanAtLocationInitiateResp, CreateDirectoryInodeResp, SetDirectoryOwnerResp, RemoveDirectoryOwnerResp, CreateLockedCurrentEdgeResp, LockCurrentEdgeResp, UnlockCurrentEdgeResp, RemoveOwnedSnapshotFileEdgeResp, MakeFileTransientResp> _data;
 public:
     ShardRespContainer();
     ShardRespContainer(const ShardRespContainer& other);
@@ -5333,8 +5333,8 @@ public:
 
     ShardMessageKind kind() const { return _kind; }
 
-    const EggsError& getError() const;
-    EggsError& setError();
+    const TernError& getError() const;
+    TernError& setError();
     const LookupResp& getLookup() const;
     LookupResp& setLookup();
     const StatFileResp& getStatFile() const;
@@ -5477,9 +5477,9 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x);
 
 struct CDCRespContainer {
 private:
-    static constexpr std::array<size_t,8> _staticSizes = {sizeof(EggsError), MakeDirectoryResp::STATIC_SIZE, RenameFileResp::STATIC_SIZE, SoftUnlinkDirectoryResp::STATIC_SIZE, RenameDirectoryResp::STATIC_SIZE, HardUnlinkDirectoryResp::STATIC_SIZE, CrossShardHardUnlinkFileResp::STATIC_SIZE, CdcSnapshotResp::STATIC_SIZE};
+    static constexpr std::array<size_t,8> _staticSizes = {sizeof(TernError), MakeDirectoryResp::STATIC_SIZE, RenameFileResp::STATIC_SIZE, SoftUnlinkDirectoryResp::STATIC_SIZE, RenameDirectoryResp::STATIC_SIZE, HardUnlinkDirectoryResp::STATIC_SIZE, CrossShardHardUnlinkFileResp::STATIC_SIZE, CdcSnapshotResp::STATIC_SIZE};
     CDCMessageKind _kind = CDCMessageKind::EMPTY;
-    std::variant<EggsError, MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp, CdcSnapshotResp> _data;
+    std::variant<TernError, MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp, CdcSnapshotResp> _data;
 public:
     CDCRespContainer();
     CDCRespContainer(const CDCRespContainer& other);
@@ -5489,8 +5489,8 @@ public:
 
     CDCMessageKind kind() const { return _kind; }
 
-    const EggsError& getError() const;
-    EggsError& setError();
+    const TernError& getError() const;
+    TernError& setError();
     const MakeDirectoryResp& getMakeDirectory() const;
     MakeDirectoryResp& setMakeDirectory();
     const RenameFileResp& getRenameFile() const;
@@ -5601,9 +5601,9 @@ std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x);
 
 struct ShuckleRespContainer {
 private:
-    static constexpr std::array<size_t,29> _staticSizes = {sizeof(EggsError), LocalShardsResp::STATIC_SIZE, LocalCdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, LocalChangedBlockServicesResp::STATIC_SIZE, CreateLocationResp::STATIC_SIZE, RenameLocationResp::STATIC_SIZE, LocationsResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, ChangedBlockServicesAtLocationResp::STATIC_SIZE, ShardsAtLocationResp::STATIC_SIZE, CdcAtLocationResp::STATIC_SIZE, ShardBlockServicesDEPRECATEDResp::STATIC_SIZE, CdcReplicasDEPRECATEDResp::STATIC_SIZE, AllShardsResp::STATIC_SIZE, DecommissionBlockServiceResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, AllCdcResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesDeprecatedResp::STATIC_SIZE, MoveCdcLeaderResp::STATIC_SIZE, ClearCdcInfoResp::STATIC_SIZE, UpdateBlockServicePathResp::STATIC_SIZE};
+    static constexpr std::array<size_t,29> _staticSizes = {sizeof(TernError), LocalShardsResp::STATIC_SIZE, LocalCdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, ShuckleResp::STATIC_SIZE, LocalChangedBlockServicesResp::STATIC_SIZE, CreateLocationResp::STATIC_SIZE, RenameLocationResp::STATIC_SIZE, LocationsResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, ChangedBlockServicesAtLocationResp::STATIC_SIZE, ShardsAtLocationResp::STATIC_SIZE, CdcAtLocationResp::STATIC_SIZE, ShardBlockServicesDEPRECATEDResp::STATIC_SIZE, CdcReplicasDEPRECATEDResp::STATIC_SIZE, AllShardsResp::STATIC_SIZE, DecommissionBlockServiceResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, AllCdcResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesDeprecatedResp::STATIC_SIZE, MoveCdcLeaderResp::STATIC_SIZE, ClearCdcInfoResp::STATIC_SIZE, UpdateBlockServicePathResp::STATIC_SIZE};
     ShuckleMessageKind _kind = ShuckleMessageKind::EMPTY;
-    std::variant<EggsError, LocalShardsResp, LocalCdcResp, InfoResp, ShuckleResp, LocalChangedBlockServicesResp, CreateLocationResp, RenameLocationResp, LocationsResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, RegisterBlockServicesResp, ChangedBlockServicesAtLocationResp, ShardsAtLocationResp, CdcAtLocationResp, ShardBlockServicesDEPRECATEDResp, CdcReplicasDEPRECATEDResp, AllShardsResp, DecommissionBlockServiceResp, MoveShardLeaderResp, ClearShardInfoResp, ShardBlockServicesResp, AllCdcResp, EraseDecommissionedBlockResp, AllBlockServicesDeprecatedResp, MoveCdcLeaderResp, ClearCdcInfoResp, UpdateBlockServicePathResp> _data;
+    std::variant<TernError, LocalShardsResp, LocalCdcResp, InfoResp, ShuckleResp, LocalChangedBlockServicesResp, CreateLocationResp, RenameLocationResp, LocationsResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, RegisterBlockServicesResp, ChangedBlockServicesAtLocationResp, ShardsAtLocationResp, CdcAtLocationResp, ShardBlockServicesDEPRECATEDResp, CdcReplicasDEPRECATEDResp, AllShardsResp, DecommissionBlockServiceResp, MoveShardLeaderResp, ClearShardInfoResp, ShardBlockServicesResp, AllCdcResp, EraseDecommissionedBlockResp, AllBlockServicesDeprecatedResp, MoveCdcLeaderResp, ClearCdcInfoResp, UpdateBlockServicePathResp> _data;
 public:
     ShuckleRespContainer();
     ShuckleRespContainer(const ShuckleRespContainer& other);
@@ -5613,8 +5613,8 @@ public:
 
     ShuckleMessageKind kind() const { return _kind; }
 
-    const EggsError& getError() const;
-    EggsError& setError();
+    const TernError& getError() const;
+    TernError& setError();
     const LocalShardsResp& getLocalShards() const;
     LocalShardsResp& setLocalShards();
     const LocalCdcResp& getLocalCdc() const;
@@ -5725,9 +5725,9 @@ std::ostream& operator<<(std::ostream& out, const LogReqContainer& x);
 
 struct LogRespContainer {
 private:
-    static constexpr std::array<size_t,8> _staticSizes = {sizeof(EggsError), LogWriteResp::STATIC_SIZE, ReleaseResp::STATIC_SIZE, LogReadResp::STATIC_SIZE, NewLeaderResp::STATIC_SIZE, NewLeaderConfirmResp::STATIC_SIZE, LogRecoveryReadResp::STATIC_SIZE, LogRecoveryWriteResp::STATIC_SIZE};
+    static constexpr std::array<size_t,8> _staticSizes = {sizeof(TernError), LogWriteResp::STATIC_SIZE, ReleaseResp::STATIC_SIZE, LogReadResp::STATIC_SIZE, NewLeaderResp::STATIC_SIZE, NewLeaderConfirmResp::STATIC_SIZE, LogRecoveryReadResp::STATIC_SIZE, LogRecoveryWriteResp::STATIC_SIZE};
     LogMessageKind _kind = LogMessageKind::EMPTY;
-    std::variant<EggsError, LogWriteResp, ReleaseResp, LogReadResp, NewLeaderResp, NewLeaderConfirmResp, LogRecoveryReadResp, LogRecoveryWriteResp> _data;
+    std::variant<TernError, LogWriteResp, ReleaseResp, LogReadResp, NewLeaderResp, NewLeaderConfirmResp, LogRecoveryReadResp, LogRecoveryWriteResp> _data;
 public:
     LogRespContainer();
     LogRespContainer(const LogRespContainer& other);
@@ -5737,8 +5737,8 @@ public:
 
     LogMessageKind kind() const { return _kind; }
 
-    const EggsError& getError() const;
-    EggsError& setError();
+    const TernError& getError() const;
+    TernError& setError();
     const LogWriteResp& getLogWrite() const;
     LogWriteResp& setLogWrite();
     const ReleaseResp& getRelease() const;
@@ -5804,7 +5804,7 @@ std::ostream& operator<<(std::ostream& out, ShardLogEntryKind err);
 
 struct ConstructFileEntry {
     uint8_t type;
-    EggsTime deadlineTime;
+    TernTime deadlineTime;
     BincodeBytes note;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeBytes::STATIC_SIZE; // type + deadlineTime + note
@@ -5852,7 +5852,7 @@ struct SameDirectoryRenameEntry {
     InodeId dirId;
     InodeId targetId;
     BincodeBytes oldName;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
     BincodeBytes newName;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + oldName + oldCreationTime + newName
@@ -5879,7 +5879,7 @@ struct SoftUnlinkFileEntry {
     InodeId ownerId;
     InodeId fileId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + fileId + name + creationTime
 
@@ -5927,7 +5927,7 @@ struct CreateLockedCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
     InodeId targetId;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + oldCreationTime
 
@@ -5951,7 +5951,7 @@ std::ostream& operator<<(std::ostream& out, const CreateLockedCurrentEdgeEntry& 
 struct UnlockCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
     InodeId targetId;
     bool wasMoved;
 
@@ -5978,7 +5978,7 @@ std::ostream& operator<<(std::ostream& out, const UnlockCurrentEdgeEntry& x);
 struct LockCurrentEdgeEntry {
     InodeId dirId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
     InodeId targetId;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + creationTime + targetId
@@ -6086,7 +6086,7 @@ struct RemoveNonOwnedEdgeEntry {
     InodeId dirId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
 
@@ -6109,7 +6109,7 @@ std::ostream& operator<<(std::ostream& out, const RemoveNonOwnedEdgeEntry& x);
 
 struct ScrapTransientFileEntry {
     InodeId id;
-    EggsTime deadlineTime;
+    TernTime deadlineTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // id + deadlineTime
 
@@ -6286,7 +6286,7 @@ struct RemoveOwnedSnapshotFileEdgeEntry {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
+    TernTime creationTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
@@ -6444,7 +6444,7 @@ struct SameDirectoryRenameSnapshotEntry {
     InodeId dirId;
     InodeId targetId;
     BincodeBytes oldName;
-    EggsTime oldCreationTime;
+    TernTime oldCreationTime;
     BincodeBytes newName;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + oldName + oldCreationTime + newName
@@ -6539,8 +6539,8 @@ struct SameShardHardFileUnlinkEntry {
     InodeId ownerId;
     InodeId targetId;
     BincodeBytes name;
-    EggsTime creationTime;
-    EggsTime deadlineTime;
+    TernTime creationTime;
+    TernTime deadlineTime;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // ownerId + targetId + name + creationTime + deadlineTime
 
@@ -6564,7 +6564,7 @@ std::ostream& operator<<(std::ostream& out, const SameShardHardFileUnlinkEntry& 
 
 struct MakeFileTransientEntry {
     InodeId id;
-    EggsTime deadlineTime;
+    TernTime deadlineTime;
     BincodeBytes note;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // id + deadlineTime + note

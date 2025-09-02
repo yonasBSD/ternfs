@@ -28,7 +28,7 @@ std::ostream& operator<<(std::ostream& out, const std::vector<LogsDBRequest*>& d
 
 TEST_CASE("EmptyLogsDBNoOverrides") {
     // init time control
-    _setCurrentTime(eggsNow());
+    _setCurrentTime(ternNow());
     TempLogsDB db(LogLevel::LOG_ERROR);
     std::vector<LogsDBLogEntry> entries;
     std::vector<LogsDBRequest> inReq;
@@ -46,7 +46,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
             initEntry(5, "entry5"),
         };
 
-        REQUIRE(db->appendEntries(entries) == EggsError::LEADER_PREEMPTED);
+        REQUIRE(db->appendEntries(entries) == TernError::LEADER_PREEMPTED);
         db->getOutgoingMessages(outReq, outResp);
         REQUIRE(outReq.empty());
         REQUIRE(outResp.empty());
@@ -83,7 +83,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
         for (auto& resp : outResp) {
             REQUIRE(resp.replicaId == token.replica());
             REQUIRE(resp.msg.body.kind() == LogMessageKind::LOG_WRITE);
-            REQUIRE(resp.msg.body.getLogWrite().result == EggsError::NO_ERROR);
+            REQUIRE(resp.msg.body.getLogWrite().result == TernError::NO_ERROR);
             reqIds.erase(resp.msg.id);
         }
         REQUIRE(reqIds.empty());
@@ -116,7 +116,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
 }
 
 TEST_CASE("LogsDBStandAloneLeader") {
-    _setCurrentTime(eggsNow());
+    _setCurrentTime(ternNow());
     LogIdx readUpTo = 0;
     TempLogsDB db(LogLevel::LOG_ERROR, 0, readUpTo,true,false);
 
@@ -126,7 +126,7 @@ TEST_CASE("LogsDBStandAloneLeader") {
     std::vector<LogsDBRequest*> outReq;
     std::vector<LogsDBResponse> outResp;
     db->processIncomingMessages(inReq, inResp);
-    _setCurrentTime(eggsNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ms);
+    _setCurrentTime(ternNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ms);
     db->processIncomingMessages(inReq, inResp);
     REQUIRE(db->isLeader());
 
@@ -137,7 +137,7 @@ TEST_CASE("LogsDBStandAloneLeader") {
     };
     auto err = db->appendEntries(entries);
     db->processIncomingMessages(inReq, inResp);
-    REQUIRE(err == EggsError::NO_ERROR);
+    REQUIRE(err == TernError::NO_ERROR);
     for(size_t i = 0; i < entries.size(); ++i) {
         REQUIRE(entries[i].idx == readUpTo + i + 1);
     }
@@ -148,7 +148,7 @@ TEST_CASE("LogsDBStandAloneLeader") {
 }
 
 TEST_CASE("LogsDBAvoidBeingLeader") {
-    _setCurrentTime(eggsNow());
+    _setCurrentTime(ternNow());
     TempLogsDB db(LogLevel::LOG_ERROR, 0, 0, true, true);
     REQUIRE_FALSE(db->isLeader());
     std::vector<LogsDBRequest> inReq;
@@ -160,7 +160,7 @@ TEST_CASE("LogsDBAvoidBeingLeader") {
     REQUIRE(outResp.empty());
     REQUIRE(outReq.empty());
     REQUIRE(db->getNextTimeout() == LogsDB::LEADER_INACTIVE_TIMEOUT);
-    _setCurrentTime(eggsNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ms);
+    _setCurrentTime(ternNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ms);
 
     // Tick
     db->processIncomingMessages(inReq, inResp);
@@ -171,7 +171,7 @@ TEST_CASE("LogsDBAvoidBeingLeader") {
 }
 
 TEST_CASE("EmptyLogsDBLeaderElection") {
-    _setCurrentTime(eggsNow());
+    _setCurrentTime(ternNow());
     TempLogsDB db(LogLevel::LOG_ERROR);
     REQUIRE_FALSE(db->isLeader());
     std::vector<LogsDBRequest> inReq;
@@ -183,7 +183,7 @@ TEST_CASE("EmptyLogsDBLeaderElection") {
     REQUIRE(outResp.empty());
     REQUIRE(outReq.empty());
     REQUIRE(db->getNextTimeout() == LogsDB::LEADER_INACTIVE_TIMEOUT);
-    _setCurrentTime(eggsNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ms);
+    _setCurrentTime(ternNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ms);
 
     // Tick
     db->processIncomingMessages(inReq, inResp);

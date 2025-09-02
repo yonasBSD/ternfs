@@ -9,7 +9,7 @@
 
 #include "log.h"
 
-#define rs_warn(...) eggsfs_error(__VA_ARGS__)
+#define rs_warn(...) ternfs_error(__VA_ARGS__)
 
 #include "intrshims.h"
 
@@ -19,8 +19,8 @@ enum rs_cpu_level {
     RS_CPU_GFNI = 3,
 };
 
-int eggsfs_rs_cpu_level_min = 1;
-int eggsfs_rs_cpu_level_max = 3;
+int ternfs_rs_cpu_level_min = 1;
+int ternfs_rs_cpu_level_max = 3;
 
 static inline bool rs_detect_valgrind(void) {
     return false;
@@ -29,7 +29,7 @@ static inline bool rs_detect_valgrind(void) {
 #define broadcast_u8(x) \
     ((__m256i)__builtin_ia32_pbroadcastb256((__v16qi){x,0,0,0,0,0,0,0,0,0,0,0,0,0,0}))
 
-int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
+int ternfs_rs_cpu_level = RS_CPU_SCALAR;
 
 #include "rs_core.c"
 
@@ -71,13 +71,13 @@ int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
     static char rs_##D##_##P_data[RS_SIZE(D, P)]; \
     static struct rs* rs_##D##_##P = (struct rs*)rs_##D##_##P_data; \
     static void rs_init_##D##_##P(void) { \
-        rs_new_core(eggsfs_mk_parity(D, P), rs_##D##_##P); \
+        rs_new_core(ternfs_mk_parity(D, P), rs_##D##_##P); \
     } \
     rs_compute_parity_scalar_func(D, P) \
     rs_compute_parity_avx2_func(D, P) \
     rs_compute_parity_gfni_func(D, P) \
     static int rs_compute_parity_##D##_##P(uint64_t size, const uint8_t** data, uint8_t** parity) { \
-        switch (eggsfs_rs_cpu_level) { \
+        switch (ternfs_rs_cpu_level) { \
         case RS_CPU_SCALAR: \
             rs_compute_parity_scalar_##D##_##P(rs_##D##_##P, size, data, parity); \
             return 0; \
@@ -88,7 +88,7 @@ int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
             rs_compute_parity_gfni_##D##_##P(rs_##D##_##P, size, data, parity); \
             return 0; \
         default: \
-            rs_warn("bad cpu level %d", eggsfs_rs_cpu_level); \
+            rs_warn("bad cpu level %d", ternfs_rs_cpu_level); \
             return -EIO; \
         } \
     } \
@@ -98,7 +98,7 @@ int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
 
 #define rs_recover_matmul(D) ({ \
         void (*fun)(u64 size, const u8** have, u8* want, const u8* mat) = NULL; \
-        switch (eggsfs_rs_cpu_level) { \
+        switch (ternfs_rs_cpu_level) { \
         case RS_CPU_SCALAR: \
             fun = rs_recover_matmul_scalar_##D; \
             break; \
@@ -109,7 +109,7 @@ int eggsfs_rs_cpu_level = RS_CPU_SCALAR;
             fun = rs_recover_matmul_gfni_##D; \
             break; \
         default: \
-            rs_warn("bad cpu level %d", eggsfs_rs_cpu_level); \
+            rs_warn("bad cpu level %d", ternfs_rs_cpu_level); \
             break; \
         } \
         fun; \
@@ -126,9 +126,9 @@ rs_gen( 8, 4)
 rs_gen( 9, 4)
 rs_gen(10, 4)
 
-int eggsfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out) {
-    int D = eggsfs_data_blocks(parity);
-    int P = eggsfs_parity_blocks(parity);
+int ternfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out) {
+    int D = ternfs_data_blocks(parity);
+    int P = ternfs_parity_blocks(parity);
 
     if (P == 0) { // nothing to do
         return 0;
@@ -168,16 +168,16 @@ int eggsfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out
     return -EINVAL;
 }
 
-int eggsfs_recover(
+int ternfs_recover(
     u8 parity,
     u32 have_blocks,
     u32 want_block,
     u32 num_pages,
     struct list_head* pages
 ) {
-    int D = eggsfs_data_blocks(parity);
-    int P = eggsfs_parity_blocks(parity);
-    int B = eggsfs_blocks(parity);
+    int D = ternfs_data_blocks(parity);
+    int P = ternfs_parity_blocks(parity);
+    int B = ternfs_blocks(parity);
 
     BUG_ON(D < 1);
     BUG_ON(P == 0);
@@ -241,21 +241,21 @@ int eggsfs_recover(
         }
     }
     if (recover_matmul == NULL) {
-        eggsfs_error("cannot compute with RS(%d,%d)", D, P);
+        ternfs_error("cannot compute with RS(%d,%d)", D, P);
         return -EIO;
     }
 
     kernel_fpu_begin();
 
     // compute matrix
-    u8 mat[RS_RECOVER_MAT_SIZE(EGGSFS_MAX_DATA)];
+    u8 mat[RS_RECOVER_MAT_SIZE(TERNFS_MAX_DATA)];
     if (!rs_recover_mat(rs, have_blocks, want_block, mat)) {
         kernel_fpu_end();
         return -EIO;
     }
 
     // compute data
-    char* have_bufs[EGGSFS_MAX_DATA];
+    char* have_bufs[TERNFS_MAX_DATA];
     char* want_buf;
     int i, j, b;
     for (i = 0; i < num_pages; i++) {
@@ -263,7 +263,7 @@ int eggsfs_recover(
             if ((1u<<b) & have_blocks) {
                 have_bufs[j] = kmap_atomic(list_first_entry(&pages[b], struct page, lru));
                 if(have_bufs[j] == NULL) {
-                    eggsfs_warn("page %d at block %d for block %d is NULL", i, b, j);
+                    ternfs_warn("page %d at block %d for block %d is NULL", i, b, j);
                     BUG();
                 }
                 j++;
@@ -271,7 +271,7 @@ int eggsfs_recover(
             if ((1u<<b) & want_block) {
                 want_buf = kmap_atomic(list_first_entry(&pages[b], struct page, lru));
                 if(want_buf == NULL) {
-                    eggsfs_warn("target page %d %d %d is NULL", i, j, b);
+                    ternfs_warn("target page %d %d %d is NULL", i, j, b);
                     BUG();
                 }
             }
@@ -294,16 +294,16 @@ int eggsfs_recover(
     return 0;
 }
 
-int __init eggsfs_rs_init(void) {
+int __init ternfs_rs_init(void) {
     if (rs_has_cpu_level_core(RS_CPU_GFNI)) {
-        eggsfs_info("picking GFNI");
-        eggsfs_rs_cpu_level = RS_CPU_GFNI;
+        ternfs_info("picking GFNI");
+        ternfs_rs_cpu_level = RS_CPU_GFNI;
     } else if (rs_has_cpu_level_core(RS_CPU_AVX2)) {
-        eggsfs_info("picking AVX2");
-        eggsfs_rs_cpu_level = RS_CPU_AVX2;
+        ternfs_info("picking AVX2");
+        ternfs_rs_cpu_level = RS_CPU_AVX2;
     } else {
-        eggsfs_warn("picking scalar execution -- this will be slow.");
-        eggsfs_rs_cpu_level = RS_CPU_SCALAR;
+        ternfs_warn("picking scalar execution -- this will be slow.");
+        ternfs_rs_cpu_level = RS_CPU_SCALAR;
     }
 
     rs_init_2_4();
@@ -319,8 +319,8 @@ int __init eggsfs_rs_init(void) {
     return 0;
 }
 
-void __cold eggsfs_rs_exit(void) {
-    eggsfs_debug("rs exit");
+void __cold ternfs_rs_exit(void) {
+    ternfs_debug("rs exit");
 }
 
 #include "gf_tables.c"

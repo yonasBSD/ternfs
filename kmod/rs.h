@@ -1,41 +1,41 @@
-#ifndef _EGGSFS_RS_H
-#define _EGGSFS_RS_H
+#ifndef _TERNFS_RS_H
+#define _TERNFS_RS_H
 
 #include <linux/kernel.h>
 
-#define EGGSFS_MAX_DATA 10
-#define EGGSFS_MAX_PARITY 6
-#define EGGSFS_MAX_BLOCKS (EGGSFS_MAX_DATA+EGGSFS_MAX_PARITY)
+#define TERNFS_MAX_DATA 10
+#define TERNFS_MAX_PARITY 6
+#define TERNFS_MAX_BLOCKS (TERNFS_MAX_DATA+TERNFS_MAX_PARITY)
 
-extern int eggsfs_rs_cpu_level;
-extern int eggsfs_rs_cpu_level_min;
-extern int eggsfs_rs_cpu_level_max;
+extern int ternfs_rs_cpu_level;
+extern int ternfs_rs_cpu_level_min;
+extern int ternfs_rs_cpu_level_max;
 
-static inline u8 eggsfs_data_blocks(u8 parity) {
+static inline u8 ternfs_data_blocks(u8 parity) {
     return parity & 0x0F;
 }
 
-static inline u8 eggsfs_parity_blocks(u8 parity) {
+static inline u8 ternfs_parity_blocks(u8 parity) {
     return parity >> 4;
 }
 
-static inline u8 eggsfs_blocks(u8 parity) {
-    return eggsfs_data_blocks(parity) + eggsfs_parity_blocks(parity);
+static inline u8 ternfs_blocks(u8 parity) {
+    return ternfs_data_blocks(parity) + ternfs_parity_blocks(parity);
 }
 
-static inline u8 eggsfs_mk_parity(u8 data, u8 parity) {
+static inline u8 ternfs_mk_parity(u8 data, u8 parity) {
     return (parity << 4) | data;
 }
 
-// len(data) = eggsfs_data_blocks(parity)
-// len(out)  = eggsfs_parity_blocks(parity)
+// len(data) = ternfs_data_blocks(parity)
+// len(out)  = ternfs_parity_blocks(parity)
 //
 // You _must_ wrap this with kernel_fpu_begin()/kernel_fpu_end()!
-int eggsfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out);
+int ternfs_compute_parity(u8 parity, ssize_t size, const char** data, char** out);
 
 // This function does kernel_fpu_begin()/kernel_fpu_end() itself, since it already
 // works with pages.
-int eggsfs_recover(
+int ternfs_recover(
     u8 parity,
     u32 have_blocks,
     u32 want_block,
@@ -45,7 +45,7 @@ int eggsfs_recover(
     struct list_head* pages
 );
 
-int __init eggsfs_rs_init(void);
-void __cold eggsfs_rs_exit(void);
+int __init ternfs_rs_init(void);
+void __cold ternfs_rs_exit(void);
 
 #endif

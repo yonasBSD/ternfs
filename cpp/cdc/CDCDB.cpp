@@ -122,10 +122,10 @@ std::ostream& operator<<(std::ostream& out, const CDCLogEntry& x) {
     return out;
 }
 
-inline bool createCurrentLockedEdgeRetry(EggsError err) {
+inline bool createCurrentLockedEdgeRetry(TernError err) {
     return
-        err == EggsError::TIMEOUT || err == EggsError::MTIME_IS_TOO_RECENT ||
-        err == EggsError::MORE_RECENT_SNAPSHOT_EDGE || err == EggsError::MORE_RECENT_CURRENT_EDGE;
+        err == TernError::TIMEOUT || err == TernError::MTIME_IS_TOO_RECENT ||
+        err == TernError::MORE_RECENT_SNAPSHOT_EDGE || err == TernError::MORE_RECENT_CURRENT_EDGE;
 }
 
 static constexpr InodeId MOVE_DIRECTORY_LOCK = InodeId::FromU64Unchecked(1ull<<63);
@@ -204,9 +204,9 @@ static DirectoriesNeedingLock directoriesNeedingLock(const CDCReqContainer& req)
         toLock.add(req.getCrossShardHardUnlinkFile().ownerId);
         break;
     case CDCMessageKind::ERROR:
-        throw EGGS_EXCEPTION("bad req type error");
+        throw TERN_EXCEPTION("bad req type error");
     default:
-        throw EGGS_EXCEPTION("bad req type %s", (uint8_t)req.kind());
+        throw TERN_EXCEPTION("bad req type %s", (uint8_t)req.kind());
     }
     return toLock;
 }
@@ -253,9 +253,9 @@ struct StateMachineEnv {
         return finished.second;
     }
 
-    void finishWithError(EggsError err) {
+    void finishWithError(TernError err) {
         this->finished = true;
-        ALWAYS_ASSERT(err != EggsError::NO_ERROR);
+        ALWAYS_ASSERT(err != TernError::NO_ERROR);
         auto& errored = cdcStep.finishedTxns.emplace_back();
         errored.first = txnId;
         errored.second.setError() = err;
@@ -308,7 +308,7 @@ struct MakeDirectoryStateMachine {
                 case MAKE_DIRECTORY_CREATE_LOCKED_EDGE: createLockedEdge(); break;
                 case MAKE_DIRECTORY_UNLOCK_EDGE: unlockEdge(); break;
                 case MAKE_DIRECTORY_ROLLBACK: rollback(); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         } else {
             switch (env.txnStep) {
@@ -318,7 +318,7 @@ struct MakeDirectoryStateMachine {
                 case MAKE_DIRECTORY_CREATE_LOCKED_EDGE: afterCreateLockedEdge(*resp); break;
                 case MAKE_DIRECTORY_UNLOCK_EDGE: afterUnlockEdge(*resp); break;
                 case MAKE_DIRECTORY_ROLLBACK: afterRollback(*resp); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         }
     }
@@ -335,16 +335,16 @@ struct MakeDirectoryStateMachine {
     }
 
     void afterLookup(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lookup(true); // retry
-        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+        } else if (err == TernError::DIRECTORY_NOT_FOUND) {
             env.finishWithError(err);
-        } else if (err == EggsError::NAME_NOT_FOUND) {
+        } else if (err == TernError::NAME_NOT_FOUND) {
             // normal case, let's proceed
             createDirectoryInode();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             const auto& lookupResp = resp.getLookup();
             if (lookupResp.targetId.type() == InodeType::DIRECTORY) {
                 // we're good already
@@ -352,7 +352,7 @@ struct MakeDirectoryStateMachine {
                 cdcResp.creationTime = lookupResp.creationTime;
                 cdcResp.id = lookupResp.targetId;
             } else {
-                env.finishWithError(EggsError::CANNOT_OVERRIDE_NAME);
+                env.finishWithError(TernError::CANNOT_OVERRIDE_NAME);
             }
         }
     }
@@ -364,12 +364,12 @@ struct MakeDirectoryStateMachine {
     }
 
     void afterCreateDirectoryInode(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             // Try again -- note that the call to create directory inode is idempotent.
             createDirectoryInode(true);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             lookupOldCreationTime();
         }
     }
@@ -384,16 +384,16 @@ struct MakeDirectoryStateMachine {
     }
 
     void afterLookupOldCreationTime(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lookupOldCreationTime(true); // retry
-        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+        } else if (err == TernError::DIRECTORY_NOT_FOUND) {
             // the directory we looked into doesn't even exist anymore --
             // we've failed hard and we need to remove the inode.
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp.getFullReadDir();
             ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
@@ -416,15 +416,15 @@ struct MakeDirectoryStateMachine {
     }
 
     void afterCreateLockedEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
         if (createCurrentLockedEdgeRetry(err)) {
             createLockedEdge(true); // try again
-        } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
+        } else if (err == TernError::CANNOT_OVERRIDE_NAME) {
             // this happens when a file gets created between when we looked
             // up whether there was something else and now.
             state.setExitError(err);
             rollback();
-        } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
+        } else if (err == TernError::MISMATCHING_CREATION_TIME) {
             // lookup the old creation time again
             lookupOldCreationTime();
         } else {
@@ -433,7 +433,7 @@ struct MakeDirectoryStateMachine {
             //
             // We also cannot get MISMATCHING_TARGET since we are the only one
             // creating locked edges, and transactions execute serially.
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             state.setCreationTime(resp.getCreateLockedCurrentEdge().creationTime);
             unlockEdge();
         }
@@ -449,12 +449,12 @@ struct MakeDirectoryStateMachine {
     }
 
     void afterUnlockEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT || err == EggsError::MTIME_IS_TOO_RECENT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT || err == TernError::MTIME_IS_TOO_RECENT) {
             // retry
             unlockEdge(true);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             // We're done, record the parent relationship and finish
             {
                 auto k = InodeIdKey::Static(state.dirId());
@@ -477,11 +477,11 @@ struct MakeDirectoryStateMachine {
     }
 
     void afterRollback(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             rollback(true); // retry
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             env.finishWithError(state.exitError());
         }
     }
@@ -512,12 +512,12 @@ struct HardUnlinkDirectoryStateMachine {
         if (unlikely(resp == nullptr)) { // we're resuming with no response
             switch (env.txnStep) {
                 case HARD_UNLINK_DIRECTORY_REMOVE_INODE: removeInode(); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         } else {
             switch (env.txnStep) {
                 case HARD_UNLINK_DIRECTORY_REMOVE_INODE: afterRemoveInode(*resp); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         }
     }
@@ -528,15 +528,15 @@ struct HardUnlinkDirectoryStateMachine {
     }
 
     void afterRemoveInode(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             removeInode(true); // try again
         } else if (
-            err == EggsError::DIRECTORY_NOT_FOUND || err == EggsError::DIRECTORY_HAS_OWNER || err == EggsError::DIRECTORY_NOT_EMPTY
+            err == TernError::DIRECTORY_NOT_FOUND || err == TernError::DIRECTORY_HAS_OWNER || err == TernError::DIRECTORY_NOT_EMPTY
         ) {
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             env.finish().setHardUnlinkDirectory();
         }
     }
@@ -582,7 +582,7 @@ struct RenameFileStateMachine {
                 case RENAME_FILE_UNLOCK_NEW_EDGE: unlockNewEdge(); break;
                 case RENAME_FILE_UNLOCK_OLD_EDGE: unlockOldEdge(); break;
                 case RENAME_FILE_ROLLBACK: rollback(); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         } else {
             switch (env.txnStep) {
@@ -592,7 +592,7 @@ struct RenameFileStateMachine {
                 case RENAME_FILE_UNLOCK_NEW_EDGE: afterUnlockNewEdge(*resp); break;
                 case RENAME_FILE_UNLOCK_OLD_EDGE: afterUnlockOldEdge(*resp); break;
                 case RENAME_FILE_ROLLBACK: afterRollback(*resp); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         }
     }
@@ -601,9 +601,9 @@ struct RenameFileStateMachine {
         // We need this explicit check here because moving directories is more complicated,
         // and therefore we do it in another transaction type entirely.
         if (req.targetId.type() == InodeType::DIRECTORY) {
-            env.finishWithError(EggsError::TYPE_IS_NOT_DIRECTORY);
+            env.finishWithError(TernError::TYPE_IS_NOT_DIRECTORY);
         } else if (req.oldOwnerId == req.newOwnerId) {
-            env.finishWithError(EggsError::SAME_DIRECTORIES);
+            env.finishWithError(TernError::SAME_DIRECTORIES);
         } else {
             lockOldEdge();
         }
@@ -618,19 +618,19 @@ struct RenameFileStateMachine {
     }
 
     void afterLockOldEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lockOldEdge(true); // retry
         } else if (
-            err == EggsError::EDGE_NOT_FOUND || err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::DIRECTORY_NOT_FOUND
+            err == TernError::EDGE_NOT_FOUND || err == TernError::MISMATCHING_CREATION_TIME || err == TernError::DIRECTORY_NOT_FOUND
         ) {
             // We failed hard and we have nothing to roll back
-            if (err == EggsError::DIRECTORY_NOT_FOUND) {
-                err = EggsError::OLD_DIRECTORY_NOT_FOUND;
+            if (err == TernError::DIRECTORY_NOT_FOUND) {
+                err = TernError::OLD_DIRECTORY_NOT_FOUND;
             }
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             lookupOldCreationTime();
         }
     }
@@ -645,16 +645,16 @@ struct RenameFileStateMachine {
     }
 
     void afterLookupOldCreationTime(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lookupOldCreationTime(true); // retry
-        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+        } else if (err == TernError::DIRECTORY_NOT_FOUND) {
             // we've failed hard and we need to unlock the old edge.
-            err = EggsError::NEW_DIRECTORY_NOT_FOUND;
+            err = TernError::NEW_DIRECTORY_NOT_FOUND;
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp.getFullReadDir();
             ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
@@ -677,13 +677,13 @@ struct RenameFileStateMachine {
     }
 
     void afterCreateNewLockedEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
         if (createCurrentLockedEdgeRetry(err)) {
             createNewLockedEdge(true); // retry
-        } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
+        } else if (err == TernError::MISMATCHING_CREATION_TIME) {
             // we need to lookup the creation time again.
             lookupOldCreationTime();
-        } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
+        } else if (err == TernError::CANNOT_OVERRIDE_NAME) {
             // we failed hard and we need to rollback
             state.setExitError(err);
             rollback();
@@ -703,11 +703,11 @@ struct RenameFileStateMachine {
     }
 
     void afterUnlockNewEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             unlockNewEdge(true); // retry
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             unlockOldEdge();
         }
     }
@@ -723,14 +723,14 @@ struct RenameFileStateMachine {
     }
 
     void afterUnlockOldEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             unlockOldEdge(true); // retry
         } else {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR || err == TernError::EDGE_NOT_FOUND);
             // we're finally done
             auto& resp = env.finish().setRenameFile();
             resp.creationTime = state.newCreationTime();
@@ -747,11 +747,11 @@ struct RenameFileStateMachine {
     }
 
     void afterRollback(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             rollback(true); // retry
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             env.finishWithError(state.exitError());
         }
     }
@@ -798,7 +798,7 @@ struct SoftUnlinkDirectoryStateMachine {
                 case SOFT_UNLINK_DIRECTORY_REMOVE_OWNER: stat(); break;
                 case SOFT_UNLINK_DIRECTORY_UNLOCK_EDGE: unlockEdge(); break;
                 case SOFT_UNLINK_DIRECTORY_ROLLBACK: rollback(); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         } else {
             switch (env.txnStep) {
@@ -807,14 +807,14 @@ struct SoftUnlinkDirectoryStateMachine {
                 case SOFT_UNLINK_DIRECTORY_REMOVE_OWNER: afterRemoveOwner(*resp); break;
                 case SOFT_UNLINK_DIRECTORY_UNLOCK_EDGE: afterUnlockEdge(*resp); break;
                 case SOFT_UNLINK_DIRECTORY_ROLLBACK: afterRollback(*resp); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         }
     }
 
     void start() {
         if (req.targetId.type() != InodeType::DIRECTORY) {
-            env.finishWithError(EggsError::TYPE_IS_NOT_DIRECTORY);
+            env.finishWithError(TernError::TYPE_IS_NOT_DIRECTORY);
         } else {
             lockEdge();
         }
@@ -829,14 +829,14 @@ struct SoftUnlinkDirectoryStateMachine {
     }
 
     void afterLockEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lockEdge(true);
-        } else if (err == EggsError::MISMATCHING_CREATION_TIME || err == EggsError::EDGE_NOT_FOUND || err == EggsError::DIRECTORY_NOT_FOUND) {
+        } else if (err == TernError::MISMATCHING_CREATION_TIME || err == TernError::EDGE_NOT_FOUND || err == TernError::DIRECTORY_NOT_FOUND) {
             LOG_INFO(env.env, "failed locking edge in soft unlink for req: %s with err: %s", req, err);
             env.finishWithError(err); // no rollback to be done
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             state.setStatDirId(req.targetId);
             stat();
         }
@@ -848,11 +848,11 @@ struct SoftUnlinkDirectoryStateMachine {
     }
 
     void afterStat(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             stat(true); // retry
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             const auto& statResp = resp.getStatDirectory();
             // insert tags
             for (const auto& newEntry : statResp.info.entries.els) {
@@ -881,15 +881,15 @@ struct SoftUnlinkDirectoryStateMachine {
     }
 
     void afterRemoveOwner(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             // we don't want to keep the dir info around start again from the last stat
             stat();
-        } else if (err == EggsError::DIRECTORY_NOT_EMPTY) {
+        } else if (err == TernError::DIRECTORY_NOT_EMPTY) {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR, "Unexpected error when removing owner, ownerId=%s name=%s creationTime=%s targetId=%s: %s", req.ownerId, GoLangQuotedStringFmt(req.name.ref().data(), req.name.ref().size()), req.creationTime, req.targetId, err);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR, "Unexpected error when removing owner, ownerId=%s name=%s creationTime=%s targetId=%s: %s", req.ownerId, GoLangQuotedStringFmt(req.name.ref().data(), req.name.ref().size()), req.creationTime, req.targetId, err);
             unlockEdge();
         }
     }
@@ -907,14 +907,14 @@ struct SoftUnlinkDirectoryStateMachine {
     }
 
     void afterUnlockEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             unlockEdge(true);
         } else {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR || err == TernError::EDGE_NOT_FOUND);
             auto& cdcResp = env.finish().setSoftUnlinkDirectory();
             // Update parent map
             {
@@ -934,14 +934,14 @@ struct SoftUnlinkDirectoryStateMachine {
     }
 
     void afterRollback(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             rollback(true);
         } else {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::EDGE_NOT_FOUND);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR || err == TernError::EDGE_NOT_FOUND);
             env.finishWithError(state.exitError());
         }
     }
@@ -992,7 +992,7 @@ struct RenameDirectoryStateMachine {
                 case RENAME_DIRECTORY_UNLOCK_OLD_EDGE: unlockOldEdge(); break;
                 case RENAME_DIRECTORY_SET_OWNER: setOwner(); break;
                 case RENAME_DIRECTORY_ROLLBACK: rollback(); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         } else {
             switch (env.txnStep) {
@@ -1003,7 +1003,7 @@ struct RenameDirectoryStateMachine {
                 case RENAME_DIRECTORY_UNLOCK_OLD_EDGE: afterUnlockOldEdge(*resp); break;
                 case RENAME_DIRECTORY_SET_OWNER: afterSetOwner(*resp); break;
                 case RENAME_DIRECTORY_ROLLBACK: afterRollback(*resp); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         }
     }
@@ -1037,12 +1037,12 @@ struct RenameDirectoryStateMachine {
 
     void start() {
         if (req.targetId.type() != InodeType::DIRECTORY) {
-            env.finishWithError(EggsError::TYPE_IS_NOT_DIRECTORY);
+            env.finishWithError(TernError::TYPE_IS_NOT_DIRECTORY);
         } else if (req.oldOwnerId == req.newOwnerId) {
-            env.finishWithError(EggsError::SAME_DIRECTORIES);
+            env.finishWithError(TernError::SAME_DIRECTORIES);
         } else if (!loopCheck()) {
             // First, check if we'd create a loop
-            env.finishWithError(EggsError::LOOP_IN_DIRECTORY_RENAME);
+            env.finishWithError(TernError::LOOP_IN_DIRECTORY_RENAME);
         } else {
             // Now, actually start by locking the old edge
             lockOldEdge();
@@ -1058,18 +1058,18 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterLockOldEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lockOldEdge(true); // retry
         } else if (
-            err == EggsError::DIRECTORY_NOT_FOUND || err == EggsError::EDGE_NOT_FOUND || err == EggsError::MISMATCHING_CREATION_TIME
+            err == TernError::DIRECTORY_NOT_FOUND || err == TernError::EDGE_NOT_FOUND || err == TernError::MISMATCHING_CREATION_TIME
         ) {
-            if (err == EggsError::DIRECTORY_NOT_FOUND) {
-                err = EggsError::OLD_DIRECTORY_NOT_FOUND;
+            if (err == TernError::DIRECTORY_NOT_FOUND) {
+                err = TernError::OLD_DIRECTORY_NOT_FOUND;
             }
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             lookupOldCreationTime();
         }
     }
@@ -1084,15 +1084,15 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterLookupOldCreationTime(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             lookupOldCreationTime(true); // retry
-        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+        } else if (err == TernError::DIRECTORY_NOT_FOUND) {
             // we've failed hard and we need to unlock the old edge.
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp.getFullReadDir();
             ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
@@ -1115,17 +1115,17 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterCreateLockedEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
         if (createCurrentLockedEdgeRetry(err)) {
             createLockedNewEdge(true);
-        } else if (err == EggsError::MISMATCHING_CREATION_TIME) {
+        } else if (err == TernError::MISMATCHING_CREATION_TIME) {
             // we need to lookup the creation time again.
             lookupOldCreationTime();
-        } else if (err == EggsError::CANNOT_OVERRIDE_NAME) {
+        } else if (err == TernError::CANNOT_OVERRIDE_NAME) {
             state.setExitError(err);
             rollback();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             state.setNewCreationTime(resp.getCreateLockedCurrentEdge().creationTime);
             unlockNewEdge();
         }
@@ -1141,16 +1141,16 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterUnlockNewEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             unlockNewEdge(true);
-        } else if (err == EggsError::EDGE_NOT_FOUND) {
+        } else if (err == TernError::EDGE_NOT_FOUND) {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
             unlockOldEdge();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             unlockOldEdge();
         }
     }
@@ -1165,16 +1165,16 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterUnlockOldEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             unlockOldEdge(true);
-        } else if (err == EggsError::EDGE_NOT_FOUND) {
+        } else if (err == TernError::EDGE_NOT_FOUND) {
             // This can only be because of repeated calls from here: we have the edge locked,
             // and only the CDC does changes.
             // TODO it would be cleaner to verify this with a lookup
             setOwner();
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             setOwner();
         }
     }
@@ -1186,11 +1186,11 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterSetOwner(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             setOwner(true);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             auto& resp = env.finish().setRenameDirectory();
             resp.creationTime = state.newCreationTime();
             // update cache
@@ -1212,8 +1212,8 @@ struct RenameDirectoryStateMachine {
     }
 
     void afterRollback(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             rollback(true);
         } else {
             env.finishWithError(state.exitError());
@@ -1250,22 +1250,22 @@ struct CrossShardHardUnlinkFileStateMachine {
             switch (env.txnStep) {
                 case CROSS_SHARD_HARD_UNLINK_FILE_REMOVE_EDGE: removeEdge(); break;
                 case CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT: makeTransient(); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         } else {
             switch (env.txnStep) {
                 case CROSS_SHARD_HARD_UNLINK_FILE_REMOVE_EDGE: afterRemoveEdge(*resp); break;
                 case CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT: afterMakeTransient(*resp); break;
-                default: throw EGGS_EXCEPTION("bad step %s", env.txnStep);
+                default: throw TERN_EXCEPTION("bad step %s", env.txnStep);
             }
         }
     }
 
     void start() {
         if (req.ownerId.shard() == req.targetId.shard()) {
-            env.finishWithError(EggsError::SAME_SHARD);
+            env.finishWithError(TernError::SAME_SHARD);
         } else if (req.targetId.type() == InodeType::DIRECTORY) {
-            env.finishWithError(EggsError::TYPE_IS_DIRECTORY);
+            env.finishWithError(TernError::TYPE_IS_DIRECTORY);
         } else {
             removeEdge();
         }
@@ -1280,13 +1280,13 @@ struct CrossShardHardUnlinkFileStateMachine {
     }
 
     void afterRemoveEdge(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT || err == EggsError::MTIME_IS_TOO_RECENT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT || err == TernError::MTIME_IS_TOO_RECENT) {
             removeEdge(true);
-        } else if (err == EggsError::DIRECTORY_NOT_FOUND) {
+        } else if (err == TernError::DIRECTORY_NOT_FOUND) {
             env.finishWithError(err);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             makeTransient();
         }
     }
@@ -1298,11 +1298,11 @@ struct CrossShardHardUnlinkFileStateMachine {
     }
 
     void afterMakeTransient(const ShardRespContainer& resp) {
-        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : EggsError::NO_ERROR;
-        if (err == EggsError::TIMEOUT) {
+        auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
+        if (err == TernError::TIMEOUT) {
             makeTransient(true);
         } else {
-            ALWAYS_ASSERT(err == EggsError::NO_ERROR || err == EggsError::FILE_NOT_FOUND);
+            ALWAYS_ASSERT(err == TernError::NO_ERROR || err == TernError::FILE_NOT_FOUND);
             env.finish().setCrossShardHardUnlinkFile();
         }
     }
@@ -1770,7 +1770,7 @@ struct CDCDBImpl {
             CrossShardHardUnlinkFileStateMachine(sm, req.getCrossShardHardUnlinkFile(), state().getCrossShardHardUnlinkFile()).resume(shardResp);
             break;
         default:
-            throw EGGS_EXCEPTION("bad cdc message kind %s", req.kind());
+            throw TERN_EXCEPTION("bad cdc message kind %s", req.kind());
         }
         state().setStep(sm.txnStep);
 

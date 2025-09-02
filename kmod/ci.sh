@@ -39,7 +39,7 @@ make "KDIR=${SCRIPT_DIR}/linux" -j kmod
 # start VM in the background
 function cleanup {
     echo 'Syncing logs'
-    rsync -e "ssh -p 2223 -i image-key" -avm --include='/eggs-integrationtest.**/' --include=log --include=test-log --include=stderr --include=stdout --exclude='*' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
+    rsync -e "ssh -p 2223 -i image-key" -avm --include='/tern-integrationtest.**/' --include=log --include=test-log --include=stderr --include=stdout --exclude='*' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
     echo 'Terminating QEMU'
     pkill qemu
 }
@@ -49,7 +49,7 @@ trap cleanup EXIT
 # Wait for VM to go up by trying to copy the kernel module to it
 chmod 0600 image-key
 scp_attempts=0
-while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key eggsfs.ko fmazzol@localhost: ; do
+while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key ternfs.ko fmazzol@localhost: ; do
     sleep 1
     scp_attempts=$((scp_attempts + 1))
     if [ $scp_attempts -ge 20 ]; then
@@ -58,11 +58,11 @@ while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key eggsfs.ko fmazzo
     fi
 done
 
-# Deploy eggsfs
+# Deploy ternfs
 ../deploy/vm_deploy.py
 
 # Insert module
-ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod eggsfs.ko"
+ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod ternfs.ko"
 
 # Set up permissions to read kmsg
 ssh -p 2223 -i image-key fmazzol@localhost "sudo chmod 666 /dev/kmsg"
@@ -79,16 +79,16 @@ trace_pid=$!
 
 # Do not test migrations/scrubbing since we test this outside qemu anyway
 # (it's completely independent from the kmod code)
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "eggs/eggstests -verbose -kmsg -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir eggs" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
 
 echo 'Unmounting'
 timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
 
 echo 'Removing module'
-timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "sudo rmmod eggsfs"
+timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "sudo rmmod ternfs"
 
 kill $trace_pid
 kill $dmesg_pid

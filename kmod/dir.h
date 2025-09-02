@@ -1,25 +1,25 @@
-#ifndef _EGGSFS_DIR_H
-#define _EGGSFS_DIR_H
+#ifndef _TERNFS_DIR_H
+#define _TERNFS_DIR_H
 
 #include <linux/fs.h>
 
 #include "inode.h"
 #include "log.h"
 
-extern struct file_operations eggsfs_dir_operations;
+extern struct file_operations ternfs_dir_operations;
 
-extern int eggsfs_dir_getattr_refresh_time_jiffies;
-extern int eggsfs_dir_dentry_refresh_time_jiffies;
+extern int ternfs_dir_getattr_refresh_time_jiffies;
+extern int ternfs_dir_dentry_refresh_time_jiffies;
 
-int eggsfs_dir_readdir_entry_cb(void* ptr, u64 name_hash, const char* name, int name_len, u64 edge_creation_time, u64 ino);
+int ternfs_dir_readdir_entry_cb(void* ptr, u64 name_hash, const char* name, int name_len, u64 edge_creation_time, u64 ino);
 
-void eggsfs_dir_drop_cache(struct eggsfs_inode* enode);
+void ternfs_dir_drop_cache(struct ternfs_inode* enode);
 
-static inline int eggsfs_dir_revalidate(struct eggsfs_inode* enode) {
-    return eggsfs_do_getattr(enode, ATTR_CACHE_DIR_TIMEOUT);
+static inline int ternfs_dir_revalidate(struct ternfs_inode* enode) {
+    return ternfs_do_getattr(enode, ATTR_CACHE_DIR_TIMEOUT);
 }
 
-static inline int eggsfs_dir_needs_reval(struct eggsfs_inode* dir, struct dentry* dentry) {
+static inline int ternfs_dir_needs_reval(struct ternfs_inode* dir, struct dentry* dentry) {
     // 0 => invalid
     // -ECHILD => revalidate parent dir
     // 1 => valid
@@ -30,7 +30,7 @@ static inline int eggsfs_dir_needs_reval(struct eggsfs_inode* dir, struct dentry
     else if (t >= dir->dir.mtime_expiry) { ret = -ECHILD; }
     else { ret = 1; }
 
-    eggsfs_debug(
+    ternfs_debug(
         "t=%llu dir=%p dir_id=0x%016lx dir_mtime=%llu dir_mtime_expiry=%llu dentry=%pd dentry_dir_mtime=%llu -> ret=%d",
         t, dir, dir->inode.i_ino, dir->mtime, dir->dir.mtime_expiry, dentry, dentry_dir_mtime, ret
     );
@@ -38,8 +38,8 @@ static inline int eggsfs_dir_needs_reval(struct eggsfs_inode* dir, struct dentry
     return ret;
 }
 
-int __init eggsfs_dir_init(void);
-void __cold eggsfs_dir_exit(void);
+int __init ternfs_dir_init(void);
+void __cold ternfs_dir_exit(void);
 
 #endif
 

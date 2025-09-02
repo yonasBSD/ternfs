@@ -17,7 +17,7 @@ struct Timings {
     double _growthDivUpperBound;
 
     // actual data
-    EggsTime _startedAt;
+    TernTime _startedAt;
     std::vector<std::atomic<uint64_t>> _bins;
 public:
     Timings(Duration firstUpperBound, double growth, int bins);

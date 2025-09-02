@@ -13,3 +13,4 @@ kmod/trace
 kmod/vm-out
 linux-*.tar.gz
 eggs-integrationtest.*
+.go-cache

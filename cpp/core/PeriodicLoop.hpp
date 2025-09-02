@@ -28,7 +28,7 @@ public:
     PeriodicLoop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& name, const PeriodicLoopConfig& config) :
         Loop(logger, xmon, name),
         _config(config),
-        _rand(eggsNow().ns),
+        _rand(ternNow().ns),
         _lastSucceded(false)
     {}
 
@@ -37,7 +37,7 @@ public:
 
     // We sleep first to immediately introduce a jitter.
     virtual void step() override {
-        auto t = eggsNow();
+        auto t = ternNow();
         Duration pause;
         if (_lastSucceded) {
             pause = _config.successInterval + Duration((double)_config.successInterval.ns * (_config.successIntervalJitter * wyhash64_double(&_rand)));

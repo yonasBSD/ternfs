@@ -3,7 +3,7 @@ package lib
 import (
 	"fmt"
 	"time"
-	"xtx/eggsfs/wyhash"
+	"xtx/ternfs/wyhash"
 )
 
 type ReqTimeouts struct {

@@ -5,10 +5,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/eggsfs/cleanup/scratch"
-	"xtx/eggsfs/client"
-	"xtx/eggsfs/lib"
-	"xtx/eggsfs/msgs"
+	"xtx/ternfs/cleanup/scratch"
+	"xtx/ternfs/client"
+	"xtx/ternfs/lib"
+	"xtx/ternfs/msgs"
 )
 
 type ScrubState struct {
@@ -102,7 +102,7 @@ func scrubWorker(
 			rateLimit.Acquire()
 		}
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workerChan)))
-		if req.blockService.Flags.HasAny(msgs.EGGSFS_BLOCK_SERVICE_DECOMMISSIONED) {
+		if req.blockService.Flags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
 			atomic.AddUint64(&stats.DecommissionedBlocks, 1)
 			continue
 		}

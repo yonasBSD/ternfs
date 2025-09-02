@@ -704,7 +704,7 @@ struct ShardDBImpl {
     }
 
     EggsError _localFileSpans(rocksdb::ReadOptions& options, const LocalFileSpansReq& req, LocalFileSpansResp& resp) {
-        if (req.fileId.type() != InodeType::FILE) {
+        if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return EggsError::BLOCK_IO_ERROR_FILE;
         }
         StaticValue<SpanKey> lowerKey;

@@ -29,7 +29,7 @@ if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 
     # the `--pids-limit -1` is not something I hit but it seems
     # like a good idea.
     subprocess.run(
-        ['docker', 'run', '--network', 'host', '-e', 'http_proxy', '-e', 'https_proxy', '-e', 'no_proxy', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/ternfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/ternfs/cpp/build.py', build_type] + sys.argv[2:],
+        ['docker', 'run', '--network', 'host', '-e', 'MAKE_PARALLELISM', '-e', 'http_proxy', '-e', 'https_proxy', '-e', 'no_proxy', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/ternfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/ternfs/cpp/build.py', build_type] + sys.argv[2:],
         check=True,
     )
 else:

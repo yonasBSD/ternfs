@@ -4,6 +4,12 @@ if(${CMAKE_VERSION} VERSION_GREATER "3.23")
     cmake_policy(SET CMP0135 NEW)
 endif()
 
+include(ProcessorCount)
+ProcessorCount(MAKE_PARALLELISM)
+if(DEFINED ENV{MAKE_PARALLELISM})
+    set(MAKE_PARALLELISM "$ENV{MAKE_PARALLELISM}")
+endif()
+
 # Depends on: nothing
 # Dependecy of: rocksdb
 # We build this manually because alpine doesn't have liburing-static
@@ -20,7 +26,7 @@ ExternalProject_Add(make_uring
     BUILD_BYPRODUCTS <INSTALL_DIR>/lib/liburing.a
     # We don't `make` in BUILD_COMMAND because building the tests is currently broken with musl
     # due to their dependency on non-standard `error.h`.
-    INSTALL_COMMAND ${MAKE_EXE} -j install
+    INSTALL_COMMAND ${MAKE_EXE} -j ${MAKE_PARALLELISM} install
     LOG_DOWNLOAD ON
     LOG_CONFIGURE ON
     LOG_INSTALL ON
@@ -43,7 +49,7 @@ ExternalProject_Add(make_lz4
     SOURCE_DIR ${make_lz4_SOURCE_DIR}
     CONFIGURE_COMMAND ""
     BUILD_IN_SOURCE 1
-    BUILD_COMMAND ${MAKE_EXE} -j
+    BUILD_COMMAND ${MAKE_EXE} -j ${MAKE_PARALLELISM}
     BUILD_BYPRODUCTS <INSTALL_DIR>/lib/liblz4.a
     INSTALL_COMMAND ${MAKE_EXE} install PREFIX=<INSTALL_DIR>
     LOG_DOWNLOAD ON
@@ -69,7 +75,7 @@ ExternalProject_Add(make_zstd
     SOURCE_DIR ${make_zstd_SOURCE_DIR}
     CONFIGURE_COMMAND ""
     BUILD_IN_SOURCE 1
-    BUILD_COMMAND ${MAKE_EXE} -j
+    BUILD_COMMAND ${MAKE_EXE} -j ${MAKE_PARALLELISM}
     BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libzstd.a
     INSTALL_COMMAND ${MAKE_EXE} install PREFIX=<INSTALL_DIR>
     LOG_DOWNLOAD ON
@@ -91,7 +97,7 @@ endif()
 # musl doesn't seem to like AVX512, at least for now.
 separate_arguments(
     rocksdb_build UNIX_COMMAND
-    "env ROCKSDB_DISABLE_ZLIB=y ROCKSDB_DISABLE_BZIP=1 ROCKSDB_DISABLE_SNAPPY=1 ${MAKE_EXE} USE_RTTI=1 EXTRA_CXXFLAGS='${ROCKS_DB_MARCH} -mno-avx512f -DROCKSDB_NO_DYNAMIC_EXTENSION' EXTRA_CFLAGS='${ROCKS_DB_MARCH} -mno-avx512f' -j static_lib"
+    "env ROCKSDB_DISABLE_ZLIB=y ROCKSDB_DISABLE_BZIP=1 ROCKSDB_DISABLE_SNAPPY=1 ${MAKE_EXE} USE_RTTI=1 EXTRA_CXXFLAGS='${ROCKS_DB_MARCH} -mno-avx512f -DROCKSDB_NO_DYNAMIC_EXTENSION' EXTRA_CFLAGS='${ROCKS_DB_MARCH} -mno-avx512f' -j ${MAKE_PARALLELISM} static_lib"
 )
 ExternalProject_Add(make_rocksdb
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
@@ -136,7 +142,7 @@ ExternalProject_Add(make_xxhash
     SOURCE_DIR ${make_xxhash_SOURCE_DIR}
     CONFIGURE_COMMAND ""
     BUILD_IN_SOURCE 1
-    BUILD_COMMAND ${MAKE_EXE} -j
+    BUILD_COMMAND ${MAKE_EXE} -j ${MAKE_PARALLELISM}
     BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libxxhash.a
     INSTALL_COMMAND ${MAKE_EXE} install PREFIX=<INSTALL_DIR>
     LOG_DOWNLOAD ON
@@ -159,7 +165,7 @@ ExternalProject_Add(make_jemalloc
     SOURCE_DIR ${make_jemalloc_SOURCE_DIR}
     CONFIGURE_COMMAND ./configure --prefix=<INSTALL_DIR> --disable-libdl
     BUILD_IN_SOURCE 1
-    BUILD_COMMAND ${MAKE_EXE} -j
+    BUILD_COMMAND ${MAKE_EXE} -j ${MAKE_PARALLELISM}
     BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libjemalloc.a
     INSTALL_COMMAND ${MAKE_EXE} install PREFIX=<INSTALL_DIR>
     LOG_DOWNLOAD ON

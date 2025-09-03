@@ -64,7 +64,7 @@ type XmonConfig struct {
 	// If this is true, the alerts won't actually be sent,
 	// but it'll still log alert creation etc
 	OnlyLogging bool
-	Prod        bool
+	Addr        string
 	// This is the "default" app instance/app type. We then
 	// implicitly create instances for all the other app types,
 	// and with the same app instance, so that we can send
@@ -100,7 +100,6 @@ const heartbeatIntervalSecs uint8 = 5
 func (x *Xmon) packLogon(buf *bytes.Buffer) {
 	buf.Reset()
 
-	// <https://REDACTED>
 	// Name 	Type 	Description
 	// Magic 	int16 	always 'T'
 	// Version 	int32 	version number (latest version is 4)
@@ -521,11 +520,7 @@ func NewXmon(log *Logger, config *XmonConfig) (*Xmon, error) {
 				AppInstance: config.AppInstance + "@" + hostname,
 			})
 		}
-		if config.Prod {
-			x.xmonAddr = "REDACTED"
-		} else {
-			x.xmonAddr = "REDACTED"
-		}
+		x.xmonAddr = config.Addr
 	}
 	go x.run(log)
 	return x, nil

@@ -59,7 +59,7 @@ while ! scp -v -P 2223 -o StrictHostKeyChecking=no -i image-key ternfs.ko fmazzo
 done
 
 # Deploy ternfs
-../deploy/vm_deploy.py
+./vm_deploy.py
 
 # Insert module
 ssh -p 2223 -i image-key fmazzol@localhost "sudo insmod ternfs.ko"

@@ -27,8 +27,6 @@ echo "Preparing kmod CI environment with base image $base_img"
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
-export https_proxy=http://REDACTED
-
 # prepare linux sources
 ./fetchlinux.sh
 

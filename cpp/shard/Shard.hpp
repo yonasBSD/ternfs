@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
+
 #include "Env.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "ShardDB.hpp"
-#include <cstdint>
+#include "Metrics.hpp"
 
 struct ShardOptions {
     ShardReplicaId shrid;
@@ -22,9 +25,8 @@ struct ShardOptions {
     // resilience of the system.
     double simulateOutgoingPacketDrop = 0.0;
     bool syslog = false;
-    bool xmon = false;
-    bool xmonProd = false;
-    bool metrics = false;
+    std::string xmonAddr;
+    std::optional<InfluxDB> influxDB;
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
 
     // LogsDB settings

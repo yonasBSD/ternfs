@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
+
 #include "Env.hpp"
 #include "Msgs.hpp"
 #include "Shard.hpp"
 #include "Time.hpp"
-#include <cstdint>
+#include "Metrics.hpp"
 
 struct CDCOptions {
     LogLevel logLevel = LogLevel::LOG_INFO;
@@ -17,9 +20,8 @@ struct CDCOptions {
     AddrsInfo cdcToShardAddress = {};
     bool syslog = false;
     Duration shardTimeout = 100_ms;
-    bool xmon = false;
-    bool xmonProd = false;
-    bool metrics = false;
+    std::string xmonAddr;
+    std::optional<InfluxDB> influxDB;
     ReplicaId replicaId;
     uint8_t location;
 

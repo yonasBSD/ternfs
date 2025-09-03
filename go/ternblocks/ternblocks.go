@@ -123,6 +123,7 @@ type env struct {
 	eraseLocks     map[msgs.BlockServiceId]*sync.Mutex
 	shuckleConn    *client.ShuckleConn
 	failureDomain  string
+	hostname       string
 	pathPrefix     string
 	readWholeFile  bool
 	ioAlertPercent uint8
@@ -137,8 +138,8 @@ func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 	return lib.CBCMAC(key, buf.Bytes())
 }
 
-func raiseAlertAndHardwareEvent(logger *lib.Logger, failureDomain string, blockServiceId string, msg string) {
-	logger.RaiseHardwareEvent(failureDomain, blockServiceId, msg)
+func raiseAlertAndHardwareEvent(logger *lib.Logger, hostname string, blockServiceId string, msg string) {
+	logger.RaiseHardwareEvent(hostname, blockServiceId, msg)
 }
 
 func blockServiceIdFromKey(secretKey [16]byte) msgs.BlockServiceId {
@@ -262,7 +263,6 @@ var minimumRegisterInterval time.Duration = time.Second * 60
 var maximumRegisterInterval time.Duration = minimumRegisterInterval * 2
 var variantRegisterInterval time.Duration = maximumRegisterInterval - minimumRegisterInterval
 
-
 func registerPeriodically(
 	log *lib.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
@@ -286,7 +286,7 @@ func registerPeriodically(
 			continue
 		}
 		log.ClearNC(alert)
-		waitFor := minimumRegisterInterval + time.Duration(mrand.Uint64() % uint64(variantRegisterInterval.Nanoseconds()))
+		waitFor := minimumRegisterInterval + time.Duration(mrand.Uint64()%uint64(variantRegisterInterval.Nanoseconds()))
 		log.Info("registered with %v (%v alive), waiting %v", env.shuckleConn.ShuckleAddress(), len(blockServices), waitFor)
 		time.Sleep(waitFor)
 	}
@@ -458,7 +458,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 
 	if errors.Is(err, syscall.ENODATA) {
 		// see <https://internal-repo/issues/106>
-		raiseAlertAndHardwareEvent(log, env.failureDomain, blockServiceId.String(),
+		raiseAlertAndHardwareEvent(log, env.hostname, blockServiceId.String(),
 			fmt.Sprintf("could not open block %v, got ENODATA, this probably means that the block/disk is gone", blockPath))
 		// return io error, downstream code will pick it up
 		return syscall.EIO
@@ -495,7 +495,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	if withCrc {
 		offset = offsetPageCount * msgs.TERN_PAGE_WITH_CRC_SIZE
 		count = pageCount * msgs.TERN_PAGE_WITH_CRC_SIZE
-		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL | unix.FADV_WILLNEED)
+		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL|unix.FADV_WILLNEED)
 
 		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
@@ -524,7 +524,7 @@ func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceI
 	} else {
 		// the only remaining case is that we have a file in new format and client wants old format
 		offset = offsetPageCount * msgs.TERN_PAGE_WITH_CRC_SIZE
-		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL | unix.FADV_WILLNEED)
+		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL|unix.FADV_WILLNEED)
 		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
 		}
@@ -1208,7 +1208,7 @@ func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 	}
 }
 
-func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
+func sendMetrics(log *lib.Logger, env *env, influxDB *lib.InfluxDB, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(mrand.Uint64())
 	alert := log.NewNCAlert(10 * time.Second)
@@ -1271,7 +1271,7 @@ func sendMetrics(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 			}
 			metrics.Timestamp(now)
 		}
-		err = lib.SendMetrics(metrics.Payload())
+		err = influxDB.SendMetrics(metrics.Payload())
 		if err == nil {
 			log.ClearNC(alert)
 			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
@@ -1328,13 +1328,14 @@ func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error
 func main() {
 	flag.Usage = usage
 	failureDomainStr := flag.String("failure-domain", "", "Failure domain")
+	hostname := flag.String("hostname", "", "Hostname (for hardware event reporting)")
 	pathPrefixStr := flag.String("path-prefix", "", "We filter our block service not only by failure domain but also by path prefix")
 
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
 	var addresses lib.StringArrayFlags
 	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to, and that will be advertised to shuckle.")
 	verbose := flag.Bool("verbose", false, "")
-	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
+	xmon := flag.String("xmon", "", "Xmon address (empty for no xmon)")
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
@@ -1343,7 +1344,9 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-timeout", 10*time.Minute, "")
 	reservedStorage := flag.Uint64("reserved-storage", 100<<30, "How many bytes to reserve and under-report capacity")
-	metrics := flag.Bool("metrics", false, "")
+	influxDBOrigin := flag.String("influx-db-origin", "", "Base URL to InfluxDB endpoint")
+	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
+	influxDBBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket")
 	locationId := flag.Uint("location", 10000, "Location ID")
 	readWholeFile := flag.Bool("read-whole-file", false, "")
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
@@ -1386,6 +1389,29 @@ func main() {
 
 	if *pathPrefixStr == "" {
 		*pathPrefixStr = *failureDomainStr
+	}
+
+	if *hardwareEventAddress != "" && *hostname == "" {
+		fmt.Fprintf(os.Stderr, "-hostname must be provided if you need hardware event reporting\n")
+		flagErrors = true
+	}
+
+	var influxDB *lib.InfluxDB
+	if *influxDBOrigin == "" {
+		if *influxDBOrg != "" || *influxDBBucket != "" {
+			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
+			flagErrors = true
+		}
+	} else {
+		if *influxDBOrg == "" || *influxDBBucket == "" {
+			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
+			flagErrors = true
+		}
+		influxDB = &lib.InfluxDB{
+			Origin: *influxDBOrigin,
+			Org:    *influxDBOrg,
+			Bucket: *influxDBBucket,
+		}
 	}
 
 	if flagErrors {
@@ -1441,7 +1467,7 @@ func main() {
 	log := lib.NewLogger(logOut, &lib.LoggerOptions{
 		Level:                  level,
 		Syslog:                 *syslog,
-		Xmon:                   *xmon,
+		XmonAddr:               *xmon,
 		HardwareEventServerURL: *hardwareEventAddress,
 		AppInstance:            "eggsblocks",
 		AppType:                "restech_eggsfs.daytime",
@@ -1652,10 +1678,10 @@ func main() {
 		updateBlockServiceInfoCapacityForever(log, blockServices, *reservedStorage)
 	}()
 
-	if *metrics {
+	if influxDB != nil {
 		go func() {
 			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			sendMetrics(log, env, blockServices, *failureDomainStr)
+			sendMetrics(log, env, influxDB, blockServices, *failureDomainStr)
 		}()
 	}
 

@@ -54,5 +54,11 @@ public:
     void timestamp(TernTime t);
 };
 
+struct InfluxDB {
+    std::string origin;
+    std::string org;
+    std::string bucket;
+};
+
 // error string on error
-std::string sendMetrics(Duration timeout, const std::string& payload);
+std::string sendMetrics(const InfluxDB& idb, Duration timeout, const std::string& payload);

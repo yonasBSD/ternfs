@@ -19,17 +19,17 @@ repo_dir = cpp_dir.parent
 build_dir = cpp_dir / 'build' / build_type
 build_dir.mkdir(parents=True, exist_ok=True)
 
-if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 'alpine', 'alpinedebug') and 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
+if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 'alpine', 'alpinedebug') and 'IN_TERN_BUILD_CONTAINER' not in os.environ:
     if build_type.startswith('alpine'):
-        container = 'REDACTED'
+        container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-03'
     else:
-        container = 'REDACTED'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-03'
     # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
     # for motivation for `--security-opt seccomp=unconfined`,
     # the `--pids-limit -1` is not something I hit but it seems
     # like a good idea.
     subprocess.run(
-        ['docker', 'run', '--network', 'host', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/eggsfs/cpp/build.py', build_type] + sys.argv[2:],
+        ['docker', 'run', '--network', 'host', '-e', 'http_proxy', '-e', 'https_proxy', '-e', 'no_proxy', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/ternfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/ternfs/cpp/build.py', build_type] + sys.argv[2:],
         check=True,
     )
 else:

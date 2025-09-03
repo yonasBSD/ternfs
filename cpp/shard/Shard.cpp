@@ -2000,6 +2000,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
 
 struct ShardMetricsInserter : PeriodicLoop {
 private:
+    InfluxDB _influxDB;
     ShardShared& _shared;
     ShardReplicaId _shrid;
     uint8_t _location;
@@ -2009,8 +2010,9 @@ private:
     std::array<XmonNCAlert, 2> _sockQueueAlerts;
     XmonNCAlert _writeQueueAlert;
 public:
-    ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
+    ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const InfluxDB& influxDB, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
+        _influxDB(influxDB),
         _shared(shared),
         _shrid(_shared.options.shrid),
         _location(_shared.options.location),
@@ -2103,7 +2105,7 @@ public:
             }
         }
         logsDBstatsToMetrics(_metricsBuilder, _shared.logsDB.getStats(), _shrid, _location, now);
-        std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
+        std::string err = sendMetrics(_influxDB, 10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();
         if (err.empty()) {
             LOG_INFO(_env, "Sent metrics to influxdb");
@@ -2127,7 +2129,7 @@ void runShard(ShardOptions& options) {
     Logger logger(options.logLevel, logOutFd, options.syslog, true);
 
     std::shared_ptr<XmonAgent> xmon;
-    if (options.xmon) {
+    if (!options.xmonAddr.empty()) {
         xmon = std::make_shared<XmonAgent>();
     }
 
@@ -2158,7 +2160,7 @@ void runShard(ShardOptions& options) {
             ss << "eggsshard_" << std::setfill('0') << std::setw(3) << options.shrid.shardId() << "_" << options.shrid.replicaId();
             config.appInstance =  ss.str();
         }
-        config.prod = options.xmonProd;
+        config.addr = options.xmonAddr;
         config.appType = XmonAppType::CRITICAL;
         threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
@@ -2197,8 +2199,8 @@ void runShard(ShardOptions& options) {
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shared)));
-    if (options.metrics) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, shared)));
+    if (options.influxDB) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, *options.influxDB, shared)));
     }
 
     // from this point on termination on SIGINT/SIGTERM will be graceful

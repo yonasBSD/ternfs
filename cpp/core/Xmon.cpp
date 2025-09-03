@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <unordered_set>
 #include <sys/timerfd.h>
+#include <charconv>
 
 #include "Common.hpp"
 #include "Env.hpp"
@@ -55,13 +56,36 @@ Xmon::Xmon(
     Loop(logger, agent, "xmon"),
     _agent(agent),
     _appInstance(config.appInstance),
-    _parent(config.appType),
-    _xmonHost(config.prod ? "REDACTED" : "REDACTED"),
-    _xmonPort(5004)
+    _parent(config.appType)
 {
     if (_appInstance.empty()) {
         throw TERN_EXCEPTION("empty app name");
     }
+
+    {
+        size_t colon = config.addr.find_last_of(':');
+        if (colon == std::string_view::npos || colon == 0 || colon == config.addr.size()-1) {
+            throw TERN_EXCEPTION("invalid xmon addr %s", config.addr);
+        }
+
+        std::string host = config.addr.substr(0, colon);
+        std::string portString = config.addr.substr(colon + 1);
+
+        uint64_t port64;
+        auto [ptr, ec] = std::from_chars(portString.data(), portString.data() + portString.size(), port64);
+
+        if (ec != std::errc() || ptr != portString.data() + portString.size()) {
+            throw TERN_EXCEPTION("invalid xmon addr %s", config.addr);
+        }
+
+        if (port64 > ~(uint16_t)0) {
+            throw TERN_EXCEPTION("invalid port %s", port64);
+        }
+
+        _xmonHost = host;
+        _xmonPort = port64;
+    }
+
     {
         char buf[HOST_NAME_MAX];
         int res = gethostname(buf, HOST_NAME_MAX);
@@ -136,7 +160,6 @@ const uint8_t HEARTBEAT_INTERVAL_SECS = HEARTBEAT_INTERVAL.ns/1'000'000'000ull;
 void Xmon::_packLogon(XmonBuf& buf) {
     buf.reset();
 
-    // <https://REDACTED>
     // Name 	Type 	Description
     // Magic 	int16 	always 'T'
     // Version 	int32 	version number (latest version is 4)

@@ -15,7 +15,7 @@
 #include "Loop.hpp"
 
 struct XmonConfig {
-    bool prod = false;
+    std::string addr;
     XmonAppType appType = XmonAppType::NEVER;
     std::string appInstance = "";
 };

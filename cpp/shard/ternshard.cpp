@@ -30,9 +30,11 @@ static void usage(const char* binary) {
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -outgoing-packet-drop [0, 1)\n");
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
-    fprintf(stderr, " -xmon qa|prod\n");
+    fprintf(stderr, " -xmon host:port\n");
     fprintf(stderr, "    	Enable Xmon alerts.\n");
-    fprintf(stderr, " -metrics\n");
+    fprintf(stderr, " -influx-db-origin\n");
+    fprintf(stderr, " -influx-db-org\n");
+    fprintf(stderr, " -influx-db-bucket\n");
     fprintf(stderr, "    	Enable metrics.\n");
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with wich the deadline for transient file gets bumped.\n");
@@ -144,6 +146,9 @@ int main(int argc, char** argv) {
     ShardOptions options;
     std::vector<std::string> args;
     std::string shuckleAddress;
+    std::string influxDBOrigin;
+    std::string influxDBOrg;
+    std::string influxDBBucket;
     uint8_t numAddressesFound = 0;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
@@ -189,18 +194,13 @@ int main(int argc, char** argv) {
         } else if (arg == "-syslog") {
             options.syslog = true;
         } else if (arg == "-xmon") {
-            options.xmon = true;
-            std::string xmonEnv = getNextArg();
-            if (xmonEnv == "qa") {
-                options.xmonProd = false;
-            } else if (xmonEnv == "prod") {
-                options.xmonProd = true;
-            } else {
-                fprintf(stderr, "Invalid xmon env %s", xmonEnv.c_str());
-                dieWithUsage();
-            }
-        } else if (arg == "-metrics") {
-            options.metrics = true;
+            options.xmonAddr = getNextArg();
+        } else if (arg == "-influx-db-origin") {
+            influxDBOrigin = getNextArg();
+        } else if (arg == "-influx-db-org") {
+            influxDBOrg = getNextArg();
+        } else if (arg == "-influx-db-bucket") {
+            influxDBBucket = getNextArg();
         } else if (arg == "-transient-deadline-interval") {
             options.transientDeadlineInterval = parseDuration(getNextArg());
         } else if (arg == "-logsdb-leader") {
@@ -212,9 +212,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (influxDBOrigin.empty() != influxDBOrg.empty() || influxDBOrigin.empty() != influxDBBucket.empty()) {
+        fprintf(stderr, "Either all or none of the -influx-db flags must be provided\n");
+        dieWithUsage();
+    }
+    if (influxDBOrigin.empty()) {
+        options.influxDB = InfluxDB{
+            .origin = influxDBOrigin,
+            .org = influxDBOrg,
+            .bucket = influxDBBucket,
+        };
+    }
+
     if (options.noReplication && options.avoidBeingLeader) {
         fprintf(stderr, "-logsdb-leader needs to be set if -logsdb-no-replication is set\n");
-         dieWithUsage();
+        dieWithUsage();
     }
 
     if (args.size() < 3 || args.size() > 4) {

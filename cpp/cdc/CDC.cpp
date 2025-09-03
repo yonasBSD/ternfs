@@ -1066,6 +1066,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
 
 struct CDCMetricsInserter : PeriodicLoop {
 private:
+    InfluxDB _influxDB;
     CDCShared& _shared;
     ReplicaId _replicaId;
     XmonNCAlert _sendMetricsAlert;
@@ -1073,8 +1074,9 @@ private:
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
     XmonNCAlert _updateSizeAlert;
 public:
-    CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCShared& shared, ReplicaId replicaId):
+    CDCMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const InfluxDB& influxDB, CDCShared& shared, ReplicaId replicaId):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
+        _influxDB(influxDB),
         _shared(shared),
         _replicaId(replicaId),
         _sendMetricsAlert(XmonAppType::DAYTIME, 1_mins),
@@ -1143,7 +1145,7 @@ public:
             }
         }
         logsDBstatsToMetrics(_metricsBuilder, _shared.logsDB.getStats(), _replicaId, now);
-        std::string err = sendMetrics(10_sec, _metricsBuilder.payload());
+        std::string err = sendMetrics(_influxDB, 10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();
         if (err.empty()) {
             LOG_INFO(_env, "Sent metrics to influxdb");
@@ -1168,7 +1170,7 @@ void runCDC(CDCOptions& options) {
     Logger logger(options.logLevel, logOutFd, options.syslog, true);
 
     std::shared_ptr<XmonAgent> xmon;
-    if (options.xmon) {
+    if (!options.xmonAddr.empty()) {
         xmon = std::make_shared<XmonAgent>();
     }
 
@@ -1197,7 +1199,7 @@ void runCDC(CDCOptions& options) {
             config.appInstance = ss.str();
         }
         config.appType = XmonAppType::CRITICAL;
-        config.prod = options.xmonProd;
+        config.addr = options.xmonAddr;
 
         threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
     }
@@ -1227,8 +1229,8 @@ void runCDC(CDCOptions& options) {
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCShardUpdater>(logger, xmon, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCServer>(logger, xmon, options, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCRegisterer>(logger, xmon, options, shared)));
-    if (options.metrics) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, shared, options.replicaId)));
+    if (options.influxDB) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<CDCMetricsInserter>(logger, xmon, *options.influxDB, shared, options.replicaId)));
     }
 
     LoopThread::waitUntilStopped(threads);

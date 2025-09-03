@@ -31,7 +31,7 @@ if args.functional:
     bold_print('functional tests')
     if args.docker:
         bold_print('starting functional tests in docker')
-        container = 'REDACTED'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-03'
         # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
         # for motivation for `--security-opt seccomp=unconfined`,
         # the `--pids-limit -1` is not something I hit but it seems
@@ -53,7 +53,7 @@ if args.functional:
 if args.integration:
     if args.docker:
         bold_print('starting integration tests in docker')
-        container = 'REDACTED'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-03'
         # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
         # for motivation for `--security-opt seccomp=unconfined`,
         # the `--pids-limit -1` is not something I hit but it seems

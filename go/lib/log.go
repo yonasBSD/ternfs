@@ -52,7 +52,7 @@ type LoggerOptions struct {
 	Level                  LogLevel
 	Syslog                 bool
 	AppInstance            string
-	Xmon                   string      // "dev", "qa", empty string for no xmon
+	XmonAddr               string      // address to xmon endpoint, empty string for no xmon
 	HardwareEventServerURL string      // URL of the server you want to send hardware events OR empty for no logging
 	AppType                XmonAppType // only used for xmon
 	PrintQuietAlerts       bool        // whether to print alerts in quiet period
@@ -153,14 +153,11 @@ func NewLogger(
 	xmonConfig := XmonConfig{
 		PrintQuietAlerts: options.PrintQuietAlerts,
 	}
-	if options.Xmon != "" {
-		if options.Xmon != "prod" && options.Xmon != "qa" {
-			panic(fmt.Errorf("invalid xmon environment %q", options.Xmon))
-		}
+	if options.XmonAddr != "" {
 		if options.AppInstance == "" {
 			panic(fmt.Errorf("empty app instance"))
 		}
-		xmonConfig.Prod = options.Xmon == "prod"
+		xmonConfig.Addr = options.XmonAddr
 		xmonConfig.AppInstance = options.AppInstance
 		xmonConfig.AppType = options.AppType
 	} else {
@@ -285,9 +282,9 @@ type blockServiceErrorMessage struct {
 
 // Asynchronously sends a hardware event to the server or simply logs
 // if hardware event logging is not enabled.
-func (l *Logger) RaiseHardwareEvent(failureDomain string, blockServiceID string, msg string) {
+func (l *Logger) RaiseHardwareEvent(hostname string, blockServiceID string, msg string) {
 	if l.heClient == nil {
-		l.Log(syslogError, "Hardware event on %s for block service %s: %s", failureDomain, blockServiceID, msg)
+		l.Log(syslogError, "Hardware event on %s for block service %s: %s", hostname, blockServiceID, msg)
 		return
 	}
 	f := func() {
@@ -303,10 +300,10 @@ func (l *Logger) RaiseHardwareEvent(failureDomain string, blockServiceID string,
 			return
 		}
 		evt := HardwareEvent{
-			Hostname:  fmt.Sprintf("%REDACTED", failureDomain),
+			Hostname:  hostname,
 			Timestamp: time.Now(),
 			Component: DiskComponent,
-			Location:  "TernFS",
+			Location:  "EggsFS",
 			Message:   string(msgData),
 		}
 		err = l.heClient.SendHardwareEvent(evt)

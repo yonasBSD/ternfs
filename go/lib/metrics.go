@@ -99,14 +99,14 @@ func (b *MetricsBuilder) Timestamp(t time.Time) {
 	b.state = METRICS_TIMESTAMP
 }
 
-const (
-	influxDBUrl    = "http://REDACTED"
-	influxDBOrg    = "restech"
-	influxDBBucket = "metrics"
-)
+type InfluxDB struct {
+	Origin string
+	Org    string
+	Bucket string
+}
 
-func SendMetrics(payload io.Reader) error {
-	url := influxDBUrl + "/api/v2/write?org=" + influxDBOrg + "&bucket=" + influxDBBucket + "&precision=ns"
+func (idb *InfluxDB) SendMetrics(payload io.Reader) error {
+	url := idb.Origin + "/api/v2/write?org=" + idb.Org + "&bucket=" + idb.Bucket + "&precision=ns"
 	resp, err := http.Post(url, "text/plain", payload)
 	if err != nil {
 		return err

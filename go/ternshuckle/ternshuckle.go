@@ -2781,7 +2781,7 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 }
 
 // Writes stats to influx db.
-func sendMetrics(log *lib.Logger, st *state) error {
+func sendMetrics(log *lib.Logger, st *state, influxDB *lib.InfluxDB) error {
 	metrics := lib.MetricsBuilder{}
 	rand := wyhash.New(rand.Uint64())
 	alert := log.NewNCAlert(10 * time.Second)
@@ -2796,7 +2796,7 @@ func sendMetrics(log *lib.Logger, st *state) error {
 			metrics.FieldU64("count", t.Count())
 			metrics.Timestamp(now)
 		}
-		err := lib.SendMetrics(metrics.Payload())
+		err := influxDB.SendMetrics(metrics.Payload())
 		if err == nil {
 			log.ClearNC(alert)
 			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
@@ -3303,9 +3303,11 @@ func main() {
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
-	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
+	xmon := flag.String("xmon", "", "Xmon address (empty for no xmon)")
 	syslog := flag.Bool("syslog", false, "")
-	metrics := flag.Bool("metrics", false, "")
+	influxDBOrigin := flag.String("influx-db-origin", "", "Base URL to InfluxDB endpoint")
+	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
+	influxDBBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket")
 	dataDir := flag.String("data-dir", "", "Where to store the shuckle files")
 	maxConnections := flag.Uint("max-connections", 4000, "Maximum number of connections to accept.")
 	mtu := flag.Uint64("mtu", 0, "")
@@ -3359,11 +3361,29 @@ func main() {
 	if *trace {
 		level = lib.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical"})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical"})
 
 	if *dataDir == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
 		os.Exit(2)
+	}
+
+	var influxDB *lib.InfluxDB
+	if *influxDBOrigin == "" {
+		if *influxDBOrg != "" || *influxDBBucket != "" {
+			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
+			os.Exit(2)
+		}
+	} else {
+		if *influxDBOrg == "" || *influxDBBucket == "" {
+			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
+			os.Exit(2)
+		}
+		influxDB = &lib.InfluxDB{
+			Origin: *influxDBOrigin,
+			Org:    *influxDBOrg,
+			Bucket: *influxDBBucket,
+		}
 	}
 
 	log.Info("Running shuckle with options:")
@@ -3504,10 +3524,10 @@ func main() {
 		checkBlockServiceFilePresence(log, state)
 	}()
 
-	if *metrics {
+	if influxDB != nil {
 		go func() {
 			defer func() { lib.HandleRecoverPanic(log, recover()) }()
-			sendMetrics(log, state)
+			sendMetrics(log, state, influxDB)
 		}()
 	}
 

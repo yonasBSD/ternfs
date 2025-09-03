@@ -27,21 +27,21 @@ if not args.generate and len(paths) == 0:
         if os.path.isdir(os.path.join(str(go_dir), path)):
             paths.append(path)
 
-if 'IN_EGGS_BUILD_CONTAINER' not in os.environ:
-    container = 'REDACTED'
+if 'IN_TERN_BUILD_CONTAINER' not in os.environ:
+    container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-03'
     # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
     # for motivation for `--security-opt seccomp=unconfined`,
     # the `--pids-limit -1` is not something I hit but it seems
     # like a good idea.
     subprocess.run(
-        ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/eggsfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/eggsfs/go/build.py'] + sys.argv[1:],
+        ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/ternfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/ternfs/go/build.py'] + sys.argv[1:],
         check=True,
     )
 else:
     # Otherwise go will try to create the cache in /.cache, which won't work
     # since we're not running as root.
-    os.environ['GOCACHE'] = '/eggsfs/.cache'
-    os.environ['GOMODCACHE'] = '/eggsfs/.go-cache'
+    os.environ['GOCACHE'] = '/ternfs/.cache'
+    os.environ['GOMODCACHE'] = '/ternfs/.go-cache'
     if args.generate:
         subprocess.run(['go', 'generate', './...'], cwd=go_dir, check=True)
     else:

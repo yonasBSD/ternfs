@@ -6,30 +6,6 @@
 #define CPPHTTPLIB_USE_POLL
 #include "httplib.h"
 
-#if 0
-
-curl -vvv --request POST \
-"http://REDACTED?org=restech&bucket=metrics&precision=ns" \
-  --header "Content-Type: text/plain; charset=utf-8" \
-  --header "Accept: application/json" \
-  --data-binary 'eggsfs_fmazzol_test,sensor_id=TLM0201 temperature=73.97038159354763,humidity=35.23103248356096,co=0.48445310567793615 1690998953988422912'
-
-curl -G 'http://REDACTED?pretty=true' --data-urlencode "db=metrics" --data-urlencode "q=SELECT \"value\" FROM \"disk_ecn_hostmon_disk_write_bytes\""
-
-var TeamRestech = &Team{
-	Name:             "restech",
-	Domain:           "REDACTED",
-	ManagementDomain: "REDACTED",
-	XmonRota:         "restech",
-	BootServerURLs:   []string{"https://REDACTED"},
-	BuildServerURL:   "https://REDACTED",
-	MetricsPrefix:    "restech",
-	InfluxOrg:        "restech",
-	InfluxDBURL:      "http://REDACTED",
-}
-
-#endif
-
 // We're being overly conservative here, see
 // <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#special-characters>,
 // but better being safe than sorry.
@@ -88,23 +64,19 @@ void MetricsBuilder::timestamp(TernTime t) {
     _state = State::TIMESTAMP;
 }
 
-const std::string influxDBUrl = "http://REDACTED";
-const std::string influxDBOrg = "restech";
-const std::string influxDBBucket = "metrics";
-
-std::string sendMetrics(Duration timeout, const std::string& payload) {
-    httplib::Client cli(influxDBUrl);
+std::string sendMetrics(const InfluxDB& idb, Duration timeout, const std::string& payload) {
+    httplib::Client cli(idb.origin);
     time_t ds = timeout.ns / 1'000'000'000ull;
     time_t dus = (timeout.ns % 1'000'000'000ull) / 1'000ull;
     cli.set_connection_timeout(ds, dus);
     cli.set_read_timeout(ds, dus);
     cli.set_write_timeout(ds, dus);
 
-    std::string path = "/api/v2/write?org=" + influxDBOrg + "&bucket=" + influxDBBucket + "&precision=ns";
+    std::string path = "/api/v2/write?org=" + idb.org + "&bucket=" + idb.bucket + "&precision=ns";
     const auto res = cli.Post(path, payload, "text/plain");
     if (res.error() != httplib::Error::Success) {
         std::ostringstream ss;
-        ss << "Could not insert metrics to " << influxDBUrl << path << ": " << res.error();
+        ss << "Could not insert metrics to " << idb.origin << path << ": " << res.error();
         return ss.str();
     }
     return {};

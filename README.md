@@ -29,8 +29,6 @@ Finally, TernFS can be replicated to multiple data centres to make it resilient 
 
 ## Components
 
-![components (1)](https://REDACTED)
-
 TODO decorate list below with links drilling down on specific concepts.
 
 * **servers**

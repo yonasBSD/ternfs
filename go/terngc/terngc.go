@@ -75,7 +75,7 @@ type CountState struct {
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enables debug logging.")
-	xmon := flag.String("xmon", "", "Xmon environment (empty, prod, qa)")
+	xmon := flag.String("xmon", "", "Xmon address (empty for no xmon)")
 	appInstance := flag.String("app-instance", "eggsgc", "")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
@@ -97,7 +97,9 @@ func main() {
 	defragMinSpanSize := flag.Uint("defrag-min-span-size", 0, "")
 	defragStorageClass := flag.String("defrag-storage-class", "", "If present, will only defrag spans in this storage class.")
 	zeroBlockServices := flag.Bool("zero-block-services", false, "")
-	metrics := flag.Bool("metrics", false, "Send metrics")
+	influxDBOrigin := flag.String("influx-db-origin", "", "Base URL to InfluxDB endpoint")
+	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
+	influxDBBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket")
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	migrate := flag.Bool("migrate", false, "migrate")
 	numMigrators := flag.Int("num-migrators", 1, "How many migrate instances are running. 1 by default")
@@ -150,6 +152,29 @@ func main() {
 		os.Exit(2)
 	}
 
+	var influxDB *lib.InfluxDB
+	if *influxDBOrigin == "" {
+		if *influxDBOrg != "" || *influxDBBucket != "" {
+			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
+			os.Exit(2)
+		}
+	} else {
+		if *influxDBOrg == "" || *influxDBBucket == "" {
+			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
+			os.Exit(2)
+		}
+		influxDB = &lib.InfluxDB{
+			Origin: *influxDBOrigin,
+			Org:    *influxDBOrg,
+			Bucket: *influxDBBucket,
+		}
+	}
+
+	if *countMetrics && influxDB == nil {
+		fmt.Fprintf(os.Stderr, "-count-metrics requires -influx-db info\n")
+		os.Exit(2)
+	}
+
 	logOut := os.Stdout
 	if *logFile != "" {
 		var err error
@@ -168,7 +193,7 @@ func main() {
 		level = lib.TRACE
 	}
 
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, Xmon: *xmon, AppType: lib.XMON_DAYTIME, AppInstance: *appInstance})
+	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppType: lib.XMON_DAYTIME, AppInstance: *appInstance})
 
 	if *mtu != 0 {
 		client.SetMTU(*mtu)
@@ -403,7 +428,7 @@ func main() {
 		}()
 	}
 
-	if *metrics && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub || *defrag) {
+	if influxDB != nil && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub || *defrag) {
 		// one thing just pushing the stats every minute
 		go func() {
 			metrics := lib.MetricsBuilder{}
@@ -510,7 +535,7 @@ func main() {
 					metrics.FieldU64("lookups", dirInfoCache.Lookups())
 					metrics.Timestamp(now)
 				}
-				err := lib.SendMetrics(metrics.Payload())
+				err := influxDB.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)
 					sleepFor := time.Second * 30
@@ -628,7 +653,7 @@ func main() {
 					metrics.FieldU64("count", countState.Directories.Counts[i])
 					metrics.Timestamp(now)
 				}
-				err = lib.SendMetrics(metrics.Payload())
+				err = influxDB.SendMetrics(metrics.Payload())
 				if err == nil {
 					log.ClearNC(alert)
 					sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute

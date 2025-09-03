@@ -23,9 +23,11 @@ void usage(const char* binary) {
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -shard-timeout-ms milliseconds\n");
     fprintf(stderr, "    	How much to wait for shard responses. Right now this is a simple loop.\n");
-    fprintf(stderr, " -xmon qa|prod\n");
+    fprintf(stderr, " -xmon host:port\n");
     fprintf(stderr, "    	Enable Xmon alerts.\n");
-    fprintf(stderr, " -metrics\n");
+    fprintf(stderr, " -influx-db-origin\n");
+    fprintf(stderr, " -influx-db-org\n");
+    fprintf(stderr, " -influx-db-bucket\n");
     fprintf(stderr, "    	Enable metrics.\n");
     fprintf(stderr, " -logsdb-leader\n");
     fprintf(stderr, "    	Allow replica to become leader. Default is false\n");
@@ -102,6 +104,9 @@ int main(int argc, char** argv) {
     CDCOptions options;
     std::vector<std::string> args;
     std::string shuckleAddress;
+    std::string influxDBOrigin;
+    std::string influxDBOrg;
+    std::string influxDBBucket;
     uint8_t numAddressesFound = 0;
     for (int i = 1; i < argc; i++) {
         const auto getNextArg = [argc, &argv, &dieWithUsage, &i]() {
@@ -156,18 +161,13 @@ int main(int argc, char** argv) {
             }
             options.shardTimeout = Duration(ms * 1'000'000);
         } else if (arg == "-xmon") {
-            options.xmon = true;
-            std::string xmonEnv = getNextArg();
-            if (xmonEnv == "qa") {
-                options.xmonProd = false;
-            } else if (xmonEnv == "prod") {
-                options.xmonProd = true;
-            } else {
-                fprintf(stderr, "Invalid xmon env %s", xmonEnv.c_str());
-                dieWithUsage();
-            }
-        } else if (arg == "-metrics") {
-            options.metrics = true;
+            options.xmonAddr = getNextArg();
+        } else if (arg == "-influx-db-origin") {
+            influxDBOrigin = getNextArg();
+        } else if (arg == "-influx-db-org") {
+            influxDBOrg = getNextArg();
+        } else if (arg == "-influx-db-bucket") {
+            influxDBBucket = getNextArg();
         } else if (arg == "-logsdb-leader") {
             options.avoidBeingLeader = false;
         } else if (arg == "-logsdb-no-replication") {
@@ -175,6 +175,18 @@ int main(int argc, char** argv) {
         } else {
             args.emplace_back(std::move(arg));
         }
+    }
+
+    if (influxDBOrigin.empty() != influxDBOrg.empty() || influxDBOrigin.empty() != influxDBBucket.empty()) {
+        fprintf(stderr, "Either all or none of the -influx-db flags must be provided\n");
+        dieWithUsage();
+    }
+    if (influxDBOrigin.empty()) {
+        options.influxDB = InfluxDB{
+            .origin = influxDBOrigin,
+            .org = influxDBOrg,
+            .bucket = influxDBBucket,
+        };
     }
 
     if (args.size() < 2 || args.size() > 3) {

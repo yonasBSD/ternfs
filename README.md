@@ -27,7 +27,7 @@ We want the system to be robust in various ways:
 
 We also want to be able to restore deleted files or directories, using a configurable "permanent deletion" policy.
 
-Finally, TernFS can be replicated to multiple data centres to make it resilient to data centre loss, with each data centre storing the whole TernFS data set.
+Finally, we want to have the option to replicate TernFS to multiple regions, to remove the any single data centre as a point of failure.
 
 ## Components
 
@@ -120,7 +120,7 @@ Will build all the artifacts apart from the Kernel module. The output binaries w
 
 There's also `./build.sh ubuntu` which will do the same but in a Ubuntu container, and `./build.sh release` which will build outside docker, which means that you'll have to install some dependencies in the host machine. Both of these build options will have glibc as the only dynamically linked dependency.
 
-We use the Ubuntu-built version in production, mostly due to jemalloc not playing well with Alpine.
+We use the Ubuntu-built version in production, mostly due to jemalloc not playing well with Alpine. It should be easy to produce a performant Alpine build, we just never had the need so far.
 
 ## Testing
 
@@ -128,7 +128,7 @@ We use the Ubuntu-built version in production, mostly due to jemalloc not playin
 ./ci.py --build --integration --short --docker
 ```
 
-Will run the integration tests as CI would (inside a docker image). You can also run the tests outside docker by removing the `--docker` flag, but you might have to install some dependencies of the build process. These tests take a few minutes.
+Will run the integration tests as CI would (inside the Ubuntu docker image). You can also run the tests outside docker by removing the `--docker` flag, but you might have to install some dependencies of the build process. These tests take roughly 20 minutes on our build server.
 
 To work with the qemu kmod tests you'll first need to download the base Ubuntu image we use for testing:
 
@@ -170,7 +170,11 @@ The above will run all the processes needed to run TernFS. This includes:
 
 A multitude of directories to persist the whole thing will appear in `<data-dir>`. The filesystem will also be mounted using FUSE under `<data-dir>/fuse/mnt`.
 
+Inspecting [`ternrun.go`](https://github.com/XTXMarkets/ternfs/blob/main/go/ternrun/ternrun.go) is a decent way to get familiar with the services required to run a TernFS cluster.
+
 TODO add instruction on how to run a multi-datacenter setup.
+
+TODO add migrator, gc, and so on to the above.
 
 ## Building the Kernel module
 

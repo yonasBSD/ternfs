@@ -1,4 +1,6 @@
-# TernFS
+<p align="center">
+<img width="600" alt="TernFS" src="https://github.com/user-attachments/assets/dc047e5d-60d0-45a6-b395-24104c2dc329" />
+</p>
 
 A distributed file system. For a high-level description of TernFS, see its [blog post](TODO insert link). This document provides a more bare-bones overview and an introduction to the codebase.
 

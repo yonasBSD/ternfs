@@ -114,9 +114,11 @@ TODO decorate list below with links drilling down on specific concepts.
 % ./build.sh alpine
 ```
 
-Will build all the artifacts apart from the Kernel module. The output will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked.
+Will build all the artifacts apart from the Kernel module. The output binaries will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked.
 
-There's also `./build.sh ubuntu` which will do the same but in a Ubuntu container (we use this to build for production), and `./build.sh release` which will build outside docker, which means that you'll have to install some dependencies in the host machine.
+There's also `./build.sh ubuntu` which will do the same but in a Ubuntu container, and `./build.sh release` which will build outside docker, which means that you'll have to install some dependencies in the host machine. Both of these build options will have glibc as the only dynamically linked dependency.
+
+We use the Ubuntu-built version in production, mostly due to jemalloc not playing well with Alpine.
 
 ## Testing
 

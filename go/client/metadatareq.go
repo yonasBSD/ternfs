@@ -3,8 +3,8 @@ package client
 import (
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/bincode"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bincode"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

@@ -10,8 +10,8 @@ import (
 	"runtime"
 	"time"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
-	"xtx/ternfs/managedprocess"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/managedprocess"
 	"xtx/ternfs/msgs"
 )
 

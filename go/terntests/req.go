@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/wyhash"
 )
 
 type edge struct {

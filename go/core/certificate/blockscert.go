@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
-	"xtx/ternfs/cbcmac"
+	"xtx/ternfs/core/cbcmac"
 	"xtx/ternfs/msgs"
 )
 

@@ -10,9 +10,9 @@ import (
 	"sort"
 	"unsafe"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/wyhash"
 )
 
 // #include <string.h>

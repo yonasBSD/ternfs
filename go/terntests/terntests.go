@@ -17,13 +17,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
-	lrecover "xtx/ternfs/log/recover"
-	"xtx/ternfs/managedprocess"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/managedprocess"
+	lrecover "xtx/ternfs/core/recover"
+	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/wyhash"
 
 	"golang.org/x/sys/unix"
 )

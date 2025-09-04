@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"path"
 	"strings"
-	"xtx/ternfs/log"
-	"xtx/ternfs/wyhash"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/wyhash"
 )
 
 type largeFileTestOpts struct {

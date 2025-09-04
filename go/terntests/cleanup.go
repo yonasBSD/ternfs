@@ -6,7 +6,7 @@ import (
 	"time"
 	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

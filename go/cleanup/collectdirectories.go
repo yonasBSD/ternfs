@@ -6,10 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
-	lrecover "xtx/ternfs/log/recover"
+	"xtx/ternfs/core/log"
+	lrecover "xtx/ternfs/core/recover"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/timing"
 )
 
 type CollectDirectoriesStats struct {

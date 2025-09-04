@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 )
 
 var stacktraceLock sync.Mutex

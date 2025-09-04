@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"path"
 	"sync"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

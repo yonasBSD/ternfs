@@ -4,8 +4,8 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
-	"xtx/ternfs/assert"
-	"xtx/ternfs/parity"
+	"xtx/ternfs/core/assert"
+	"xtx/ternfs/core/parity"
 )
 
 func TestGet(t *testing.T) {

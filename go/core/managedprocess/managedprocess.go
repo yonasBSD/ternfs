@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

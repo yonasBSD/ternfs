@@ -13,14 +13,14 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/ternfs/bincode"
 	"xtx/ternfs/client"
-	"xtx/ternfs/flags"
-	"xtx/ternfs/log"
-	lrecover "xtx/ternfs/log/recover"
+	"xtx/ternfs/core/bincode"
+	"xtx/ternfs/core/flags"
+	"xtx/ternfs/core/log"
+	lrecover "xtx/ternfs/core/recover"
+	"xtx/ternfs/core/timing"
+	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/timing"
-	"xtx/ternfs/wyhash"
 )
 
 type state struct {

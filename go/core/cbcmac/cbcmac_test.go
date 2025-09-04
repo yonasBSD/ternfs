@@ -3,7 +3,7 @@ package cbcmac
 import (
 	"crypto/aes"
 	"testing"
-	"xtx/ternfs/assert"
+	"xtx/ternfs/core/assert"
 )
 
 // Sanity check to ensure that the block cipher we're using is the correct one

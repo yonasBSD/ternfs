@@ -21,15 +21,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup/scratch"
 	"xtx/ternfs/client"
-	"xtx/ternfs/crc32c"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/crc32c"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/parity"
+	"xtx/ternfs/core/rs"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/parity"
-	"xtx/ternfs/rs"
-	"xtx/ternfs/timing"
 )
 
 type MigrateStats struct {

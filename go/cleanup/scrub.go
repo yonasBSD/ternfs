@@ -5,13 +5,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup/scratch"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
-	lrecover "xtx/ternfs/log/recover"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/log"
+	lrecover "xtx/ternfs/core/recover"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/timing"
 )
 
 type ScrubState struct {

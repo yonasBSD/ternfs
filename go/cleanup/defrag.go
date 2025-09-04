@@ -8,11 +8,11 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup/scratch"
 	"xtx/ternfs/client"
-	"xtx/ternfs/crc32c"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/crc32c"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

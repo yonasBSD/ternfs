@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"xtx/ternfs/bufpool"
-	"xtx/ternfs/crc32c"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/crc32c"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/parity"
+	"xtx/ternfs/core/rs"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/parity"
-	"xtx/ternfs/rs"
-	"xtx/ternfs/timing"
 )
 
 type blockReader struct {

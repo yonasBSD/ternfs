@@ -5,7 +5,7 @@ package msgs
 import (
 	"fmt"
 	"io"
-	"xtx/ternfs/bincode"
+	"xtx/ternfs/core/bincode"
 )
 
 // This file specifies

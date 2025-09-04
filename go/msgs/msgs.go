@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"xtx/ternfs/bincode"
-	"xtx/ternfs/parity"
+	"xtx/ternfs/core/bincode"
+	"xtx/ternfs/core/parity"
 )
 
 //go:generate go run ../bincodegen

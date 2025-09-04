@@ -8,10 +8,10 @@ import (
 	"os"
 	"syscall"
 	"time"
-	"xtx/ternfs/bincode"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bincode"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/timing"
 )
 
 func writeShuckleRequest(log *log.Logger, w io.Writer, req msgs.ShuckleRequest) error {

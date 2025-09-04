@@ -2,7 +2,7 @@ package client
 
 import (
 	"testing"
-	"xtx/ternfs/assert"
+	"xtx/ternfs/core/assert"
 	"xtx/ternfs/msgs"
 )
 

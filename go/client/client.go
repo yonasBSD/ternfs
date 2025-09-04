@@ -25,11 +25,11 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
-	"xtx/ternfs/bincode"
-	"xtx/ternfs/crc32c"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bincode"
+	"xtx/ternfs/core/crc32c"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/timing"
 )
 
 type ReqCounters struct {

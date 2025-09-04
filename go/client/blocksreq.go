@@ -6,7 +6,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

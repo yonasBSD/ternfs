@@ -5,8 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"xtx/ternfs/log"
-	"xtx/ternfs/wyhash"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/wyhash"
 )
 
 type rsyncTestOpts struct {

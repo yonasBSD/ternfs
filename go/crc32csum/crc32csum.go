@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"xtx/ternfs/crc32c"
+	"xtx/ternfs/core/crc32c"
 	"xtx/ternfs/msgs"
 )
 

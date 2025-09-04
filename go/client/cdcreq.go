@@ -3,7 +3,7 @@ package client
 import (
 	"fmt"
 	"net"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

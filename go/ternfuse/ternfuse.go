@@ -13,10 +13,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/flags"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/flags"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 
 	"github.com/hanwen/go-fuse/v2/fs"

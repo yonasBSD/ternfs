@@ -3,11 +3,11 @@ package rs
 import (
 	"fmt"
 	"unsafe"
-	"xtx/ternfs/parity"
+	"xtx/ternfs/core/parity"
 )
 
-// #cgo LDFLAGS: -L${SRCDIR}/../../cpp/build/alpine/rs -lrs
-// #include "../../cpp/rs/rs.h"
+// #cgo LDFLAGS: -L${SRCDIR}/../../../cpp/build/alpine/rs -lrs
+// #include "../../../cpp/rs/rs.h"
 //
 // void set_ptr(uint8_t** ptrs, size_t i, uint8_t* ptr) {
 //     ptrs[i] = ptr;

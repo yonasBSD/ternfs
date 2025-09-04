@@ -5,7 +5,7 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 )
 
 type preadddirOpts struct {

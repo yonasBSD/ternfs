@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 
 	"golang.org/x/sync/errgroup"

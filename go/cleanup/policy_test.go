@@ -3,7 +3,7 @@ package cleanup
 import (
 	"testing"
 	"time"
-	"xtx/ternfs/assert"
+	"xtx/ternfs/core/assert"
 	"xtx/ternfs/msgs"
 )
 

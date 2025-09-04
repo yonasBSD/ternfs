@@ -6,10 +6,10 @@ import (
 	"strings"
 	"sync"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
-	lrecover "xtx/ternfs/log/recover"
+	"xtx/ternfs/core/log"
+	lrecover "xtx/ternfs/core/recover"
+	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
-	"xtx/ternfs/wyhash"
 )
 
 // actions

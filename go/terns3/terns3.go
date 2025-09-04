@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/s3"
 )

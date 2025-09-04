@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import argparse
+import re
 
 go_dir = Path(__file__).resolve().parent
 repo_dir = go_dir.parent
@@ -21,11 +22,19 @@ if args.generate and (args.race or paths):
     os.exit(2)
 
 if not args.generate and len(paths) == 0:
-    for path in os.listdir(str(go_dir)):
-        if path == 'vendor':
-            continue
-        if os.path.isdir(os.path.join(str(go_dir), path)):
-            paths.append(path)
+    vendor_dir = go_dir / 'vendor'
+    pattern = re.compile(r'^package main', re.MULTILINE)
+    paths = set()
+    for root, _, files in os.walk(go_dir):
+        for file in files:
+            if file.endswith('.go'):
+                file_path = os.path.join(root, file)
+                if not file_path.startswith(str(vendor_dir)):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        if pattern.search(content):
+                            paths.add(os.path.dirname(file_path))
+
 
 if 'IN_TERN_BUILD_CONTAINER' not in os.environ:
     container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-03'

@@ -21,16 +21,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/bufpool"
-	"xtx/ternfs/certificate"
 	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
-	"xtx/ternfs/crc32c"
-	"xtx/ternfs/flags"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/certificate"
+	"xtx/ternfs/core/crc32c"
+	"xtx/ternfs/core/flags"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/terncli/filesamples"
-	"xtx/ternfs/timing"
 )
 
 type commandSpec struct {

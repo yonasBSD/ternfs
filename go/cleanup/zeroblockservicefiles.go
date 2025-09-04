@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"xtx/ternfs/client"
-	"xtx/ternfs/log"
+	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
 

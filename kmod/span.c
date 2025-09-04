@@ -253,6 +253,13 @@ static int try_fill_from_page_cache(struct address_space *mapping, struct list_h
     return 0;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+static inline u32 prandom_u32(void)
+{
+	return get_random_u32();
+}
+#endif
+
 // Starts loading up D blocks as necessary.
 static int fetch_span_blocks(struct fetch_span_pages_state* st) {
     int i;

@@ -87,7 +87,7 @@ static int file_open(struct inode* inode, struct file* filp) {
         if (!(filp->f_flags&O_NOATIME)) {
             u64 atime_ns = ktime_get_real_ns();
             struct timespec64 atime_ts = ns_to_timespec64(atime_ns);
-            u64 diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            u64 diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
             if (diff < ternfs_atime_update_interval_sec) {
                 // we don't think we should update
                 goto out;
@@ -102,7 +102,7 @@ static int file_open(struct inode* inode, struct file* filp) {
                 inode_unlock(inode);
                 return err;
             }
-            diff = atime_ts.tv_sec - min(enode->inode.i_atime.tv_sec, atime_ts.tv_sec);
+            diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
             if (diff < ternfs_atime_update_interval_sec) {
                 // out local time changed and we see we don't need to update
                 goto out;
@@ -195,7 +195,11 @@ static bool put_transient_span(struct ternfs_transient_span* span) {
             FREE_PAGES(&span->blocks[b]);
         }
 #undef FREE_PAGES
-        add_mm_counter(span->enode->file.mm, MM_FILEPAGES, -num_pages);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
+        atomic_long_add_return(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
+#else
+        percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -num_pages);   
+#endif 
         if (span->started_flushing) {
             up(&span->enode->file.flushing_span_sema);
         }
@@ -444,7 +448,11 @@ static struct page* alloc_write_page(struct ternfs_inode_file* file) {
     struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
     if (p == NULL) { return p; }
     // This contributes to OOM score.
-    inc_mm_counter(file->mm, MM_FILEPAGES);
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
+    atomic_long_inc_return(&file->mm->rss_stat.count[MM_FILEPAGES]);
+#else
+    percpu_counter_inc(&file->mm->rss_stat[MM_FILEPAGES]);
+#endif
     return p;
 }
 
@@ -1309,11 +1317,154 @@ out:
     return err;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+static void file_readahead(struct readahead_control *rac)
+{
+    struct file *filp = rac->file;
+    struct inode *inode = file_inode(filp);
+    struct ternfs_inode *enode = TERNFS_I(inode);
+    struct page *page;
+    pgoff_t index;
+    loff_t off;
+    unsigned nr_pages = readahead_count(rac);
+    
+    if (nr_pages == 0)
+        return;
+
+    // make sure we have size information
+    int err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+    if (err) { return; }
+        
+    index = readahead_index(rac);
+    off = index << PAGE_SHIFT;
+    
+    ternfs_debug("enode=%p, ino=%ld, index=%lu, offset=%lld, nr_pages=%u", 
+                 enode, inode->i_ino, index, off, nr_pages);
+
+    struct ternfs_span *span = NULL;
+    LIST_HEAD(pages);
+    LIST_HEAD(extra_pages);
+    unsigned pages_allocated = 0;
+
+    // Check if we're out of bounds
+    if (off >= inode->i_size) {
+        // Allocate and zero-fill pages for out-of-bounds requests
+        unsigned i;
+        for (i = 0; i < nr_pages; i++) {
+                
+            page = alloc_page(readahead_gfp_mask(rac->mapping));
+            if (!page)
+                break;
+                
+            page->index = index + i;
+            zero_user_segment(page, 0, PAGE_SIZE);
+            list_add_tail(&page->lru, &pages);
+            pages_allocated++;
+        }
+        goto out_process;
+    }
+
+    // Get the span for this offset
+    span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
+    if (IS_ERR(span)) {
+        ternfs_warn("ternfs_get_span_failed at pos %llu", off);
+        err = PTR_ERR(span);
+        goto out_err;
+    }
+
+    // Allocate pages for readahead
+    unsigned i;
+    for (i = 0; i < nr_pages; i++) {
+        page = alloc_page(readahead_gfp_mask(rac->mapping));
+        if (!page)
+            break;
+            
+        page->index = index + i;
+        list_add(&page->lru, &pages);
+        pages_allocated++;
+    }
+
+    if (pages_allocated == 0)
+        return;
+
+    // Process based on span type
+    if (span->storage_class == TERNFS_INLINE_STORAGE) {
+        struct ternfs_inline_span *inline_span = TERNFS_INLINE_SPAN(span);
+        u64 span_start = span->start;
+        
+        list_for_each_entry(page, &pages, lru) {
+            u64 page_off = page_offset(page);
+            if (page_off >= inode->i_size) {
+                zero_user_segment(page, 0, PAGE_SIZE);
+                continue;
+            }
+            
+            u64 span_offset = page_off - span_start;
+            if (span_offset >= inline_span->len) {
+                zero_user_segment(page, 0, PAGE_SIZE);
+                continue;
+            }
+            
+            size_t to_copy = min((size_t)(inline_span->len - span_offset), (size_t)PAGE_SIZE);
+            char *dst = kmap_atomic(page);
+            memcpy(dst, inline_span->body + span_offset, to_copy);
+            if (to_copy < PAGE_SIZE)
+                memset(dst + to_copy, 0, PAGE_SIZE - to_copy);
+            kunmap_atomic(dst);
+        }
+    } else {
+        struct ternfs_block_span *block_span = TERNFS_BLOCK_SPAN(span);
+        err = ternfs_span_get_pages(block_span, rac->mapping, &pages, pages_allocated, &extra_pages);
+        if (err) {
+            ternfs_warn("readahead of %u pages at off=%lld in file %016lx failed with error %d", 
+                       pages_allocated, off, enode->inode.i_ino, err);
+            put_pages_list(&extra_pages);
+            goto out_err;
+        }
+    }
+
+out_process:
+    // Process the main pages
+    list_for_each_entry(page, &pages, lru) {
+        struct page* rac_page = readahead_page(rac);
+        void* dest = kmap_atomic(rac_page);
+        void* src = kmap_atomic(page);
+        memcpy(dest, src, PAGE_SIZE);
+        kunmap_atomic(src);
+        kunmap_atomic(dest);
+        SetPageUptodate(rac_page);
+        unlock_page(rac_page);
+        put_page(rac_page);
+    }
+    // Process any extra pages
+    process_file_pages(rac->mapping, &extra_pages, 0);
+    put_pages_list(&pages);
+    return;
+
+out_err:
+    put_pages_list(&pages);
+    return;
+}
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+static int file_readfolio(struct file *filp, struct folio *folio) {
+    BUG_ON(folio_nr_pages(folio) != 1);
+    return file_readpage(filp, folio_page(folio, 0));
+}
+#endif 
+
 const struct address_space_operations ternfs_mmap_operations = {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
     .readpages = file_readpages,
+#else
+    .readahead = file_readahead,
 #endif
-    .readpage = file_readpage
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0))
+    .readpage = file_readpage,
+#else
+    .read_folio = file_readfolio,
+#endif
 };
 
 int __init ternfs_file_init(void) {

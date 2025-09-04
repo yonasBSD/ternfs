@@ -1249,15 +1249,16 @@ func createS3ClientFromURL(s3URL string) (client *s3.Client, bucket string) {
 type posixHarness struct {
 	mountPoint string
 }
-type s3Harness struct {}
-type apiHarness struct {}
+type s3Harness struct{}
+type apiHarness struct{}
 
 type WhichHarness interface {
 	isHarness()
 }
+
 func (posixHarness) isHarness() {}
-func (s3Harness) isHarness() {}
-func (apiHarness) isHarness() {}
+func (s3Harness) isHarness()    {}
+func (apiHarness) isHarness()   {}
 
 func fsTest(
 	log *log.Logger,
@@ -1316,8 +1317,8 @@ func fsTest(
 			o.UsePathStyle = true
 		})
 		harness := &s3TestHarness{
-			bucket: "bucket",
-			client: s3Client,
+			bucket:  "bucket",
+			client:  s3Client,
 			bufPool: bufPool,
 		}
 		state := fsTestState[string]{

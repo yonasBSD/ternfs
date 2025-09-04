@@ -80,8 +80,8 @@ func UnpackBytes(r io.Reader, data *[]byte) error {
 // The intent with this one (as opposed with `UnpackBytes`) is
 // to use it with a fixedsized array, e.g.
 //
-//     var x [4]byte
-//     buf.UnpackFixedBytes(4, x[:])
+//	var x [4]byte
+//	buf.UnpackFixedBytes(4, x[:])
 //
 // Which is why it does not take a pointer like `UnpackBytes`,
 // and copies the data.

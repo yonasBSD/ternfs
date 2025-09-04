@@ -89,7 +89,7 @@ func writeBlock(
 
 	initiateSpanReq := msgs.AddSpanAtLocationInitiateReq{
 		LocationId: location,
-		Req: msgs.AddSpanInitiateWithReferenceReq {
+		Req: msgs.AddSpanInitiateWithReferenceReq{
 			Req: msgs.AddSpanInitiateReq{
 				FileId:       lockedScratchFile.FileId(),
 				Cookie:       lockedScratchFile.Cookie(),
@@ -595,7 +595,7 @@ type migrator struct {
 	statsC                    chan MigrateStats
 	stopC                     chan bool
 
-	logOnly bool
+	logOnly             bool
 	failureDomainFilter string
 }
 
@@ -917,7 +917,7 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 				tmpFile := scratch.NewScratchFile(m.log, m.client, shid, fmt.Sprintf("migrator %d for blockservices in shard %v", j, shid))
 				defer tmpFile.Close()
 				blockNotFoundAlert := m.log.NewNCAlert(0)
-				for file := range c{
+				for file := range c {
 					err := error(nil)
 					for {
 						if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {

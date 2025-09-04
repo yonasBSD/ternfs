@@ -637,7 +637,7 @@ type blocksProcessor struct {
 	addr1           net.TCPAddr
 	addr2           net.TCPAddr
 	sourceAddr1     *net.TCPAddr
-	sourceAddr2		*net.TCPAddr
+	sourceAddr2     *net.TCPAddr
 	what            string
 	timeout         **timing.ReqTimeouts
 	_conn           *blocksProcessorConn // this must be loaded through loadConn
@@ -873,7 +873,7 @@ type blocksProcessors struct {
 	// how many bits of the block service id to use for blockServiceKey
 	blockServiceBits uint8
 	// blocksProcessorKey -> *blocksProcessor
-	processors sync.Map
+	processors  sync.Map
 	sourceAddr1 net.TCPAddr
 	sourceAddr2 net.TCPAddr
 }
@@ -983,7 +983,7 @@ type Client struct {
 	addrsRefreshClose    chan (struct{})
 	shuckleConn          *ShuckleConn
 
-	fetchBlockServices	        bool
+	fetchBlockServices          bool
 	blockServicesLock           *sync.RWMutex
 	blockServiceToFailureDomain map[msgs.BlockServiceId]msgs.FailureDomain
 }
@@ -1016,7 +1016,7 @@ func (c *Client) refreshAddrs(log *log.Logger) error {
 	}
 	c.SetAddrs(cdcAddrs, &shardAddrs)
 
-	fetchBlockServices := func () bool {
+	fetchBlockServices := func() bool {
 		c.blockServicesLock.RLock()
 		defer c.blockServicesLock.RUnlock()
 		return c.fetchBlockServices
@@ -1031,7 +1031,7 @@ func (c *Client) refreshAddrs(log *log.Logger) error {
 	}
 	blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
 	var blockServicesToAdd []msgs.BlacklistEntry
-	func () {
+	func() {
 
 		for _, bs := range blockServices.BlockServices {
 			if _, ok := c.blockServiceToFailureDomain[bs.Id]; !ok {
@@ -1146,8 +1146,8 @@ func NewClientDirectNoAddrs(
 				return bytes.NewBuffer([]byte{})
 			},
 		},
-		fetchBlockServices: false,
-		blockServicesLock: &sync.RWMutex{},
+		fetchBlockServices:          false,
+		blockServicesLock:           &sync.RWMutex{},
 		blockServiceToFailureDomain: make(map[msgs.BlockServiceId]msgs.FailureDomain),
 	}
 	c.shardTimeout = &DefaultShardTimeout

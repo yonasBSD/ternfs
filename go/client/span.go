@@ -706,9 +706,9 @@ func (c *Client) fetchMirroredSpan(log *log.Logger,
 	bufPool *bufpool.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-	) (*bufpool.Buf, error){
+) (*bufpool.Buf, error) {
 	body := span.Body.(*msgs.FetchedBlocksSpan)
-	blockSize := uint32(body.Stripes)*uint32(body.CellSize)
+	blockSize := uint32(body.Stripes) * uint32(body.CellSize)
 
 	buf := bufPool.Get(int(span.Header.Size))
 	for i := blockSize; i < span.Header.Size; i++ {
@@ -736,9 +736,9 @@ func (c *Client) fetchRsSpan(log *log.Logger,
 	bufPool *bufpool.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-) (*bufpool.Buf, error){
+) (*bufpool.Buf, error) {
 	body := span.Body.(*msgs.FetchedBlocksSpan)
-	blockSize := uint32(body.Stripes)*uint32(body.CellSize)
+	blockSize := uint32(body.Stripes) * uint32(body.CellSize)
 
 	dataSize := blockSize * uint32(body.Parity.DataBlocks())
 
@@ -758,7 +758,7 @@ func (c *Client) fetchRsSpan(log *log.Logger,
 	}()
 
 scheduleMoreBlocks:
-	for succeedBlocks + inFlightBlocks < dataBlocks && blockIdx < body.Parity.Blocks() {
+	for succeedBlocks+inFlightBlocks < dataBlocks && blockIdx < body.Parity.Blocks() {
 		block := body.Blocks[blockIdx]
 		blockService := &blockServices[block.BlockServiceIx]
 		if !blockService.Flags.CanRead() {
@@ -835,7 +835,6 @@ scheduleMoreBlocks:
 	return buf, nil
 }
 
-
 // The buf we get out must be returned to the bufPool.
 func (c *Client) FetchSpan(
 	log *log.Logger,
@@ -845,15 +844,15 @@ func (c *Client) FetchSpan(
 	span *msgs.FetchedSpan,
 ) (*bufpool.Buf, error) {
 	switch {
-		// inline storage
-		case span.Header.StorageClass == msgs.INLINE_STORAGE:
-			return c.fetchInlineSpan(span.Body.(*msgs.FetchedInlineSpan), span.Header.Crc)
-		// Mirrored replication
-		case span.Body.(*msgs.FetchedBlocksSpan).Parity.DataBlocks() == 1:
-			return c.fetchMirroredSpan(log, bufPool, blockServices, span)
-		// RS replication
-		default:
-			return c.fetchRsSpan(log, bufPool, blockServices, span)
+	// inline storage
+	case span.Header.StorageClass == msgs.INLINE_STORAGE:
+		return c.fetchInlineSpan(span.Body.(*msgs.FetchedInlineSpan), span.Header.Crc)
+	// Mirrored replication
+	case span.Body.(*msgs.FetchedBlocksSpan).Parity.DataBlocks() == 1:
+		return c.fetchMirroredSpan(log, bufPool, blockServices, span)
+	// RS replication
+	default:
+		return c.fetchRsSpan(log, bufPool, blockServices, span)
 	}
 }
 
@@ -934,7 +933,7 @@ type fileReader struct {
 	log           *log.Logger
 	bufPool       *bufpool.BufPool
 	fileId        msgs.InodeId
-	fileSize int64 // if -1, we haven't initialized this yet
+	fileSize      int64 // if -1, we haven't initialized this yet
 	blockServices []msgs.BlockService
 	spans         []msgs.FetchedSpan
 	currentStripe *FetchedStripe
@@ -1000,7 +999,7 @@ func (c *Client) ReadFile(
 		log:           log,
 		bufPool:       bufPool,
 		fileId:        id,
-		fileSize:	   -1,
+		fileSize:      -1,
 		blockServices: blockServices,
 		spans:         spans,
 	}
@@ -1026,7 +1025,7 @@ func (c *Client) FetchFile(
 	}()
 	wg := sync.WaitGroup{}
 	totalSize := 0
-	for i := range len(spans){
+	for i := range len(spans) {
 		totalSize += int(spans[i].Header.Size)
 		wg.Add(1)
 		go func(idx int) {
@@ -1041,7 +1040,7 @@ func (c *Client) FetchFile(
 	}
 	wg.Wait()
 	buf := bufPool.Get(totalSize)
-	for i := range len(spans){
+	for i := range len(spans) {
 		if bufs[i] == nil {
 			bufPool.Put(buf)
 			return nil, fmt.Errorf("failed to fetch file %v", id)
@@ -1050,7 +1049,7 @@ func (c *Client) FetchFile(
 			bufPool.Put(buf)
 			return nil, fmt.Errorf("failed to fetch file %v, span size mismatch", id)
 		}
-		copy(buf.Bytes()[spans[i].Header.ByteOffset:],bufs[i].Bytes());
+		copy(buf.Bytes()[spans[i].Header.ByteOffset:], bufs[i].Bytes())
 	}
 
 	return buf, nil

@@ -344,7 +344,7 @@ func main() {
 					if err := cleanup.DestructFiles(l, c, opts, destructFilesState, shid); err != nil {
 						timesFailed++
 						if timesFailed == 5 {
-							l.RaiseNC(alert, "could not destruct files after 5 attempts. last error: %v", err )
+							l.RaiseNC(alert, "could not destruct files after 5 attempts. last error: %v", err)
 						}
 						l.Info("destructing files in shard %v failed, sleeping for 10 minutes", shid)
 						time.Sleep(10 * time.Minute)

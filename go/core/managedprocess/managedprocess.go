@@ -288,7 +288,7 @@ func (procs *ManagedProcesses) StartBlockService(ll *log.Logger, opts *BlockServ
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
-		"-location", fmt.Sprintf("%d",opts.Location),
+		"-location", fmt.Sprintf("%d", opts.Location),
 		"-addr", opts.Addr1,
 		"-log-file", path.Join(opts.Path, "log"),
 	}
@@ -435,14 +435,14 @@ func (procs *ManagedProcesses) StartShuckle(ll *log.Logger, opts *ShuckleOpts) {
 }
 
 type ShuckleProxyOpts struct {
-	Exe       string
-	Dir       string
-	LogLevel  log.LogLevel
-	Xmon      string
-	Addr1     string
-	Addr2     string
+	Exe            string
+	Dir            string
+	LogLevel       log.LogLevel
+	Xmon           string
+	Addr1          string
+	Addr2          string
 	ShuckleAddress string
-	Location msgs.Location
+	Location       msgs.Location
 }
 
 func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShuckleProxyOpts) {
@@ -451,7 +451,7 @@ func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShucklePr
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-addr", opts.Addr1,
 		"-shuckle-address", opts.ShuckleAddress,
-		"-location", fmt.Sprintf("%d",opts.Location),
+		"-location", fmt.Sprintf("%d", opts.Location),
 	}
 	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
@@ -476,10 +476,10 @@ func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShucklePr
 }
 
 type GoExes struct {
-	ShuckleExe       string
-	BlocksExe        string
-	FuseExe          string
-	ShuckleProxyExe  string
+	ShuckleExe      string
+	BlocksExe       string
+	FuseExe         string
+	ShuckleProxyExe string
 }
 
 func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
@@ -496,10 +496,10 @@ func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
 		panic(fmt.Errorf("could not build shucke/blocks/fuse: %w", err))
 	}
 	return &GoExes{
-		ShuckleExe:       path.Join(goDir(repoDir), "ternshuckle", "ternshuckle"),
-		BlocksExe:        path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
-		FuseExe:          path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
-		ShuckleProxyExe:  path.Join(goDir(repoDir), "ternshuckleproxy", "ternshuckleproxy"),
+		ShuckleExe:      path.Join(goDir(repoDir), "ternshuckle", "ternshuckle"),
+		BlocksExe:       path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
+		FuseExe:         path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
+		ShuckleProxyExe: path.Join(goDir(repoDir), "ternshuckleproxy", "ternshuckleproxy"),
 	}
 }
 

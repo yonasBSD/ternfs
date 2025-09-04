@@ -49,4 +49,3 @@ func (p *Parity) UnmarshalJSON(b []byte) error {
 	*p = MkParity(nums[0], nums[1])
 	return nil
 }
-

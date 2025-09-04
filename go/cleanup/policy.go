@@ -82,7 +82,7 @@ func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.TernT
 				panic(fmt.Errorf("unexpected current edge: %v", edge))
 			}
 			creationTime := edge.CreationTime.Time()
-			if now.Time().Sub(creationTime) > max(policy.DeleteAfterTime.Time(),minEdgeAge) {
+			if now.Time().Sub(creationTime) > max(policy.DeleteAfterTime.Time(), minEdgeAge) {
 				// We found an edge that was created before the time we want.
 				// However, this is not enough: consider the case where we
 				// create a file, then delete it after 3 months. The owning

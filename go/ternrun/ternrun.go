@@ -107,9 +107,9 @@ func main() {
 			CDCExe:   path.Join(*binariesDir, "terncdc"),
 		}
 		goExes = &managedprocess.GoExes{
-			ShuckleExe: path.Join(*binariesDir, "ternshuckle"),
-			BlocksExe:  path.Join(*binariesDir, "ternblocks"),
-			FuseExe:    path.Join(*binariesDir, "ternfuse"),
+			ShuckleExe:      path.Join(*binariesDir, "ternshuckle"),
+			BlocksExe:       path.Join(*binariesDir, "ternblocks"),
+			FuseExe:         path.Join(*binariesDir, "ternfuse"),
 			ShuckleProxyExe: path.Join(*binariesDir, "ternshuckleproxy"),
 		}
 	} else {
@@ -157,13 +157,13 @@ func main() {
 		}
 		procs.StartShuckleProxy(
 			l, &managedprocess.ShuckleProxyOpts{
-				Exe:       goExes.ShuckleProxyExe,
-				LogLevel:  level,
-				Dir:       path.Join(*dataDir, "shuckleproxy"),
-				Xmon:      *xmon,
-				Addr1:     shuckleProxyAddress,
+				Exe:            goExes.ShuckleProxyExe,
+				LogLevel:       level,
+				Dir:            path.Join(*dataDir, "shuckleproxy"),
+				Xmon:           *xmon,
+				Addr1:          shuckleProxyAddress,
 				ShuckleAddress: shuckleAddress,
-				Location: 1,
+				Location:       1,
 			},
 		)
 		numLocations = 2
@@ -184,7 +184,7 @@ func main() {
 	}
 	for loc := uint(0); loc < uint(numLocations); loc++ {
 		shuckleAddressToUse := shuckleAddress
-		if loc == 1{
+		if loc == 1 {
 			shuckleAddressToUse = shuckleProxyAddress
 		}
 
@@ -198,7 +198,7 @@ func main() {
 				Path:             path.Join(*dataDir, dirName),
 				StorageClasses:   storageClasses,
 				FailureDomain:    fmt.Sprintf("%d_%d", i, loc),
-				Location: 		  msgs.Location(loc),
+				Location:         msgs.Location(loc),
 				LogLevel:         level,
 				ShuckleAddress:   shuckleAddressToUse,
 				Profile:          *profile,
@@ -258,7 +258,7 @@ func main() {
 	// Start shards
 	for loc := 0; loc < numLocations; loc++ {
 		shuckleAddressToUse := shuckleAddress
-		if loc == 1{
+		if loc == 1 {
 			shuckleAddressToUse = shuckleProxyAddress
 		}
 		for i := 0; i < 256; i++ {
@@ -301,7 +301,7 @@ func main() {
 	client.WaitForClient(l, shuckleAddress, waitShuckleFor)
 
 	if !*noFuse {
-		for loc :=0; loc < numLocations; loc++ {
+		for loc := 0; loc < numLocations; loc++ {
 			shuckleAddressToUse := shuckleAddress
 			fuseDir := "fuse"
 			if loc == 1 {
@@ -309,12 +309,12 @@ func main() {
 				fuseDir = "fuse1"
 			}
 			fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
-				Exe:               goExes.FuseExe,
-				Path:              path.Join(*dataDir, fuseDir),
-				LogLevel:          level,
-				Wait:              true,
-				ShuckleAddress:    shuckleAddressToUse,
-				Profile:           *profile,
+				Exe:            goExes.FuseExe,
+				Path:           path.Join(*dataDir, fuseDir),
+				LogLevel:       level,
+				Wait:           true,
+				ShuckleAddress: shuckleAddressToUse,
+				Profile:        *profile,
 			})
 
 			fmt.Printf("operational, mounted at %v\n", fuseMountPoint)

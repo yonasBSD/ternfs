@@ -137,7 +137,7 @@ type ternNode struct {
 	id msgs.InodeId
 }
 
-func (n *ternNode)getattr(allowTransient bool, out *fuse.Attr) syscall.Errno {
+func (n *ternNode) getattr(allowTransient bool, out *fuse.Attr) syscall.Errno {
 	logger.Debug("getattr inode=%v", n.id)
 
 	out.Ino = uint64(n.id)
@@ -524,9 +524,8 @@ func (n *ternNode) Rename(ctx context.Context, oldName string, newParent0 fs.Ino
 
 type openFile struct {
 	data *[]byte
-	err error
-	wg sync.WaitGroup
-
+	err  error
+	wg   sync.WaitGroup
 }
 
 func (n *ternNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -552,7 +551,6 @@ func (n *ternNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 			Atime: uint64(time.Now().UnixNano()) | (uint64(1) << 63),
 		})
 	}
-
 
 	return &of, fuse.FOPEN_CACHE_DIR | fuse.FOPEN_KEEP_CACHE, 0
 }
@@ -792,14 +790,14 @@ func main() {
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
 	fuseOptions := &fs.Options{
-		Logger: golog.New(os.Stderr, "fuse", golog.Ldate|golog.Ltime|golog.Lmicroseconds|golog.Lshortfile),
-		AttrTimeout: fileAttrCacheTimeFlag,
+		Logger:       golog.New(os.Stderr, "fuse", golog.Ldate|golog.Ltime|golog.Lmicroseconds|golog.Lshortfile),
+		AttrTimeout:  fileAttrCacheTimeFlag,
 		EntryTimeout: dirAttrCacheTimeFlag,
 		MountOptions: fuse.MountOptions{
-			FsName: "ternfs",
-			Name:   "ternfuse" + mountPoint,
-			MaxWrite: 1<<20,
-			MaxReadAhead: 1<<20,
+			FsName:        "ternfs",
+			Name:          "ternfuse" + mountPoint,
+			MaxWrite:      1 << 20,
+			MaxReadAhead:  1 << 20,
 			DisableXAttrs: true,
 		},
 	}

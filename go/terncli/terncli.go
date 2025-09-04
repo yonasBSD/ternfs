@@ -609,7 +609,7 @@ func main() {
 
 	cpOutofCmd := flag.NewFlagSet("cp-outof", flag.ExitOnError)
 	cpOutofInput := cpOutofCmd.String("i", "", "What to copy from TernFS.")
-	cpOutofId := cpOutofCmd.Uint64("id", 0, "The ID of the file to copy.") // 
+	cpOutofId := cpOutofCmd.Uint64("id", 0, "The ID of the file to copy.") //
 	cpOutofOut := cpOutofCmd.String("o", "", "Where to write the file to. Stdout if empty.")
 	cpOutofRun := func() {
 		out := os.Stdout
@@ -956,10 +956,10 @@ func main() {
 	duPattern := duCmd.String("pattern", "", "If set only measure files matching this regex pattern")
 	duRun := func() {
 		re, err := regexp.Compile(*duPattern)
-    	if err != nil {
-        	fmt.Println("failed to compile regex pattern:", err)
-        	return
-    	}
+		if err != nil {
+			fmt.Println("failed to compile regex pattern:", err)
+			return
+		}
 		var numDirectories uint64
 		var numFiles uint64
 		var totalLogicalSize uint64
@@ -1101,7 +1101,7 @@ func main() {
 	}
 
 	fileLocationsCmd := flag.NewFlagSet("file-locations", flag.ExitOnError)
-	fileLocationsId := fileLocationsCmd.Uint64("id", 0, "ID of the file to query")	
+	fileLocationsId := fileLocationsCmd.Uint64("id", 0, "ID of the file to query")
 	fileLocationsRun := func() {
 		id := msgs.InodeId(*fileLocationsId)
 		c := getClient()
@@ -1123,7 +1123,7 @@ func main() {
 				}
 				locBody := span.Body.(*msgs.FetchedLocations)
 				for _, loc := range locBody.Locations {
-					locationSize[loc.LocationId] +=uint64(loc.CellSize) * uint64(loc.Parity.Blocks()) * uint64(loc.Stripes)					
+					locationSize[loc.LocationId] += uint64(loc.CellSize) * uint64(loc.Parity.Blocks()) * uint64(loc.Stripes)
 				}
 			}
 			if fileSpansResp.NextOffset == 0 {

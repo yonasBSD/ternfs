@@ -259,7 +259,7 @@ func DestructFiles(
 
 	var err error
 	for {
-		workerErr := <- terminateChan
+		workerErr := <-terminateChan
 		if workerErr != nil {
 			// remember first error
 			if err == nil {

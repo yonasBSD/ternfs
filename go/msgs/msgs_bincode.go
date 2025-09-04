@@ -156,99 +156,100 @@ func (fs *FetchedFullSpan) Unpack(r io.Reader) error {
 	}
 	return nil
 }
+
 const (
-	INTERNAL_ERROR TernError = 10
-	FATAL_ERROR TernError = 11
-	TIMEOUT TernError = 12
-	MALFORMED_REQUEST TernError = 13
-	MALFORMED_RESPONSE TernError = 14
-	NOT_AUTHORISED TernError = 15
-	UNRECOGNIZED_REQUEST TernError = 16
-	FILE_NOT_FOUND TernError = 17
-	DIRECTORY_NOT_FOUND TernError = 18
-	NAME_NOT_FOUND TernError = 19
-	EDGE_NOT_FOUND TernError = 20
-	EDGE_IS_LOCKED TernError = 21
-	TYPE_IS_DIRECTORY TernError = 22
-	TYPE_IS_NOT_DIRECTORY TernError = 23
-	BAD_COOKIE TernError = 24
-	INCONSISTENT_STORAGE_CLASS_PARITY TernError = 25
-	LAST_SPAN_STATE_NOT_CLEAN TernError = 26
-	COULD_NOT_PICK_BLOCK_SERVICES TernError = 27
-	BAD_SPAN_BODY TernError = 28
-	SPAN_NOT_FOUND TernError = 29
-	BLOCK_SERVICE_NOT_FOUND TernError = 30
-	CANNOT_CERTIFY_BLOCKLESS_SPAN TernError = 31
-	BAD_NUMBER_OF_BLOCKS_PROOFS TernError = 32
-	BAD_BLOCK_PROOF TernError = 33
-	CANNOT_OVERRIDE_NAME TernError = 34
-	NAME_IS_LOCKED TernError = 35
-	MTIME_IS_TOO_RECENT TernError = 36
-	MISMATCHING_TARGET TernError = 37
-	MISMATCHING_OWNER TernError = 38
-	MISMATCHING_CREATION_TIME TernError = 39
-	DIRECTORY_NOT_EMPTY TernError = 40
-	FILE_IS_TRANSIENT TernError = 41
-	OLD_DIRECTORY_NOT_FOUND TernError = 42
-	NEW_DIRECTORY_NOT_FOUND TernError = 43
-	LOOP_IN_DIRECTORY_RENAME TernError = 44
-	DIRECTORY_HAS_OWNER TernError = 45
-	FILE_IS_NOT_TRANSIENT TernError = 46
-	FILE_NOT_EMPTY TernError = 47
-	CANNOT_REMOVE_ROOT_DIRECTORY TernError = 48
-	FILE_EMPTY TernError = 49
-	CANNOT_REMOVE_DIRTY_SPAN TernError = 50
-	BAD_SHARD TernError = 51
-	BAD_NAME TernError = 52
-	MORE_RECENT_SNAPSHOT_EDGE TernError = 53
-	MORE_RECENT_CURRENT_EDGE TernError = 54
-	BAD_DIRECTORY_INFO TernError = 55
-	DEADLINE_NOT_PASSED TernError = 56
-	SAME_SOURCE_AND_DESTINATION TernError = 57
-	SAME_DIRECTORIES TernError = 58
-	SAME_SHARD TernError = 59
-	BAD_PROTOCOL_VERSION TernError = 60
-	BAD_CERTIFICATE TernError = 61
-	BLOCK_TOO_RECENT_FOR_DELETION TernError = 62
-	BLOCK_FETCH_OUT_OF_BOUNDS TernError = 63
-	BAD_BLOCK_CRC TernError = 64
-	BLOCK_TOO_BIG TernError = 65
-	BLOCK_NOT_FOUND TernError = 66
-	CANNOT_UNSET_DECOMMISSIONED TernError = 67
+	INTERNAL_ERROR                          TernError = 10
+	FATAL_ERROR                             TernError = 11
+	TIMEOUT                                 TernError = 12
+	MALFORMED_REQUEST                       TernError = 13
+	MALFORMED_RESPONSE                      TernError = 14
+	NOT_AUTHORISED                          TernError = 15
+	UNRECOGNIZED_REQUEST                    TernError = 16
+	FILE_NOT_FOUND                          TernError = 17
+	DIRECTORY_NOT_FOUND                     TernError = 18
+	NAME_NOT_FOUND                          TernError = 19
+	EDGE_NOT_FOUND                          TernError = 20
+	EDGE_IS_LOCKED                          TernError = 21
+	TYPE_IS_DIRECTORY                       TernError = 22
+	TYPE_IS_NOT_DIRECTORY                   TernError = 23
+	BAD_COOKIE                              TernError = 24
+	INCONSISTENT_STORAGE_CLASS_PARITY       TernError = 25
+	LAST_SPAN_STATE_NOT_CLEAN               TernError = 26
+	COULD_NOT_PICK_BLOCK_SERVICES           TernError = 27
+	BAD_SPAN_BODY                           TernError = 28
+	SPAN_NOT_FOUND                          TernError = 29
+	BLOCK_SERVICE_NOT_FOUND                 TernError = 30
+	CANNOT_CERTIFY_BLOCKLESS_SPAN           TernError = 31
+	BAD_NUMBER_OF_BLOCKS_PROOFS             TernError = 32
+	BAD_BLOCK_PROOF                         TernError = 33
+	CANNOT_OVERRIDE_NAME                    TernError = 34
+	NAME_IS_LOCKED                          TernError = 35
+	MTIME_IS_TOO_RECENT                     TernError = 36
+	MISMATCHING_TARGET                      TernError = 37
+	MISMATCHING_OWNER                       TernError = 38
+	MISMATCHING_CREATION_TIME               TernError = 39
+	DIRECTORY_NOT_EMPTY                     TernError = 40
+	FILE_IS_TRANSIENT                       TernError = 41
+	OLD_DIRECTORY_NOT_FOUND                 TernError = 42
+	NEW_DIRECTORY_NOT_FOUND                 TernError = 43
+	LOOP_IN_DIRECTORY_RENAME                TernError = 44
+	DIRECTORY_HAS_OWNER                     TernError = 45
+	FILE_IS_NOT_TRANSIENT                   TernError = 46
+	FILE_NOT_EMPTY                          TernError = 47
+	CANNOT_REMOVE_ROOT_DIRECTORY            TernError = 48
+	FILE_EMPTY                              TernError = 49
+	CANNOT_REMOVE_DIRTY_SPAN                TernError = 50
+	BAD_SHARD                               TernError = 51
+	BAD_NAME                                TernError = 52
+	MORE_RECENT_SNAPSHOT_EDGE               TernError = 53
+	MORE_RECENT_CURRENT_EDGE                TernError = 54
+	BAD_DIRECTORY_INFO                      TernError = 55
+	DEADLINE_NOT_PASSED                     TernError = 56
+	SAME_SOURCE_AND_DESTINATION             TernError = 57
+	SAME_DIRECTORIES                        TernError = 58
+	SAME_SHARD                              TernError = 59
+	BAD_PROTOCOL_VERSION                    TernError = 60
+	BAD_CERTIFICATE                         TernError = 61
+	BLOCK_TOO_RECENT_FOR_DELETION           TernError = 62
+	BLOCK_FETCH_OUT_OF_BOUNDS               TernError = 63
+	BAD_BLOCK_CRC                           TernError = 64
+	BLOCK_TOO_BIG                           TernError = 65
+	BLOCK_NOT_FOUND                         TernError = 66
+	CANNOT_UNSET_DECOMMISSIONED             TernError = 67
 	CANNOT_REGISTER_DECOMMISSIONED_OR_STALE TernError = 68
-	BLOCK_TOO_OLD_FOR_WRITE TernError = 69
-	BLOCK_IO_ERROR_DEVICE TernError = 70
-	BLOCK_IO_ERROR_FILE TernError = 71
-	INVALID_REPLICA TernError = 72
-	DIFFERENT_ADDRS_INFO TernError = 73
-	LEADER_PREEMPTED TernError = 74
-	LOG_ENTRY_MISSING TernError = 75
-	LOG_ENTRY_TRIMMED TernError = 76
-	LOG_ENTRY_UNRELEASED TernError = 77
-	LOG_ENTRY_RELEASED TernError = 78
-	AUTO_DECOMMISSION_FORBIDDEN TernError = 79
+	BLOCK_TOO_OLD_FOR_WRITE                 TernError = 69
+	BLOCK_IO_ERROR_DEVICE                   TernError = 70
+	BLOCK_IO_ERROR_FILE                     TernError = 71
+	INVALID_REPLICA                         TernError = 72
+	DIFFERENT_ADDRS_INFO                    TernError = 73
+	LEADER_PREEMPTED                        TernError = 74
+	LOG_ENTRY_MISSING                       TernError = 75
+	LOG_ENTRY_TRIMMED                       TernError = 76
+	LOG_ENTRY_UNRELEASED                    TernError = 77
+	LOG_ENTRY_RELEASED                      TernError = 78
+	AUTO_DECOMMISSION_FORBIDDEN             TernError = 79
 	INCONSISTENT_BLOCK_SERVICE_REGISTRATION TernError = 80
-	SWAP_BLOCKS_INLINE_STORAGE TernError = 81
-	SWAP_BLOCKS_MISMATCHING_SIZE TernError = 82
-	SWAP_BLOCKS_MISMATCHING_STATE TernError = 83
-	SWAP_BLOCKS_MISMATCHING_CRC TernError = 84
-	SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE TernError = 85
-	SWAP_SPANS_INLINE_STORAGE TernError = 86
-	SWAP_SPANS_MISMATCHING_SIZE TernError = 87
-	SWAP_SPANS_NOT_CLEAN TernError = 88
-	SWAP_SPANS_MISMATCHING_CRC TernError = 89
-	SWAP_SPANS_MISMATCHING_BLOCKS TernError = 90
-	EDGE_NOT_OWNED TernError = 91
-	CANNOT_CREATE_DB_SNAPSHOT TernError = 92
-	BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE TernError = 93
-	SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN TernError = 94
-	TRANSIENT_LOCATION_COUNT TernError = 95
-	ADD_SPAN_LOCATION_INLINE_STORAGE TernError = 96
-	ADD_SPAN_LOCATION_MISMATCHING_SIZE TernError = 97
-	ADD_SPAN_LOCATION_NOT_CLEAN TernError = 98
-	ADD_SPAN_LOCATION_MISMATCHING_CRC TernError = 99
-	ADD_SPAN_LOCATION_EXISTS TernError = 100
-	SWAP_BLOCKS_MISMATCHING_LOCATION TernError = 101
+	SWAP_BLOCKS_INLINE_STORAGE              TernError = 81
+	SWAP_BLOCKS_MISMATCHING_SIZE            TernError = 82
+	SWAP_BLOCKS_MISMATCHING_STATE           TernError = 83
+	SWAP_BLOCKS_MISMATCHING_CRC             TernError = 84
+	SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE     TernError = 85
+	SWAP_SPANS_INLINE_STORAGE               TernError = 86
+	SWAP_SPANS_MISMATCHING_SIZE             TernError = 87
+	SWAP_SPANS_NOT_CLEAN                    TernError = 88
+	SWAP_SPANS_MISMATCHING_CRC              TernError = 89
+	SWAP_SPANS_MISMATCHING_BLOCKS           TernError = 90
+	EDGE_NOT_OWNED                          TernError = 91
+	CANNOT_CREATE_DB_SNAPSHOT               TernError = 92
+	BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE    TernError = 93
+	SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN    TernError = 94
+	TRANSIENT_LOCATION_COUNT                TernError = 95
+	ADD_SPAN_LOCATION_INLINE_STORAGE        TernError = 96
+	ADD_SPAN_LOCATION_MISMATCHING_SIZE      TernError = 97
+	ADD_SPAN_LOCATION_NOT_CLEAN             TernError = 98
+	ADD_SPAN_LOCATION_MISMATCHING_CRC       TernError = 99
+	ADD_SPAN_LOCATION_EXISTS                TernError = 100
+	SWAP_BLOCKS_MISMATCHING_LOCATION        TernError = 101
 )
 
 func (err TernError) String() string {
@@ -537,52 +538,51 @@ func (k ShardMessageKind) String() string {
 	}
 }
 
-
 const (
-	LOOKUP ShardMessageKind = 0x1
-	STAT_FILE ShardMessageKind = 0x2
-	STAT_DIRECTORY ShardMessageKind = 0x4
-	READ_DIR ShardMessageKind = 0x5
-	CONSTRUCT_FILE ShardMessageKind = 0x6
-	ADD_SPAN_INITIATE ShardMessageKind = 0x7
-	ADD_SPAN_CERTIFY ShardMessageKind = 0x8
-	LINK_FILE ShardMessageKind = 0x9
-	SOFT_UNLINK_FILE ShardMessageKind = 0xA
-	LOCAL_FILE_SPANS ShardMessageKind = 0xB
-	SAME_DIRECTORY_RENAME ShardMessageKind = 0xC
-	ADD_INLINE_SPAN ShardMessageKind = 0x10
-	SET_TIME ShardMessageKind = 0x11
-	FULL_READ_DIR ShardMessageKind = 0x73
-	MOVE_SPAN ShardMessageKind = 0x7B
-	REMOVE_NON_OWNED_EDGE ShardMessageKind = 0x74
-	SAME_SHARD_HARD_FILE_UNLINK ShardMessageKind = 0x75
-	STAT_TRANSIENT_FILE ShardMessageKind = 0x3
-	SHARD_SNAPSHOT ShardMessageKind = 0x12
-	FILE_SPANS ShardMessageKind = 0x14
-	ADD_SPAN_LOCATION ShardMessageKind = 0x15
-	SCRAP_TRANSIENT_FILE ShardMessageKind = 0x16
-	SET_DIRECTORY_INFO ShardMessageKind = 0xD
-	VISIT_DIRECTORIES ShardMessageKind = 0x70
-	VISIT_FILES ShardMessageKind = 0x71
-	VISIT_TRANSIENT_FILES ShardMessageKind = 0x72
-	REMOVE_SPAN_INITIATE ShardMessageKind = 0x76
-	REMOVE_SPAN_CERTIFY ShardMessageKind = 0x77
-	SWAP_BLOCKS ShardMessageKind = 0x78
-	BLOCK_SERVICE_FILES ShardMessageKind = 0x79
-	REMOVE_INODE ShardMessageKind = 0x7A
+	LOOKUP                           ShardMessageKind = 0x1
+	STAT_FILE                        ShardMessageKind = 0x2
+	STAT_DIRECTORY                   ShardMessageKind = 0x4
+	READ_DIR                         ShardMessageKind = 0x5
+	CONSTRUCT_FILE                   ShardMessageKind = 0x6
+	ADD_SPAN_INITIATE                ShardMessageKind = 0x7
+	ADD_SPAN_CERTIFY                 ShardMessageKind = 0x8
+	LINK_FILE                        ShardMessageKind = 0x9
+	SOFT_UNLINK_FILE                 ShardMessageKind = 0xA
+	LOCAL_FILE_SPANS                 ShardMessageKind = 0xB
+	SAME_DIRECTORY_RENAME            ShardMessageKind = 0xC
+	ADD_INLINE_SPAN                  ShardMessageKind = 0x10
+	SET_TIME                         ShardMessageKind = 0x11
+	FULL_READ_DIR                    ShardMessageKind = 0x73
+	MOVE_SPAN                        ShardMessageKind = 0x7B
+	REMOVE_NON_OWNED_EDGE            ShardMessageKind = 0x74
+	SAME_SHARD_HARD_FILE_UNLINK      ShardMessageKind = 0x75
+	STAT_TRANSIENT_FILE              ShardMessageKind = 0x3
+	SHARD_SNAPSHOT                   ShardMessageKind = 0x12
+	FILE_SPANS                       ShardMessageKind = 0x14
+	ADD_SPAN_LOCATION                ShardMessageKind = 0x15
+	SCRAP_TRANSIENT_FILE             ShardMessageKind = 0x16
+	SET_DIRECTORY_INFO               ShardMessageKind = 0xD
+	VISIT_DIRECTORIES                ShardMessageKind = 0x70
+	VISIT_FILES                      ShardMessageKind = 0x71
+	VISIT_TRANSIENT_FILES            ShardMessageKind = 0x72
+	REMOVE_SPAN_INITIATE             ShardMessageKind = 0x76
+	REMOVE_SPAN_CERTIFY              ShardMessageKind = 0x77
+	SWAP_BLOCKS                      ShardMessageKind = 0x78
+	BLOCK_SERVICE_FILES              ShardMessageKind = 0x79
+	REMOVE_INODE                     ShardMessageKind = 0x7A
 	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
-	REMOVE_ZERO_BLOCK_SERVICE_FILES ShardMessageKind = 0x7D
-	SWAP_SPANS ShardMessageKind = 0x7E
-	SAME_DIRECTORY_RENAME_SNAPSHOT ShardMessageKind = 0x7F
-	ADD_SPAN_AT_LOCATION_INITIATE ShardMessageKind = 0x13
-	CREATE_DIRECTORY_INODE ShardMessageKind = 0x80
-	SET_DIRECTORY_OWNER ShardMessageKind = 0x81
-	REMOVE_DIRECTORY_OWNER ShardMessageKind = 0x89
-	CREATE_LOCKED_CURRENT_EDGE ShardMessageKind = 0x82
-	LOCK_CURRENT_EDGE ShardMessageKind = 0x83
-	UNLOCK_CURRENT_EDGE ShardMessageKind = 0x84
-	REMOVE_OWNED_SNAPSHOT_FILE_EDGE ShardMessageKind = 0x86
-	MAKE_FILE_TRANSIENT ShardMessageKind = 0x87
+	REMOVE_ZERO_BLOCK_SERVICE_FILES  ShardMessageKind = 0x7D
+	SWAP_SPANS                       ShardMessageKind = 0x7E
+	SAME_DIRECTORY_RENAME_SNAPSHOT   ShardMessageKind = 0x7F
+	ADD_SPAN_AT_LOCATION_INITIATE    ShardMessageKind = 0x13
+	CREATE_DIRECTORY_INODE           ShardMessageKind = 0x80
+	SET_DIRECTORY_OWNER              ShardMessageKind = 0x81
+	REMOVE_DIRECTORY_OWNER           ShardMessageKind = 0x89
+	CREATE_LOCKED_CURRENT_EDGE       ShardMessageKind = 0x82
+	LOCK_CURRENT_EDGE                ShardMessageKind = 0x83
+	UNLOCK_CURRENT_EDGE              ShardMessageKind = 0x84
+	REMOVE_OWNED_SNAPSHOT_FILE_EDGE  ShardMessageKind = 0x86
+	MAKE_FILE_TRANSIENT              ShardMessageKind = 0x87
 )
 
 var AllShardMessageKind = [...]ShardMessageKind{
@@ -750,15 +750,14 @@ func (k CDCMessageKind) String() string {
 	}
 }
 
-
 const (
-	MAKE_DIRECTORY CDCMessageKind = 0x1
-	RENAME_FILE CDCMessageKind = 0x2
-	SOFT_UNLINK_DIRECTORY CDCMessageKind = 0x3
-	RENAME_DIRECTORY CDCMessageKind = 0x4
-	HARD_UNLINK_DIRECTORY CDCMessageKind = 0x5
+	MAKE_DIRECTORY               CDCMessageKind = 0x1
+	RENAME_FILE                  CDCMessageKind = 0x2
+	SOFT_UNLINK_DIRECTORY        CDCMessageKind = 0x3
+	RENAME_DIRECTORY             CDCMessageKind = 0x4
+	HARD_UNLINK_DIRECTORY        CDCMessageKind = 0x5
 	CROSS_SHARD_HARD_UNLINK_FILE CDCMessageKind = 0x6
-	CDC_SNAPSHOT CDCMessageKind = 0x7
+	CDC_SNAPSHOT                 CDCMessageKind = 0x7
 )
 
 var AllCDCMessageKind = [...]CDCMessageKind{
@@ -857,36 +856,35 @@ func (k ShuckleMessageKind) String() string {
 	}
 }
 
-
 const (
-	LOCAL_SHARDS ShuckleMessageKind = 0x3
-	LOCAL_CDC ShuckleMessageKind = 0x7
-	INFO ShuckleMessageKind = 0x8
-	SHUCKLE ShuckleMessageKind = 0xF
-	LOCAL_CHANGED_BLOCK_SERVICES ShuckleMessageKind = 0x22
-	CREATE_LOCATION ShuckleMessageKind = 0x1
-	RENAME_LOCATION ShuckleMessageKind = 0x2
-	LOCATIONS ShuckleMessageKind = 0x5
-	REGISTER_SHARD ShuckleMessageKind = 0x4
-	REGISTER_CDC ShuckleMessageKind = 0x6
-	SET_BLOCK_SERVICE_FLAGS ShuckleMessageKind = 0x9
-	REGISTER_BLOCK_SERVICES ShuckleMessageKind = 0xA
-	CHANGED_BLOCK_SERVICES_AT_LOCATION ShuckleMessageKind = 0xB
-	SHARDS_AT_LOCATION ShuckleMessageKind = 0xC
-	CDC_AT_LOCATION ShuckleMessageKind = 0xD
+	LOCAL_SHARDS                        ShuckleMessageKind = 0x3
+	LOCAL_CDC                           ShuckleMessageKind = 0x7
+	INFO                                ShuckleMessageKind = 0x8
+	SHUCKLE                             ShuckleMessageKind = 0xF
+	LOCAL_CHANGED_BLOCK_SERVICES        ShuckleMessageKind = 0x22
+	CREATE_LOCATION                     ShuckleMessageKind = 0x1
+	RENAME_LOCATION                     ShuckleMessageKind = 0x2
+	LOCATIONS                           ShuckleMessageKind = 0x5
+	REGISTER_SHARD                      ShuckleMessageKind = 0x4
+	REGISTER_CDC                        ShuckleMessageKind = 0x6
+	SET_BLOCK_SERVICE_FLAGS             ShuckleMessageKind = 0x9
+	REGISTER_BLOCK_SERVICES             ShuckleMessageKind = 0xA
+	CHANGED_BLOCK_SERVICES_AT_LOCATION  ShuckleMessageKind = 0xB
+	SHARDS_AT_LOCATION                  ShuckleMessageKind = 0xC
+	CDC_AT_LOCATION                     ShuckleMessageKind = 0xD
 	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED ShuckleMessageKind = 0x11
-	CDC_REPLICAS_DE_PR_EC_AT_ED ShuckleMessageKind = 0x13
-	ALL_SHARDS ShuckleMessageKind = 0x14
-	DECOMMISSION_BLOCK_SERVICE ShuckleMessageKind = 0x15
-	MOVE_SHARD_LEADER ShuckleMessageKind = 0x16
-	CLEAR_SHARD_INFO ShuckleMessageKind = 0x17
-	SHARD_BLOCK_SERVICES ShuckleMessageKind = 0x18
-	ALL_CDC ShuckleMessageKind = 0x19
-	ERASE_DECOMMISSIONED_BLOCK ShuckleMessageKind = 0x20
-	ALL_BLOCK_SERVICES_DEPRECATED ShuckleMessageKind = 0x21
-	MOVE_CDC_LEADER ShuckleMessageKind = 0x23
-	CLEAR_CDC_INFO ShuckleMessageKind = 0x24
-	UPDATE_BLOCK_SERVICE_PATH ShuckleMessageKind = 0x25
+	CDC_REPLICAS_DE_PR_EC_AT_ED         ShuckleMessageKind = 0x13
+	ALL_SHARDS                          ShuckleMessageKind = 0x14
+	DECOMMISSION_BLOCK_SERVICE          ShuckleMessageKind = 0x15
+	MOVE_SHARD_LEADER                   ShuckleMessageKind = 0x16
+	CLEAR_SHARD_INFO                    ShuckleMessageKind = 0x17
+	SHARD_BLOCK_SERVICES                ShuckleMessageKind = 0x18
+	ALL_CDC                             ShuckleMessageKind = 0x19
+	ERASE_DECOMMISSIONED_BLOCK          ShuckleMessageKind = 0x20
+	ALL_BLOCK_SERVICES_DEPRECATED       ShuckleMessageKind = 0x21
+	MOVE_CDC_LEADER                     ShuckleMessageKind = 0x23
+	CLEAR_CDC_INFO                      ShuckleMessageKind = 0x24
+	UPDATE_BLOCK_SERVICE_PATH           ShuckleMessageKind = 0x25
 )
 
 var AllShuckleMessageKind = [...]ShuckleMessageKind{
@@ -1004,14 +1002,13 @@ func (k BlocksMessageKind) String() string {
 	}
 }
 
-
 const (
-	FETCH_BLOCK BlocksMessageKind = 0x2
-	WRITE_BLOCK BlocksMessageKind = 0x3
+	FETCH_BLOCK          BlocksMessageKind = 0x2
+	WRITE_BLOCK          BlocksMessageKind = 0x3
 	FETCH_BLOCK_WITH_CRC BlocksMessageKind = 0x4
-	ERASE_BLOCK BlocksMessageKind = 0x1
-	TEST_WRITE BlocksMessageKind = 0x5
-	CHECK_BLOCK BlocksMessageKind = 0x6
+	ERASE_BLOCK          BlocksMessageKind = 0x1
+	TEST_WRITE           BlocksMessageKind = 0x5
+	CHECK_BLOCK          BlocksMessageKind = 0x6
 )
 
 var AllBlocksMessageKind = [...]BlocksMessageKind{
@@ -1065,14 +1062,13 @@ func (k LogMessageKind) String() string {
 	}
 }
 
-
 const (
-	LOG_WRITE LogMessageKind = 0x1
-	RELEASE LogMessageKind = 0x2
-	LOG_READ LogMessageKind = 0x3
-	NEW_LEADER LogMessageKind = 0x4
+	LOG_WRITE          LogMessageKind = 0x1
+	RELEASE            LogMessageKind = 0x2
+	LOG_READ           LogMessageKind = 0x3
+	NEW_LEADER         LogMessageKind = 0x4
 	NEW_LEADER_CONFIRM LogMessageKind = 0x5
-	LOG_RECOVERY_READ LogMessageKind = 0x6
+	LOG_RECOVERY_READ  LogMessageKind = 0x6
 	LOG_RECOVERY_WRITE LogMessageKind = 0x7
 )
 
@@ -6797,4 +6793,3 @@ func (v *LogRecoveryWriteResp) Unpack(r io.Reader) error {
 	}
 	return nil
 }
-

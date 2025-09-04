@@ -962,9 +962,9 @@ func main() {
 			DBToolsExe: path.Join(*binariesDir, "terndbtools"),
 		}
 		goExes = &managedprocess.GoExes{
-			ShuckleExe:       path.Join(*binariesDir, "ternshuckle"),
-			BlocksExe:        path.Join(*binariesDir, "ternblocks"),
-			FuseExe:          path.Join(*binariesDir, "ternfuse"),
+			ShuckleExe: path.Join(*binariesDir, "ternshuckle"),
+			BlocksExe:  path.Join(*binariesDir, "ternblocks"),
+			FuseExe:    path.Join(*binariesDir, "ternfuse"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")

@@ -192,7 +192,7 @@ TODO add migrator, gc, and so on to the above.
 
 Most of the codebase is understandable by VS Code/LSP:
 
-* Code in `go/` just works out of the box with the [Go extension](https://code.visualstudio.com/docs/languages/go). I (fmazzol) open a separate VS Code window which specifically has the `ternfs/go` directory open, since the Go extension doesn't seem to like working from a subdirectory.
+* Code in `go/` just works out of the box with the [Go extension](https://code.visualstudio.com/docs/languages/go). I (@bitonic) open a separate VS Code window which specifically has the `ternfs/go` directory open, since the Go extension doesn't seem to like working from a subdirectory.
 * Code in `cpp/`:
     - Disable existing C++ integrations for VS Code (I don't remember which exact C++ extension caused me trouble -- something by Microsoft itself).
     - Install the [clangd extension](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd).

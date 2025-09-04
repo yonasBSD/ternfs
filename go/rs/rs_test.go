@@ -5,10 +5,11 @@ import (
 	"sort"
 	"testing"
 	"xtx/ternfs/assert"
+	"xtx/ternfs/parity"
 )
 
 func TestGet(t *testing.T) {
-	parity := MkParity(10, 4)
+	parity := parity.MkParity(10, 4)
 	rs := Get(parity)
 	assert.Equal(t, parity, rs.Parity())
 }

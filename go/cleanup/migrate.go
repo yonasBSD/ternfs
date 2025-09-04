@@ -26,6 +26,7 @@ import (
 	"xtx/ternfs/crc32c"
 	"xtx/ternfs/lib"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/parity"
 	"xtx/ternfs/rs"
 )
 
@@ -95,7 +96,7 @@ func writeBlock(
 				Crc:          block.Crc,
 				StorageClass: storageClass,
 				Blacklist:    blacklist[:],
-				Parity:       rs.MkParity(1, 0),
+				Parity:       parity.MkParity(1, 0),
 				Stripes:      1,
 				CellSize:     blockSize,
 				Crcs:         []msgs.Crc{block.Crc},
@@ -170,7 +171,7 @@ func reconstructBlock(
 	blockSize uint32,
 	storageClass msgs.StorageClass,
 	location msgs.Location,
-	parity rs.Parity,
+	parity parity.Parity,
 	blocks []msgs.FetchedBlock,
 	blockToMigrateIx uint8,
 	blocksToMigrateIxs []uint8, // the other blocks to migrate

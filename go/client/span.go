@@ -11,6 +11,7 @@ import (
 	"xtx/ternfs/crc32c"
 	"xtx/ternfs/lib"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/parity"
 	"xtx/ternfs/rs"
 )
 
@@ -95,7 +96,7 @@ func ensureLen(buf *[]byte, l int) {
 }
 
 type SpanParameters struct {
-	Parity       rs.Parity
+	Parity       parity.Parity
 	StorageClass msgs.StorageClass
 	Stripes      uint8
 	CellSize     uint32

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 	"xtx/ternfs/bincode"
-	"xtx/ternfs/rs"
+	"xtx/ternfs/parity"
 )
 
 //go:generate go run ../bincodegen
@@ -801,7 +801,7 @@ type AddSpanInitiateReq struct {
 	// service (because it noticed that it is broken before shuckle/shard did, or
 	// because of some transient network problem, or...).
 	Blacklist []BlacklistEntry
-	Parity    rs.Parity
+	Parity    parity.Parity
 	Stripes   uint8 // [1, 15]
 	CellSize  uint32
 	// Stripes x Parity.Blocks() array with the CRCs for every cell -- row-major.
@@ -953,7 +953,7 @@ func (f *FetchedInlineSpan) String() string {
 }
 
 type FetchedBlocksSpan struct {
-	Parity     rs.Parity
+	Parity     parity.Parity
 	Stripes    uint8 // [0, 16)
 	CellSize   uint32
 	Blocks     []FetchedBlock
@@ -1018,7 +1018,7 @@ type FetchedSpanHeaderFull struct {
 type FetchedBlockServices struct {
 	LocationId   Location
 	StorageClass StorageClass
-	Parity       rs.Parity
+	Parity       parity.Parity
 	Stripes      uint8 // [0, 16)
 	CellSize     uint32
 	Blocks       []FetchedBlock
@@ -1697,7 +1697,7 @@ func (p *BlockPolicy) Pick(size uint32) (entry *BlockPolicyEntry) {
 
 type SpanPolicyEntry struct {
 	MaxSize uint32
-	Parity  rs.Parity
+	Parity  parity.Parity
 }
 
 type SpanPolicy struct {
@@ -1901,7 +1901,7 @@ type AddSpanAtLocationInitiateEntry struct {
 	Size          uint32
 	Crc           Crc
 	StorageClass  StorageClass
-	Parity        rs.Parity
+	Parity        parity.Parity
 	Stripes       uint8 // [1, 16]
 	CellSize      uint32
 	BodyBlocks    []EntryNewBlockInfo
@@ -1915,7 +1915,7 @@ type AddSpanInitiateEntry struct {
 	Size          uint32
 	Crc           Crc
 	StorageClass  StorageClass
-	Parity        rs.Parity
+	Parity        parity.Parity
 	Stripes       uint8 // [1, 16]
 	CellSize      uint32
 	BodyBlocks    []EntryNewBlockInfo

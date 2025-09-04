@@ -56,7 +56,7 @@ TODO decorate list below with links drilling down on specific concepts.
           * file to blocks mapping
           * block service to file mapping
         * UDP bincode req/resp
-        * state persisted through RocksDB, currently single physical instance per logical instance, will move to a Paxos (or similar) cluster per logical instance (see #56)
+        * state persisted through RocksDB with 5-node distributed consensus through LogsDB
         * communicates with shuckle to fetch block services, register itself, insert statistics
     * **CDC**
       * 1 logical instance
@@ -70,14 +70,14 @@ TODO decorate list below with links drilling down on specific concepts.
       * very little state required
         * information about which transactions are currently being executed and which are queued (currently transactions are executed serially)
         * directory -> parent directory mapping to perform "no loops" checks
-      * state persisted through RocksDB, currently single physical instance, will move to Paxos or similar just like shards (see #56)
+      * state persisted through RocksDB with 5-node distributed consensus through LogsDB
       * communicates with the shards to perform the cross-directory actions
       * communicates with shuckle to register itself, fetch shards, insert statistics
   * **block service**
     * up to 1 million logical instances
     * 1 logical instance = 1 disk
-    * 1 physical instance handles ~100 logical instances (since there are ~100 disks per server)
-    * `ternblocks`, Go binary (for now, will be rewritten in C++ eventually)
+    * 1 physical instance handles all the disks in the server it's running on
+    * `ternblocks`, Go binary (for now, might become C++ in the future if performance requires it)
     * stores "blocks", which are blobs of data which contain file contents
     * each file is split in many blocks stored on many block services (so that if up to 4 block services fail we can always recover files)
     * single instances are not redundant, the redundancy is handled by spreading files over many instances so that we can recover their contents
@@ -98,14 +98,17 @@ TODO decorate list below with links drilling down on specific concepts.
   * **FUSE**
     * `ternfuse`, Go FUSE implementation of a TernFS client
     * much slower but should be almost fully functional (there are some limitations concerning when a file gets flushed)
-* **daemons**, these also talk to all of the servers
+  * **S3**
+    * `terns3`, Go implementation of the S3 API
+    * minimal example intended as a start point for a more serious implementation
+* **daemons**, these also talk to all of the servers, and all live in `terngc`
   * **GC**
-    * `terngc`, Go binary
     * permanently deletes expired snapshots (i.e. deleted but not yet purged data)
     * cleans up all blocks for permanently deleted files
   * **scrubber**
-    * TODO see #32
     * goes around detecting and repairing bitrot
+  * **migrator**
+    * evacuates failed disks
 * **additional tools**
   * `ternrun`, a tool to quickly spin up a TernFS instance
   * `terntests`, runs some integration tests

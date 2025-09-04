@@ -162,8 +162,8 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 		fresh:  &fresh,
 	}
 
-	cg.pline(fmt.Sprintf("func (v *%s) Pack(w io.Writer) error {", t.Name()))
-	cg.uline(fmt.Sprintf("func (v *%s) Unpack(r io.Reader) error {", t.Name()))
+	cg.pline(fmt.Sprintf("\nfunc (v *%s) Pack(w io.Writer) error {", t.Name()))
+	cg.uline(fmt.Sprintf("\nfunc (v *%s) Unpack(r io.Reader) error {", t.Name()))
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
 		cg.genInSlice(&subexpr{
@@ -174,22 +174,22 @@ func generateGoSingle(out io.Writer, t reflect.Type) {
 	}
 	cg.pline("\treturn nil")
 	cg.uline("\treturn nil")
-	cg.pline("}\n")
-	cg.uline("}\n")
+	cg.pline("}")
+	cg.uline("}")
 
 	out.Write(cg.pack.Bytes())
 	out.Write(cg.unpack.Bytes())
 }
 
 func generateGoReqResp(out io.Writer, rr reqRespType, enumType string, reqKindFun string, respKindFun string) {
-	fmt.Fprintf(out, "func (v *%s) %s() %s {\n", rr.req.Name(), reqKindFun, enumType)
+	fmt.Fprintf(out, "\nfunc (v *%s) %s() %s {\n", rr.req.Name(), reqKindFun, enumType)
 	fmt.Fprintf(out, "\treturn %s\n", reqRespEnum(rr))
-	fmt.Fprintf(out, "}\n\n")
+	fmt.Fprintf(out, "}\n")
 	generateGoSingle(out, rr.req)
 
-	fmt.Fprintf(out, "func (v *%s) %s() %s {\n", rr.resp.Name(), respKindFun, enumType)
+	fmt.Fprintf(out, "\nfunc (v *%s) %s() %s {\n", rr.resp.Name(), respKindFun, enumType)
 	fmt.Fprintf(out, "\treturn %s\n", reqRespEnum(rr))
-	fmt.Fprintf(out, "}\n\n")
+	fmt.Fprintf(out, "}\n")
 	generateGoSingle(out, rr.resp)
 }
 
@@ -215,7 +215,7 @@ func reqRespEnum(rr reqRespType) string {
 func generateGoMsgKind(out io.Writer, kindTypeName string, reqInterface string, respInterface string, mkName string, reqResps []reqRespType) {
 	seenKinds := map[uint8]bool{}
 
-	fmt.Fprintf(out, "func (k %s) String() string {\n", kindTypeName)
+	fmt.Fprintf(out, "\nfunc (k %s) String() string {\n", kindTypeName)
 	fmt.Fprintf(out, "\tswitch k {\n")
 	for _, reqResp := range reqResps {
 		present := seenKinds[reqResp.kind]
@@ -230,12 +230,15 @@ func generateGoMsgKind(out io.Writer, kindTypeName string, reqInterface string, 
 	fmt.Fprintf(out, "\t}\n")
 	fmt.Fprintf(out, "}\n\n")
 
-	fmt.Fprintf(out, "\n")
-
+	maxIdentLen := 0
+	for _, reqResp := range reqResps {
+		maxIdentLen = max(maxIdentLen, len(reqRespEnum(reqResp)))
+	}
 	maxMessageKind := uint8(0)
 	fmt.Fprintf(out, "const (\n")
 	for _, reqResp := range reqResps {
-		fmt.Fprintf(out, "\t%s %s = 0x%X\n", reqRespEnum(reqResp), kindTypeName, reqResp.kind)
+		padding := strings.Repeat(" ", maxIdentLen-len(reqRespEnum(reqResp)))
+		fmt.Fprintf(out, "\t%s%s %s = 0x%X\n", reqRespEnum(reqResp), padding, kindTypeName, reqResp.kind)
 		if reqResp.kind > maxMessageKind {
 			maxMessageKind = reqResp.kind
 		}
@@ -259,7 +262,7 @@ func generateGoMsgKind(out io.Writer, kindTypeName string, reqInterface string, 
 	fmt.Fprintf(out, "\tdefault:\n")
 	fmt.Fprintf(out, "\t\treturn nil, nil, fmt.Errorf(\"bad kind string %%s\", k)\n")
 	fmt.Fprintf(out, "\t}\n")
-	fmt.Fprintf(out, "}\n\n")
+	fmt.Fprintf(out, "}\n")
 }
 
 type reqRespType struct {
@@ -273,11 +276,15 @@ const ternErrorCodeOffset = 10
 
 func generateGoErrorCodes(out io.Writer, errors []string) {
 	fmt.Fprintf(out, "const (\n")
-	for i, err := range errors {
-		fmt.Fprintf(out, "\t%s TernError = %d\n", err, i+ternErrorCodeOffset)
+	maxIdentLen := 0
+	for _, err := range errors {
+		maxIdentLen = max(maxIdentLen, len(err))
 	}
-	fmt.Fprintf(out, ")\n")
-	fmt.Fprintf(out, "\n")
+	for i, err := range errors {
+		padding := strings.Repeat(" ", maxIdentLen-len(err))
+		fmt.Fprintf(out, "\t%s %sTernError = %d\n", err, padding, i+ternErrorCodeOffset)
+	}
+	fmt.Fprintf(out, ")\n\n")
 
 	fmt.Fprintf(out, "func (err TernError) String() string {\n")
 	fmt.Fprintf(out, "\tswitch err {\n")
@@ -288,7 +295,7 @@ func generateGoErrorCodes(out io.Writer, errors []string) {
 	fmt.Fprintf(out, "\tdefault:\n")
 	fmt.Fprintf(out, "\t\treturn fmt.Sprintf(\"TernError(%%d)\", err)\n")
 	fmt.Fprintf(out, "\t}\n")
-	fmt.Fprintf(out, "}\n\n")
+	fmt.Fprintf(out, "}\n")
 }
 
 //go:embed msgs_bincode.go.header

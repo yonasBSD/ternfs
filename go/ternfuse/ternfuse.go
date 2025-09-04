@@ -6,15 +6,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	golog "log"
 	"os"
 	"os/signal"
 	"runtime/pprof"
 	"sync"
 	"syscall"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/flags"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -22,9 +24,9 @@ import (
 )
 
 var c *client.Client
-var logger *lib.Logger
+var logger *log.Logger
 var dirInfoCache *client.DirInfoCache
-var bufPool *lib.BufPool
+var bufPool *bufpool.BufPool
 
 func ternErrToErrno(err error) syscall.Errno {
 	switch err {
@@ -291,7 +293,7 @@ type transientFile struct {
 	cookie   [8]byte
 	dir      msgs.InodeId
 	name     string
-	data     *lib.Buf // null if it has been flushed
+	data     *bufpool.Buf // null if it has been flushed
 	size     uint64
 	writeErr syscall.Errno
 }
@@ -685,7 +687,7 @@ func main() {
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
-	var addresses lib.StringArrayFlags
+	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
@@ -726,14 +728,14 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
-	logger = lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, PrintQuietAlerts: true})
+	logger = log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, PrintQuietAlerts: true})
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)
@@ -746,7 +748,7 @@ func main() {
 
 	var localAddresses msgs.AddrsInfo
 	if len(addresses) > 0 {
-		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+		ownIp1, port1, err := flags.ParseIPV4Addr(addresses[0])
 		if err != nil {
 			panic(err)
 		}
@@ -754,7 +756,7 @@ func main() {
 		var ownIp2 [4]byte
 		var port2 uint16
 		if len(addresses) == 2 {
-			ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+			ownIp2, port2, err = flags.ParseIPV4Addr(addresses[1])
 			if err != nil {
 				panic(err)
 			}
@@ -784,13 +786,13 @@ func main() {
 
 	dirInfoCache = client.NewDirInfoCache()
 
-	bufPool = lib.NewBufPool()
+	bufPool = bufpool.NewBufPool()
 
 	root := ternNode{
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
 	fuseOptions := &fs.Options{
-		Logger: log.New(os.Stderr, "fuse", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile),
+		Logger: golog.New(os.Stderr, "fuse", golog.Ldate|golog.Ltime|golog.Lmicroseconds|golog.Lshortfile),
 		AttrTimeout: fileAttrCacheTimeFlag,
 		EntryTimeout: dirAttrCacheTimeFlag,
 		MountOptions: fuse.MountOptions{

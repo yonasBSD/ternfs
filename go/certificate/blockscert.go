@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/cbcmac"
 	"xtx/ternfs/msgs"
 )
 
@@ -15,7 +15,7 @@ func BlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockService
 	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
 	binary.Write(w, binary.LittleEndian, uint32(req.Crc))
 	binary.Write(w, binary.LittleEndian, uint32(req.Size))
-	return lib.CBCMAC(cipher, w.Bytes())
+	return cbcmac.CBCMAC(cipher, w.Bytes())
 }
 
 func CheckBlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) ([8]byte, bool) {
@@ -30,7 +30,7 @@ func BlockEraseCertificate(blockServiceId msgs.BlockServiceId, blockId msgs.Bloc
 	buf.Write([]byte{'e'})
 	binary.Write(buf, binary.LittleEndian, uint64(blockId))
 
-	return lib.CBCMAC(key, buf.Bytes())
+	return cbcmac.CBCMAC(key, buf.Bytes())
 }
 
 func CheckBlockEraseCertificate(blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) ([8]byte, bool) {
@@ -45,7 +45,7 @@ func BlockEraseProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 	buf.Write([]byte{'E'})
 	binary.Write(buf, binary.LittleEndian, uint64(blockId))
 
-	return lib.CBCMAC(key, buf.Bytes())
+	return cbcmac.CBCMAC(key, buf.Bytes())
 }
 
 func CheckBlockEraseProof(blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) ([8]byte, bool) {

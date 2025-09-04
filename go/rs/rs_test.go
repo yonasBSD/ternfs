@@ -27,7 +27,7 @@ func TestComputeParity(t *testing.T) {
 		for i := range blocks {
 			blocks[i] = data[i*blockSize : (i+1)*blockSize]
 		}
-		rs := Get(MkParity(uint8(numData), uint8(numParity)))
+		rs := Get(parity.MkParity(uint8(numData), uint8(numParity)))
 		rs.ComputeParityInto(blocks[:numData], blocks[numData:])
 		// Verify that the first parity block is the XOR of all the data blocks
 		expectedParity0 := make([]byte, blockSize)

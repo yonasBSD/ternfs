@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/s3"
 )
@@ -34,15 +35,15 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	flag.Parse()
 
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
 
-	log := lib.NewLogger(os.Stdout, &lib.LoggerOptions{
+	l := log.NewLogger(os.Stdout, &log.LoggerOptions{
 		Level:            level,
 		AppInstance:      "eggss3",
 		AppType:          "restech_eggsfs.daytime",
@@ -55,7 +56,7 @@ func main() {
 	}
 
 	c, err := client.NewClient(
-		log,
+		l,
 		nil,
 		*ternfsAddr,
 		msgs.AddrsInfo{},
@@ -73,14 +74,14 @@ func main() {
 			os.Exit(2)
 		}
 		bucketName, rootPath := parts[0], parts[1]
-		log.Info("Mapping bucket %q to path %q", bucketName, rootPath)
+		l.Info("Mapping bucket %q to path %q", bucketName, rootPath)
 		bucketPaths[bucketName] = rootPath
 	}
 
 	s3Server := s3.NewS3Server(
-		log,
+		l,
 		c,
-		lib.NewBufPool(),
+		bufpool.NewBufPool(),
 		client.NewDirInfoCache(),
 		bucketPaths,
 		*virtualHost,
@@ -90,9 +91,9 @@ func main() {
 		Addr:    *addr,
 		Handler: s3Server,
 	}
-	log.Info("Starting S3 gateway on %q", *addr)
+	l.Info("Starting S3 gateway on %q", *addr)
 	if *virtualHost != "" {
-		log.Info("Virtual host routing enabled for domain: %q", *virtualHost)
+		l.Info("Virtual host routing enabled for domain: %q", *virtualHost)
 	}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		panic(err)

@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/crc32c"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/parity"
 	"xtx/ternfs/rs"
+	"xtx/ternfs/timing"
 )
 
 type blockReader struct {
@@ -54,7 +56,7 @@ func (r *blockReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (c *Client) createInlineSpan(
-	log *lib.Logger,
+	log *log.Logger,
 	id msgs.InodeId,
 	cookie [8]byte,
 	offset uint64,
@@ -255,7 +257,7 @@ func mkBlockReader(
 // Return which block ids were created for the span, this is needed in defragmentation
 // so we return it immediately here
 func (c *Client) CreateSpan(
-	log *lib.Logger,
+	log *log.Logger,
 	blacklist []msgs.BlacklistEntry,
 	spanPolicies *msgs.SpanPolicy,
 	blockPolicies *msgs.BlockPolicy,
@@ -319,7 +321,7 @@ func (c *Client) CreateSpan(
 			var proof [8]byte
 			blockCrc, blockReader := mkBlockReader(&initiateReq.Req, *data, i)
 			// fail immediately to other block services
-			proof, err = c.WriteBlock(log, &lib.NoTimeouts, &block, blockReader, initiateReq.Req.CellSize*uint32(initiateReq.Req.Stripes), blockCrc)
+			proof, err = c.WriteBlock(log, &timing.NoTimeouts, &block, blockReader, initiateReq.Req.CellSize*uint32(initiateReq.Req.Stripes), blockCrc)
 			if err != nil {
 				initiateReq.Req.Blacklist = append(initiateReq.Req.Blacklist, msgs.BlacklistEntry{FailureDomain: block.BlockServiceFailureDomain})
 				log.Info("failed to write block to %+v: %v, might retry without failure domain %q", block, err, string(block.BlockServiceFailureDomain.Name[:]))
@@ -362,8 +364,8 @@ func (c *Client) CreateSpan(
 }
 
 func (c *Client) WriteFile(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *DirInfoCache,
 	dirId msgs.InodeId, // to get policies
 	fileId msgs.InodeId,
@@ -412,8 +414,8 @@ func (c *Client) WriteFile(
 }
 
 func (c *Client) CreateFile(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *DirInfoCache,
 	path string, // must be absolute
 	r io.Reader,
@@ -446,12 +448,12 @@ func (c *Client) CreateFile(
 }
 
 type FetchedStripe struct {
-	Buf   *lib.Buf
+	Buf   *bufpool.Buf
 	Start uint64
 	owned bool
 }
 
-func (fs *FetchedStripe) Put(bufPool *lib.BufPool) {
+func (fs *FetchedStripe) Put(bufPool *bufpool.BufPool) {
 	if !fs.owned {
 		return
 	}
@@ -460,13 +462,13 @@ func (fs *FetchedStripe) Put(bufPool *lib.BufPool) {
 }
 
 func (c *Client) fetchCell(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	blockServices []msgs.BlockService,
 	body *msgs.FetchedBlocksSpan,
 	blockIx uint8,
 	cell uint8,
-) (buf *lib.Buf, err error) {
+) (buf *bufpool.Buf, err error) {
 	buf = bufPool.Get(int(body.CellSize))
 	defer func() {
 		if err != nil {
@@ -477,7 +479,7 @@ func (c *Client) fetchCell(
 	blockService := &blockServices[block.BlockServiceIx]
 	var data *bytes.Buffer
 	// fail immediately to other block services
-	data, err = c.FetchBlock(log, &lib.NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize, block.Crc)
+	data, err = c.FetchBlock(log, &timing.NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize, block.Crc)
 	if err != nil {
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, err
@@ -490,13 +492,13 @@ func (c *Client) fetchCell(
 }
 
 func (c *Client) fetchMirroredStripe(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
 	offset uint64,
-) (start uint64, buf *lib.Buf, err error) {
+) (start uint64, buf *bufpool.Buf, err error) {
 	spanOffset := uint32(offset - span.Header.ByteOffset)
 	cell := spanOffset / body.CellSize
 	B := body.Parity.Blocks()
@@ -531,18 +533,18 @@ func (c *Client) fetchMirroredStripe(
 }
 
 func (c *Client) fetchRsStripe(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
 	body *msgs.FetchedBlocksSpan,
 	offset uint64,
-) (start uint64, buf *lib.Buf, err error) {
+) (start uint64, buf *bufpool.Buf, err error) {
 	D := body.Parity.DataBlocks()
 	B := body.Parity.Blocks()
 	spanOffset := uint32(offset - span.Header.ByteOffset)
-	blocks := make([]*lib.Buf, B)
+	blocks := make([]*bufpool.Buf, B)
 	defer func() {
 		for i := range blocks {
 			bufPool.Put(blocks[i])
@@ -609,8 +611,8 @@ func (c *Client) fetchRsStripe(
 }
 
 func (c *Client) FetchStripeFromSpan(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
@@ -629,7 +631,7 @@ func (c *Client) FetchStripeFromSpan(
 			panic(fmt.Errorf("header CRC for inline span is %v, but data is %v", span.Header.Crc, dataCrc))
 		}
 		stripe := &FetchedStripe{
-			Buf:   lib.NewBuf(&span.Body.(*msgs.FetchedInlineSpan).Body),
+			Buf:   bufpool.NewBuf(&span.Body.(*msgs.FetchedInlineSpan).Body),
 			Start: span.Header.ByteOffset,
 		}
 		log.Debug("fetched inline span")
@@ -659,7 +661,7 @@ func (c *Client) FetchStripeFromSpan(
 
 	// otherwise just fetch
 	var start uint64
-	var buf *lib.Buf
+	var buf *bufpool.Buf
 	var err error
 	if D == 1 {
 		start, buf, err = c.fetchMirroredStripe(log, bufPool, blockServices, span, body, offset)
@@ -692,19 +694,19 @@ func (c *Client) FetchStripeFromSpan(
 func (c *Client) fetchInlineSpan(
 	inlineSpan *msgs.FetchedInlineSpan,
 	crc msgs.Crc,
-) (*lib.Buf, error) {
+) (*bufpool.Buf, error) {
 	dataCrc := msgs.Crc(crc32c.Sum(0, inlineSpan.Body))
 	if dataCrc != crc {
 		return nil, fmt.Errorf("header CRC for inline span is %v, but data is %v", crc, dataCrc)
 	}
-	return lib.NewBuf(&inlineSpan.Body), nil
+	return bufpool.NewBuf(&inlineSpan.Body), nil
 }
 
-func (c *Client) fetchMirroredSpan(log *lib.Logger,
-	bufPool *lib.BufPool,
+func (c *Client) fetchMirroredSpan(log *log.Logger,
+	bufPool *bufpool.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-	) (*lib.Buf, error){
+	) (*bufpool.Buf, error){
 	body := span.Body.(*msgs.FetchedBlocksSpan)
 	blockSize := uint32(body.Stripes)*uint32(body.CellSize)
 
@@ -730,11 +732,11 @@ func (c *Client) fetchMirroredSpan(log *lib.Logger,
 	return nil, fmt.Errorf("could not find any suitable blocks")
 }
 
-func (c *Client) fetchRsSpan(log *lib.Logger,
-	bufPool *lib.BufPool,
+func (c *Client) fetchRsSpan(log *log.Logger,
+	bufPool *bufpool.BufPool,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-) (*lib.Buf, error){
+) (*bufpool.Buf, error){
 	body := span.Body.(*msgs.FetchedBlocksSpan)
 	blockSize := uint32(body.Stripes)*uint32(body.CellSize)
 
@@ -836,12 +838,12 @@ scheduleMoreBlocks:
 
 // The buf we get out must be returned to the bufPool.
 func (c *Client) FetchSpan(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	span *msgs.FetchedSpan,
-) (*lib.Buf, error) {
+) (*bufpool.Buf, error) {
 	switch {
 		// inline storage
 		case span.Header.StorageClass == msgs.INLINE_STORAGE:
@@ -858,8 +860,8 @@ func (c *Client) FetchSpan(
 // Returns nil, nil if span or stripe cannot be found.
 // Stripe might not be found because
 func (c *Client) FetchStripe(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	spans []msgs.FetchedSpan,
@@ -883,7 +885,7 @@ func (c *Client) FetchStripe(
 }
 
 func (c *Client) FetchSpans(
-	log *lib.Logger,
+	log *log.Logger,
 	fileId msgs.InodeId,
 ) (blockServices []msgs.BlockService, spans []msgs.FetchedSpan, err error) {
 	req := msgs.LocalFileSpansReq{FileId: fileId}
@@ -929,8 +931,8 @@ func (c *Client) FetchSpans(
 
 type fileReader struct {
 	client        *Client
-	log           *lib.Logger
-	bufPool       *lib.BufPool
+	log           *log.Logger
+	bufPool       *bufpool.BufPool
 	fileId        msgs.InodeId
 	fileSize int64 // if -1, we haven't initialized this yet
 	blockServices []msgs.BlockService
@@ -985,8 +987,8 @@ func (f *fileReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (c *Client) ReadFile(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	id msgs.InodeId,
 ) (io.ReadSeekCloser, error) {
 	blockServices, spans, err := c.FetchSpans(log, id)
@@ -1006,15 +1008,15 @@ func (c *Client) ReadFile(
 }
 
 func (c *Client) FetchFile(
-	log *lib.Logger,
-	bufPool *lib.BufPool,
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
 	id msgs.InodeId,
-) (*lib.Buf, error) {
+) (*bufpool.Buf, error) {
 	blockServices, spans, err := c.FetchSpans(log, id)
 	if err != nil {
 		return nil, err
 	}
-	bufs := make([]*lib.Buf, len(spans))
+	bufs := make([]*bufpool.Buf, len(spans))
 	defer func() {
 		for _, b := range bufs {
 			if b != nil {

@@ -5,10 +5,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup/scratch"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/timing"
 )
 
 type ScrubState struct {
@@ -32,12 +35,12 @@ func badBlockError(err error) bool {
 }
 
 func scrubFileInternal(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	stats *ScrubState,
 	timeStats *timeStats,
-	progressReportAlert *lib.XmonNCAlert,
+	progressReportAlert *log.XmonNCAlert,
 	scratchFile scratch.ScratchFile,
 	file msgs.InodeId,
 ) error {
@@ -63,11 +66,11 @@ type scrubRequest struct {
 }
 
 func scrubWorker(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	opts *ScrubOptions,
 	stats *ScrubState,
-	rateLimit *lib.RateLimit,
+	rateLimit *timing.RateLimit,
 	shid msgs.ShardId,
 	workerChan chan *scrubRequest,
 	terminateChan chan any,
@@ -76,7 +79,7 @@ func scrubWorker(
 	migratingFiles map[msgs.InodeId]struct{},
 	migratingFilesMu *sync.RWMutex,
 ) {
-	bufPool := lib.NewBufPool()
+	bufPool := bufpool.NewBufPool()
 	blockNotFoundAlert := log.NewNCAlert(0)
 	defer log.ClearNC(blockNotFoundAlert)
 	for {
@@ -131,7 +134,7 @@ func scrubWorker(
 }
 
 func migrateFileOnError(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	stats *ScrubState,
 	shid msgs.ShardId,
@@ -141,8 +144,8 @@ func migrateFileOnError(
 	migratingFilesMu *sync.RWMutex,
 	req *scrubRequest,
 	err error,
-	bufPool *lib.BufPool,
-	blockNotFoundAlert *lib.XmonNCAlert,
+	bufPool *bufpool.BufPool,
+	blockNotFoundAlert *log.XmonNCAlert,
 ) bool {
 	migratingFilesMu.Lock()
 	_, ok := migratingFiles[req.file]
@@ -184,7 +187,7 @@ func migrateFileOnError(
 }
 
 func scrubScraper(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	stats *ScrubState,
 	shid msgs.ShardId,
@@ -251,12 +254,12 @@ func scrubScraper(
 }
 
 func ScrubFile(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	stats *ScrubState,
 	file msgs.InodeId,
 ) error {
-	bufPool := lib.NewBufPool()
+	bufPool := bufpool.NewBufPool()
 	scratchFile := scratch.NewScratchFile(log, c, file.Shard(), fmt.Sprintf("scrub file %v", file))
 	defer scratchFile.Close()
 
@@ -264,10 +267,10 @@ func ScrubFile(
 }
 
 func ScrubFiles(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	opts *ScrubOptions,
-	rateLimit *lib.RateLimit,
+	rateLimit *timing.RateLimit,
 	stats *ScrubState,
 	shid msgs.ShardId,
 ) error {
@@ -279,7 +282,7 @@ func ScrubFiles(
 	sendChan := make(chan *scrubRequest, opts.WorkersQueueSize)
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 		scrubScraper(log, c, stats, shid, terminateChan, sendChan)
 	}()
 
@@ -291,7 +294,7 @@ func ScrubFiles(
 
 	for i := 0; i < opts.NumWorkersPerShard; i++ {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			scratchFile := scratch.NewScratchFile(log, c, shid, fmt.Sprintf("scrubbing shard %v worked %d", shid, i))
 			defer scratchFile.Close()
 			scrubWorker(log, c, opts, stats, rateLimit, shid, sendChan, terminateChan, scratchFile, &scrubbingMu, migratingFiles, &migratingFilesMu)
@@ -317,10 +320,10 @@ func ScrubFiles(
 }
 
 func ScrubFilesInAllShards(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	opts *ScrubOptions,
-	rateLimit *lib.RateLimit,
+	rateLimit *timing.RateLimit,
 	state *ScrubState,
 ) error {
 	terminateChan := make(chan any, 1)
@@ -330,7 +333,7 @@ func ScrubFilesInAllShards(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			if err := ScrubFiles(log, c, opts, rateLimit, state, shid); err != nil {
 				panic(err)
 			}

@@ -6,8 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/timing"
 )
 
 type CollectDirectoriesStats struct {
@@ -26,7 +28,7 @@ type CollectDirectoriesState struct {
 
 // returns whether all the edges were removed
 func applyPolicy(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	stats *CollectDirectoriesStats,
 	dirId msgs.InodeId,
@@ -90,7 +92,7 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId, minEdgeAge time.Duration) error {
+func CollectDirectory(log *log.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId, minEdgeAge time.Duration) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
@@ -158,10 +160,10 @@ func CollectDirectory(log *lib.Logger, c *client.Client, dirInfoCache *client.Di
 }
 
 func collectDirectoriesWorker(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	dirInfoCache *client.DirInfoCache,
-	rateLimit *lib.RateLimit,
+	rateLimit *timing.RateLimit,
 	stats *CollectDirectoriesState,
 	shid msgs.ShardId,
 	workersChan chan msgs.InodeId,
@@ -191,7 +193,7 @@ func collectDirectoriesWorker(
 }
 
 func collectDirectoriesScraper(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
@@ -230,10 +232,10 @@ type CollectDirectoriesOpts struct {
 }
 
 func CollectDirectories(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	dirInfoCache *client.DirInfoCache,
-	rateLimit *lib.RateLimit,
+	rateLimit *timing.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 	shid msgs.ShardId,
@@ -249,7 +251,7 @@ func CollectDirectories(
 	workerChan := make(chan msgs.InodeId, opts.WorkersQueueSize)
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 		collectDirectoriesScraper(log, c, state, shid, workerChan, terminateChan)
 	}()
 
@@ -257,7 +259,7 @@ func CollectDirectories(
 	workersWg.Add(opts.NumWorkersPerShard)
 	for j := 0; j < opts.NumWorkersPerShard; j++ {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			collectDirectoriesWorker(log, c, dirInfoCache, rateLimit, state, shid, workerChan, terminateChan, minEdgeAge)
 			workersWg.Done()
 		}()
@@ -279,10 +281,10 @@ func CollectDirectories(
 }
 
 func CollectDirectoriesInAllShards(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	dirInfoCache *client.DirInfoCache,
-	rateLimit *lib.RateLimit,
+	rateLimit *timing.RateLimit,
 	opts *CollectDirectoriesOpts,
 	state *CollectDirectoriesState,
 	minEdgeAge time.Duration,
@@ -294,7 +296,7 @@ func CollectDirectoriesInAllShards(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			if err := CollectDirectories(log, c, dirInfoCache, rateLimit, opts, state, shid, minEdgeAge); err != nil {
 				panic(err)
 			}

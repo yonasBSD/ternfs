@@ -6,7 +6,8 @@ import (
 	"strings"
 	"sync"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/wyhash"
 )
@@ -153,7 +154,7 @@ func checkCheckpoint(prefix string, files *fileHistoryFiles, allEdges []edge) {
 	}
 }
 
-func runCheckpoint(log *lib.Logger, client *client.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
+func runCheckpoint(log *log.Logger, client *client.Client, prefix string, files *fileHistoryFiles) fileHistoryCheckpoint {
 	edges := readDir(log, client, msgs.ROOT_DIR_INODE_ID)
 	checkCheckpoint(prefix, files, edges)
 	resp := msgs.StatDirectoryResp{}
@@ -163,7 +164,7 @@ func runCheckpoint(log *lib.Logger, client *client.Client, prefix string, files 
 	}
 }
 
-func runStep(log *lib.Logger, client *client.Client, dirInfoCache *client.DirInfoCache, files *fileHistoryFiles, stepAny any) any {
+func runStep(log *log.Logger, client *client.Client, dirInfoCache *client.DirInfoCache, files *fileHistoryFiles, stepAny any) any {
 	switch step := stepAny.(type) {
 	case fileHistoryCreateFile:
 		id, creationTime := createFile(log, client, dirInfoCache, msgs.ROOT_DIR_INODE_ID, 0, step.name, 0, 0, nil)
@@ -253,7 +254,7 @@ func replayStep(prefix string, files *fileHistoryFiles, fullEdges []fullEdge, st
 	}
 }
 
-func fileHistoryStepSingle(log *lib.Logger, client *client.Client, dirInfoCache *client.DirInfoCache, opts *fileHistoryTestOpts, seed uint64, filePrefix string) {
+func fileHistoryStepSingle(log *log.Logger, client *client.Client, dirInfoCache *client.DirInfoCache, opts *fileHistoryTestOpts, seed uint64, filePrefix string) {
 	// loop for n steps. at every step:
 	// * if we have never reached the target files, then just create a file.
 	// * if we have, create/delete/rename/rename with override at random.
@@ -318,7 +319,7 @@ type fileHistoryTestOpts struct {
 }
 
 func fileHistoryTest(
-	log *lib.Logger,
+	log *log.Logger,
 	shuckleAddress string,
 	opts *fileHistoryTestOpts,
 	counters *client.ClientCounters,
@@ -327,7 +328,7 @@ func fileHistoryTest(
 	dirInfoCache := client.NewDirInfoCache()
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 		numTests := opts.threads
 		if numTests > 15 {
 			panic(fmt.Errorf("numTests %d too big for one-digit prefix", numTests))
@@ -338,7 +339,7 @@ func fileHistoryTest(
 			prefix := fmt.Sprintf("%x", i)
 			seed := uint64(i)
 			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 				c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 				if err != nil {
 					panic(err)

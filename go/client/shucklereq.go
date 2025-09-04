@@ -9,11 +9,12 @@ import (
 	"syscall"
 	"time"
 	"xtx/ternfs/bincode"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/timing"
 )
 
-func writeShuckleRequest(log *lib.Logger, w io.Writer, req msgs.ShuckleRequest) error {
+func writeShuckleRequest(log *log.Logger, w io.Writer, req msgs.ShuckleRequest) error {
 	log.Debug("sending request %v to shuckle", req.ShuckleRequestKind())
 	// serialize
 	bytes := bincode.Pack(req)
@@ -34,7 +35,7 @@ func writeShuckleRequest(log *lib.Logger, w io.Writer, req msgs.ShuckleRequest) 
 }
 
 func readShuckleResponse(
-	log *lib.Logger,
+	log *log.Logger,
 	r io.Reader,
 ) (msgs.ShuckleResponse, error) {
 	log.Debug("reading response from shuckle")
@@ -128,12 +129,12 @@ func readShuckleResponse(
 }
 
 type ShuckleTimeouts struct {
-	ReconnectTimeout lib.ReqTimeouts
+	ReconnectTimeout timing.ReqTimeouts
 	RequestTimeout   time.Duration
 }
 
 var DefaultShuckleTimeout = ShuckleTimeouts{
-	ReconnectTimeout: lib.ReqTimeouts{
+	ReconnectTimeout: timing.ReqTimeouts{
 		Initial: 100 * time.Millisecond,
 		Max:     1 * time.Second,
 		Overall: 10 * time.Second,
@@ -144,7 +145,7 @@ var DefaultShuckleTimeout = ShuckleTimeouts{
 }
 
 func ShuckleRequest(
-	log *lib.Logger,
+	log *log.Logger,
 	timeout *ShuckleTimeouts,
 	shuckleAddress string,
 	req msgs.ShuckleRequest,
@@ -166,7 +167,7 @@ type shuckReq struct {
 }
 
 type ShuckleConn struct {
-	log            *lib.Logger
+	log            *log.Logger
 	timeout        ShuckleTimeouts
 	shuckleAddress string
 	reqChan        chan shuckReq
@@ -174,7 +175,7 @@ type ShuckleConn struct {
 }
 
 func MakeShuckleConn(
-	log *lib.Logger,
+	log *log.Logger,
 	timeout *ShuckleTimeouts,
 	shuckleAddress string,
 	numHandlers uint,

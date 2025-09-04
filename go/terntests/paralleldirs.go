@@ -8,7 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/wyhash"
 )
@@ -19,7 +20,7 @@ type createInode struct {
 }
 
 func parallelDirsTest(
-	log *lib.Logger,
+	log *log.Logger,
 	shuckleAddress string,
 	counters *client.ClientCounters,
 ) {
@@ -59,7 +60,7 @@ func parallelDirsTest(
 		tid := i
 		inodes[tid] = make(map[string]createInode)
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			rand := wyhash.New(uint64(tid))
 			for i := 0; i < actionsPerThread; i++ {
 				which := rand.Float64()

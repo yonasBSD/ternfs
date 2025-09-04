@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/wyhash"
 )
 
@@ -20,7 +20,7 @@ func dirName(mountPoint string, i int) string {
 }
 
 func rsyncTest(
-	log *lib.Logger,
+	l *log.Logger,
 	opts *rsyncTestOpts,
 	mountPoint string,
 ) {
@@ -57,15 +57,15 @@ func rsyncTest(
 	}
 	// rsync into mountpoint
 	rsyncCmd := exec.Command("rsync", "-rv", tmpDir1+"/", mountPoint+"/")
-	rsyncCmd.Stdout = log.Sink(lib.INFO)
-	rsyncCmd.Stderr = log.Sink(lib.INFO)
+	rsyncCmd.Stdout = l.Sink(log.INFO)
+	rsyncCmd.Stderr = l.Sink(log.INFO)
 	if err := rsyncCmd.Run(); err != nil {
 		panic(err)
 	}
 	// diff directories
 	diffCmd := exec.Command("diff", "-rq", tmpDir1, mountPoint)
-	diffCmd.Stdout = log.Sink(lib.INFO)
-	diffCmd.Stderr = log.Sink(lib.INFO)
+	diffCmd.Stdout = l.Sink(log.INFO)
+	diffCmd.Stderr = l.Sink(log.INFO)
 	if err := diffCmd.Run(); err != nil {
 		panic(err)
 	}

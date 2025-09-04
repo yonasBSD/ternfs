@@ -5,7 +5,7 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 )
 
 type preadddirOpts struct {
@@ -16,7 +16,7 @@ type preadddirOpts struct {
 }
 
 func preaddirCheck(
-	log *lib.Logger,
+	log *log.Logger,
 	thread int,
 	mountPoint string,
 	opts *preadddirOpts,
@@ -48,7 +48,7 @@ func preaddirCheck(
 }
 
 func preaddirTest(
-	log *lib.Logger,
+	log *log.Logger,
 	mountPoint string,
 	opts *preadddirOpts,
 ) {

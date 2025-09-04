@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"path"
 	"sync"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -26,7 +26,7 @@ type parwalkEnv struct {
 }
 
 func (env *parwalkEnv) visit(
-	log *lib.Logger,
+	log *log.Logger,
 	homeShid msgs.ShardId,
 	parent msgs.InodeId,
 	parentPath string,
@@ -69,7 +69,7 @@ func (env *parwalkEnv) visit(
 }
 
 func (env *parwalkEnv) process(
-	log *lib.Logger,
+	log *log.Logger,
 	homeShid msgs.ShardId,
 	id msgs.InodeId,
 	path string,
@@ -132,7 +132,7 @@ type ParwalkOptions struct {
 }
 
 func Parwalk(
-	log *lib.Logger,
+	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	root string,

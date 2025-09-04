@@ -1,6 +1,6 @@
 // See <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/>
 // for docs.
-package lib
+package log
 
 import (
 	"bytes"

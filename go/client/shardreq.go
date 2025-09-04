@@ -3,12 +3,12 @@ package client
 import (
 	"fmt"
 	"net"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
 func (c *Client) checkDeletedEdge(
-	logger *lib.Logger,
+	logger *log.Logger,
 	dirId msgs.InodeId,
 	targetId msgs.InodeId,
 	name string,
@@ -46,7 +46,7 @@ func (c *Client) checkDeletedEdge(
 }
 
 func (c *Client) checkNewEdgeAfterRename(
-	logger *lib.Logger,
+	logger *log.Logger,
 	dirId msgs.InodeId,
 	targetId msgs.InodeId,
 	name string,
@@ -68,7 +68,7 @@ func (c *Client) checkNewEdgeAfterRename(
 }
 
 func (c *Client) checkRepeatedShardRequestError(
-	logger *lib.Logger,
+	logger *log.Logger,
 	// these are already filled in by now
 	reqBody msgs.ShardRequest,
 	resp msgs.ShardResponse,
@@ -108,7 +108,7 @@ func (c *Client) checkRepeatedShardRequestError(
 }
 
 func (c *Client) shardRequestInternal(
-	logger *lib.Logger,
+	logger *log.Logger,
 	shid msgs.ShardId,
 	reqBody msgs.ShardRequest,
 	// Result will be written in here. If an error is returned, no guarantees
@@ -145,7 +145,7 @@ func (c *Client) shardRequestInternal(
 }
 
 func (c *Client) ShardRequestDontWait(
-	logger *lib.Logger,
+	logger *log.Logger,
 	shid msgs.ShardId,
 	reqBody msgs.ShardRequest,
 ) error {
@@ -154,7 +154,7 @@ func (c *Client) ShardRequestDontWait(
 
 // This function will set the mtu field for requests that have it with whatever is in `SetMTU`
 func (c *Client) ShardRequest(
-	logger *lib.Logger,
+	logger *log.Logger,
 	shid msgs.ShardId,
 	reqBody msgs.ShardRequest,
 	// Result will be written in here. If an error is returned, no guarantees

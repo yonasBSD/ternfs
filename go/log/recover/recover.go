@@ -1,4 +1,4 @@
-package lib
+package recover
 
 import (
 	"fmt"
@@ -6,11 +6,12 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"xtx/ternfs/log"
 )
 
 var stacktraceLock sync.Mutex
 
-func HandleRecoverChan(log *Logger, terminateChan chan any, err any) {
+func HandleRecoverChan(log *log.Logger, terminateChan chan any, err any) {
 	if err != nil {
 		log.RaiseAlert(fmt.Sprintf("caught stray error: %v", err))
 		stacktraceLock.Lock()
@@ -23,7 +24,7 @@ func HandleRecoverChan(log *Logger, terminateChan chan any, err any) {
 	}
 }
 
-func HandleRecoverPanic(log *Logger, err any) {
+func HandleRecoverPanic(log *log.Logger, err any) {
 	if err != nil {
 		log.RaiseAlert(fmt.Sprintf("caught stray error: %v", err))
 		stacktraceLock.Lock()

@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -119,7 +119,7 @@ func closeOut(out io.Writer) {
 
 type ManagedProcessId uint64
 
-func (procs *ManagedProcesses) Start(ll *lib.Logger, args *ManagedProcessArgs) ManagedProcessId {
+func (procs *ManagedProcesses) Start(ll *log.Logger, args *ManagedProcessArgs) ManagedProcessId {
 	exitedChan := make(chan struct{}, 1)
 
 	procs.mu.Lock()
@@ -269,7 +269,7 @@ type BlockServiceOpts struct {
 	FailureDomain    string
 	Location         msgs.Location
 	FutureCutoff     *time.Duration
-	LogLevel         lib.LogLevel
+	LogLevel         log.LogLevel
 	ShuckleAddress   string
 	Profile          bool
 	Xmon             string
@@ -284,7 +284,7 @@ func createDataDir(dir string) {
 	}
 }
 
-func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServiceOpts) ManagedProcessId {
+func (procs *ManagedProcesses) StartBlockService(ll *log.Logger, opts *BlockServiceOpts) ManagedProcessId {
 	createDataDir(opts.Path)
 	args := []string{
 		"-failure-domain", opts.FailureDomain,
@@ -298,10 +298,10 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 	if opts.FutureCutoff != nil {
 		args = append(args, "-future-cutoff", opts.FutureCutoff.String())
 	}
-	if opts.LogLevel == lib.DEBUG {
+	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
 	}
-	if opts.LogLevel == lib.TRACE {
+	if opts.LogLevel == log.TRACE {
 		args = append(args, "-trace")
 	}
 	if opts.ShuckleAddress != "" {
@@ -332,7 +332,7 @@ func (procs *ManagedProcesses) StartBlockService(ll *lib.Logger, opts *BlockServ
 type FuseOpts struct {
 	Exe                 string
 	Path                string
-	LogLevel            lib.LogLevel
+	LogLevel            log.LogLevel
 	Wait                bool
 	ShuckleAddress      string
 	Profile             bool
@@ -340,7 +340,7 @@ type FuseOpts struct {
 	InitialCDCTimeout   time.Duration
 }
 
-func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string {
+func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string {
 	createDataDir(opts.Path)
 	mountPoint := path.Join(opts.Path, "mnt")
 	createDataDir(mountPoint)
@@ -354,10 +354,10 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 		signalChan = make(chan os.Signal, 1)
 		signal.Notify(signalChan, syscall.SIGUSR1)
 	}
-	if opts.LogLevel == lib.DEBUG {
+	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
 	}
-	if opts.LogLevel == lib.TRACE {
+	if opts.LogLevel == log.TRACE {
 		args = append(args, "-trace")
 	}
 	if opts.Profile {
@@ -389,7 +389,7 @@ func (procs *ManagedProcesses) StartFuse(ll *lib.Logger, opts *FuseOpts) string 
 type ShuckleOpts struct {
 	Exe       string
 	Dir       string
-	LogLevel  lib.LogLevel
+	LogLevel  log.LogLevel
 	HttpPort  uint16
 	Stale     time.Duration
 	Xmon      string
@@ -398,7 +398,7 @@ type ShuckleOpts struct {
 	Addr2     string
 }
 
-func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
+func (procs *ManagedProcesses) StartShuckle(ll *log.Logger, opts *ShuckleOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
@@ -406,10 +406,10 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 		"-data-dir", opts.Dir,
 		"-addr", opts.Addr1,
 	}
-	if opts.LogLevel == lib.DEBUG {
+	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
 	}
-	if opts.LogLevel == lib.TRACE {
+	if opts.LogLevel == log.TRACE {
 		args = append(args, "-trace")
 	}
 	if opts.Stale != 0 {
@@ -437,7 +437,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *lib.Logger, opts *ShuckleOpts) {
 type ShuckleProxyOpts struct {
 	Exe       string
 	Dir       string
-	LogLevel  lib.LogLevel
+	LogLevel  log.LogLevel
 	Xmon      string
 	Addr1     string
 	Addr2     string
@@ -445,7 +445,7 @@ type ShuckleProxyOpts struct {
 	Location msgs.Location
 }
 
-func (procs *ManagedProcesses) StartShuckleProxy(ll *lib.Logger, opts *ShuckleProxyOpts) {
+func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShuckleProxyOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
@@ -453,10 +453,10 @@ func (procs *ManagedProcesses) StartShuckleProxy(ll *lib.Logger, opts *ShucklePr
 		"-shuckle-address", opts.ShuckleAddress,
 		"-location", fmt.Sprintf("%d",opts.Location),
 	}
-	if opts.LogLevel == lib.DEBUG {
+	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
 	}
-	if opts.LogLevel == lib.TRACE {
+	if opts.LogLevel == log.TRACE {
 		args = append(args, "-trace")
 	}
 	if opts.Xmon != "" {
@@ -482,7 +482,7 @@ type GoExes struct {
 	ShuckleProxyExe  string
 }
 
-func BuildGoExes(ll *lib.Logger, repoDir string, race bool) *GoExes {
+func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
 	args := []string{"ternshuckle", "ternblocks", "ternfuse"}
 	if race {
 		args = append(args, "--race")
@@ -507,7 +507,7 @@ type ShardOpts struct {
 	Exe                       string
 	Dir                       string
 	Shrid                     msgs.ShardReplicaId
-	LogLevel                  lib.LogLevel
+	LogLevel                  log.LogLevel
 	Valgrind                  bool
 	Perf                      bool
 	OutgoingPacketDrop        float64
@@ -520,7 +520,7 @@ type ShardOpts struct {
 	LogsDBFlags               []string
 }
 
-func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *ShardOpts) {
+func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *ShardOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -544,13 +544,13 @@ func (procs *ManagedProcesses) StartShard(ll *lib.Logger, repoDir string, opts *
 		args = append(args, opts.LogsDBFlags...)
 	}
 	switch opts.LogLevel {
-	case lib.TRACE:
+	case log.TRACE:
 		args = append(args, "-log-level", "trace")
-	case lib.DEBUG:
+	case log.DEBUG:
 		args = append(args, "-log-level", "debug")
-	case lib.INFO:
+	case log.INFO:
 		args = append(args, "-log-level", "info")
-	case lib.ERROR:
+	case log.ERROR:
 		args = append(args, "-log-level", "error")
 	}
 	args = append(args,
@@ -604,7 +604,7 @@ type CDCOpts struct {
 	Exe            string
 	Dir            string
 	ReplicaId      msgs.ReplicaId
-	LogLevel       lib.LogLevel
+	LogLevel       log.LogLevel
 	Valgrind       bool
 	Perf           bool
 	ShuckleAddress string
@@ -615,7 +615,7 @@ type CDCOpts struct {
 	LogsDBFlags    []string
 }
 
-func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CDCOpts) {
+func (procs *ManagedProcesses) StartCDC(ll *log.Logger, repoDir string, opts *CDCOpts) {
 	if opts.Valgrind && opts.Perf {
 		panic(fmt.Errorf("cannot do valgrind and perf together"))
 	}
@@ -638,13 +638,13 @@ func (procs *ManagedProcesses) StartCDC(ll *lib.Logger, repoDir string, opts *CD
 		args = append(args, opts.LogsDBFlags...)
 	}
 	switch opts.LogLevel {
-	case lib.TRACE:
+	case log.TRACE:
 		args = append(args, "-log-level", "trace")
-	case lib.DEBUG:
+	case log.DEBUG:
 		args = append(args, "-log-level", "debug")
-	case lib.INFO:
+	case log.INFO:
 		args = append(args, "-log-level", "info")
-	case lib.ERROR:
+	case log.ERROR:
 		args = append(args, "-log-level", "error")
 	}
 	args = append(args, opts.Dir, fmt.Sprintf("%d", int(opts.ReplicaId)))
@@ -695,7 +695,7 @@ type BuildCppOpts struct {
 }
 
 // Returns build dir
-func buildCpp(ll *lib.Logger, repoDir string, buildType string, targets []string) string {
+func buildCpp(ll *log.Logger, repoDir string, buildType string, targets []string) string {
 	cppDir := cppDir(repoDir)
 	buildArgs := append([]string{buildType}, targets...)
 	buildCmd := exec.Command("./build.py", buildArgs...)
@@ -715,7 +715,7 @@ type CppExes struct {
 	DBToolsExe string
 }
 
-func BuildCppExes(ll *lib.Logger, repoDir string, buildType string) *CppExes {
+func BuildCppExes(ll *log.Logger, repoDir string, buildType string) *CppExes {
 	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/ternshard", "cdc/terncdc", "dbtools/terndbtools"})
 	return &CppExes{
 		ShardExe:   path.Join(buildDir, "shard/ternshard"),

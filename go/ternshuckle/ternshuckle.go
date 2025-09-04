@@ -14,7 +14,6 @@ import (
 	"html/template"
 	"io"
 	"io/ioutil"
-	"log"
 	"math/rand"
 	"mime"
 	"net"
@@ -36,11 +35,15 @@ import (
 	"syscall"
 	"time"
 	"xtx/ternfs/bincode"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/certificate"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/flags"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/msgs/public"
+	"xtx/ternfs/timing"
 	"xtx/ternfs/wyhash"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -87,7 +90,7 @@ type state struct {
 	mutex     sync.Mutex
 	semaphore *semaphore.Weighted
 	db        *sql.DB
-	counters  map[msgs.ShuckleMessageKind]*lib.Timings
+	counters  map[msgs.ShuckleMessageKind]*timing.Timings
 	config    *shuckleConfig
 	client    *client.Client
 
@@ -103,9 +106,9 @@ type state struct {
 	// periodically calculated evenly spread writable block services across all shards
 	currentShardBlockServices   map[msgs.ShardId][]msgs.BlockServiceInfoShort
 	currentShardBlockServicesMu sync.RWMutex
-	hotSpottingAlerts           map[locStorageClass]*lib.XmonNCAlert
-	highLoadAlerts              map[locStorageClass]*lib.XmonNCAlert
-	lowCapacityAlerts           map[locStorageClass]*lib.XmonNCAlert
+	hotSpottingAlerts           map[locStorageClass]*log.XmonNCAlert
+	highLoadAlerts              map[locStorageClass]*log.XmonNCAlert
+	lowCapacityAlerts           map[locStorageClass]*log.XmonNCAlert
 }
 
 func (s *state) selectCDC(locationId msgs.Location) (*cdcState, error) {
@@ -291,7 +294,7 @@ type shuckleConfig struct {
 }
 
 func newState(
-	log *lib.Logger,
+	l *log.Logger,
 	db *sql.DB,
 	conf *shuckleConfig,
 ) (*state, error) {
@@ -307,9 +310,9 @@ func newState(
 		decommedBlockServicesMu:     sync.RWMutex{},
 		currentShardBlockServices:   make(map[msgs.ShardId][]msgs.BlockServiceInfoShort),
 		currentShardBlockServicesMu: sync.RWMutex{},
-		hotSpottingAlerts:           make(map[locStorageClass]*lib.XmonNCAlert),
-		highLoadAlerts:              make(map[locStorageClass]*lib.XmonNCAlert),
-		lowCapacityAlerts:           make(map[locStorageClass]*lib.XmonNCAlert),
+		hotSpottingAlerts:           make(map[locStorageClass]*log.XmonNCAlert),
+		highLoadAlerts:              make(map[locStorageClass]*log.XmonNCAlert),
+		lowCapacityAlerts:           make(map[locStorageClass]*log.XmonNCAlert),
 	}
 
 	blockServices, err := st.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
@@ -322,12 +325,12 @@ func newState(
 		}
 		st.decommedBlockServices[id] = bs.BlockServiceDeprecatedInfo
 	}
-	st.counters = make(map[msgs.ShuckleMessageKind]*lib.Timings)
+	st.counters = make(map[msgs.ShuckleMessageKind]*timing.Timings)
 	for _, k := range msgs.AllShuckleMessageKind {
-		st.counters[k] = lib.NewTimings(40, 10*time.Microsecond, 1.5)
+		st.counters[k] = timing.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
 
-	st.client, err = client.NewClientDirectNoAddrs(log, msgs.AddrsInfo{})
+	st.client, err = client.NewClientDirectNoAddrs(l, msgs.AddrsInfo{})
 	if err != nil {
 		return nil, err
 	}
@@ -344,10 +347,10 @@ func newState(
 		cdcTimeout.Overall = 5 * time.Minute
 		st.client.SetCDCTimeouts(&cdcTimeout)
 	}
-	if err := refreshClient(log, st); err != nil {
+	if err := refreshClient(l, st); err != nil {
 		return nil, err
 	}
-	if _, err := handleInfoReq(log, st, &msgs.InfoReq{}); err != nil {
+	if _, err := handleInfoReq(l, st, &msgs.InfoReq{}); err != nil {
 		return nil, err
 	}
 	return st, err
@@ -425,14 +428,14 @@ func (pq *failureDomainPQ) Pop() any {
 	return x
 }
 
-func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
+func assignWritableBlockServicesToShards(l *log.Logger, s *state) {
 	updatesSkipped := 0
 	lastBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 	for {
 		newBlockServicesUsed := map[msgs.BlockServiceId]struct{}{}
 		blockServicesMap, err := s.selectBlockServices(nil, nil, msgs.TERNFS_BLOCK_SERVICE_NO_WRITE|msgs.TERNFS_BLOCK_SERVICE_STALE|msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED, 0, msgs.MakeTernTime(time.Now().Add(-s.config.blockServiceDelay)), true, "")
 		if err != nil {
-			log.RaiseAlert("failed to select block services: %v", err)
+			l.RaiseAlert("failed to select block services: %v", err)
 		}
 		needsRecalculate := false
 		for bsId, _ := range blockServicesMap {
@@ -465,7 +468,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 		locations, err := s.selectLocations()
 		if err != nil {
-			log.RaiseAlert("failed to select locations: %v", err)
+			l.RaiseAlert("failed to select locations: %v", err)
 			continue
 		}
 		for _, location := range locations {
@@ -502,9 +505,9 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 
 				if len(blockServicesByFailureDomain) < 14 {
 					if location.Id == DEFAULT_LOCATION {
-						log.RaiseAlert("could not pick block services for storage class %v. there are only %d failure domains and we need at least 14", storageClass, len(blockServicesByFailureDomain))
+						l.RaiseAlert("could not pick block services for storage class %v. there are only %d failure domains and we need at least 14", storageClass, len(blockServicesByFailureDomain))
 					} else {
-						log.Info("could not pick block services for location %v and storage class %v. there are only %d failure domains and we need at least 14", location.Name, storageClass, len(blockServicesByFailureDomain))
+						l.Info("could not pick block services for location %v and storage class %v. there are only %d failure domains and we need at least 14", location.Name, storageClass, len(blockServicesByFailureDomain))
 					}
 					continue
 				}
@@ -610,44 +613,44 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 				if stats.minTimesBlockServicePicked*5 < stats.maxTimesBlockServicePicked {
 					alert, ok := s.hotSpottingAlerts[locStorageClass{location.Id, storageClass}]
 					if !ok {
-						alert = log.NewNCAlert(0)
-						alert.SetAppType(lib.XMON_NEVER)
+						alert = l.NewNCAlert(0)
+						alert.SetAppType(log.XMON_NEVER)
 						s.hotSpottingAlerts[locStorageClass{location.Id, storageClass}] = alert
 					}
-					log.RaiseNC(alert, "hot spotting block services in location %v, storage class %v. Min times picked: %d, max times picked: %d", location.Name, storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
+					l.RaiseNC(alert, "hot spotting block services in location %v, storage class %v. Min times picked: %d, max times picked: %d", location.Name, storageClass, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked)
 				} else {
 					if alert, ok := s.hotSpottingAlerts[locStorageClass{location.Id, storageClass}]; ok {
-						log.ClearNC(alert)
+						l.ClearNC(alert)
 					}
 				}
 				if stats.minTimesBlockServicePicked > 10 {
 					alert, ok := s.highLoadAlerts[locStorageClass{location.Id, storageClass}]
 					if !ok {
-						alert = log.NewNCAlert(0)
-						alert.SetAppType(lib.XMON_NEVER)
+						alert = l.NewNCAlert(0)
+						alert.SetAppType(log.XMON_NEVER)
 						s.highLoadAlerts[locStorageClass{location.Id, storageClass}] = alert
 					}
-					log.RaiseNC(alert, "high load on block services in location %v, storage class %v. Min times picked: %d", location.Name, storageClass, stats.minTimesBlockServicePicked)
+					l.RaiseNC(alert, "high load on block services in location %v, storage class %v. Min times picked: %d", location.Name, storageClass, stats.minTimesBlockServicePicked)
 				} else {
 					if alert, ok := s.highLoadAlerts[locStorageClass{location.Id, storageClass}]; ok {
-						log.ClearNC(alert)
+						l.ClearNC(alert)
 					}
 				}
 				if stats.maxLowBlockCapacityBlockServicePicked > 3 {
 					alert, ok := s.lowCapacityAlerts[locStorageClass{location.Id, storageClass}]
 					if !ok {
-						alert = log.NewNCAlert(0)
-						alert.SetAppType(lib.XMON_NEVER)
+						alert = l.NewNCAlert(0)
+						alert.SetAppType(log.XMON_NEVER)
 						s.lowCapacityAlerts[locStorageClass{location.Id, storageClass}] = alert
 					}
-					log.RaiseNC(alert, "high number of low capacity block services per shard in location %v, storage class %v. Max times picked: %d", location.Name, storageClass, stats.maxLowBlockCapacityBlockServicePicked)
+					l.RaiseNC(alert, "high number of low capacity block services per shard in location %v, storage class %v. Max times picked: %d", location.Name, storageClass, stats.maxLowBlockCapacityBlockServicePicked)
 				} else {
 					if alert, ok := s.lowCapacityAlerts[locStorageClass{location.Id, storageClass}]; ok {
-						log.ClearNC(alert)
+						l.ClearNC(alert)
 					}
 				}
 
-				log.Info("finished calculating current block services for location %v, storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d, minLowCpacityBlockService: %d, maxLowCapacityBlockService: %d}",
+				l.Info("finished calculating current block services for location %v, storage class %v: block service stats {considered: %d, assigned: %d, duplicate: %d, minShard: %d, maxShard: %d, minTimesPicked: %d, maxTimesPicked: %d, minLowCpacityBlockService: %d, maxLowCapacityBlockService: %d}",
 					location.Name, storageClass, stats.blockServicesConsidered, len(blockServiceSet), stats.duplicateBlockServicesAssigned, stats.minBlockServicesPerShard, stats.maxBlockServicesPerShard, stats.minTimesBlockServicePicked, stats.maxTimesBlockServicePicked, stats.minLowBlockCapacityBlockServicePicked, stats.maxLowBlockCapacityBlockServicePicked)
 			}
 		}
@@ -657,7 +660,7 @@ func assignWritableBlockServicesToShards(log *lib.Logger, s *state) {
 	}
 }
 
-func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServicesDeprecatedReq) (*msgs.AllBlockServicesDeprecatedResp, error) {
+func handleAllBlockServices(ll *log.Logger, s *state, req *msgs.AllBlockServicesDeprecatedReq) (*msgs.AllBlockServicesDeprecatedResp, error) {
 	resp := msgs.AllBlockServicesDeprecatedResp{}
 	blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 	if err != nil {
@@ -675,7 +678,7 @@ func handleAllBlockServices(ll *lib.Logger, s *state, req *msgs.AllBlockServices
 	return &resp, nil
 }
 
-func handleLocalChangedBlockServices(ll *lib.Logger, s *state, req *msgs.LocalChangedBlockServicesReq) (*msgs.LocalChangedBlockServicesResp, error) {
+func handleLocalChangedBlockServices(ll *log.Logger, s *state, req *msgs.LocalChangedBlockServicesReq) (*msgs.LocalChangedBlockServicesResp, error) {
 	reqAtLocation := &msgs.ChangedBlockServicesAtLocationReq{DEFAULT_LOCATION, req.ChangedSince}
 	respAtLocation, err := handleChangedBlockServicesAtLocation(ll, s, reqAtLocation)
 	if err != nil {
@@ -684,7 +687,7 @@ func handleLocalChangedBlockServices(ll *lib.Logger, s *state, req *msgs.LocalCh
 	return &msgs.LocalChangedBlockServicesResp{respAtLocation.LastChange, respAtLocation.BlockServices}, nil
 }
 
-func handleChangedBlockServicesAtLocation(ll *lib.Logger, s *state, req *msgs.ChangedBlockServicesAtLocationReq) (*msgs.ChangedBlockServicesAtLocationResp, error) {
+func handleChangedBlockServicesAtLocation(ll *log.Logger, s *state, req *msgs.ChangedBlockServicesAtLocationReq) (*msgs.ChangedBlockServicesAtLocationResp, error) {
 	resp := msgs.ChangedBlockServicesAtLocationResp{}
 
 	blockServices, err := s.selectBlockServices(&req.LocationId, nil, 0, req.ChangedSince, msgs.Now(), false, "")
@@ -706,7 +709,7 @@ func handleChangedBlockServicesAtLocation(ll *lib.Logger, s *state, req *msgs.Ch
 	return &resp, nil
 }
 
-func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
+func handleRegisterBlockServices(ll *log.Logger, s *state, req *msgs.RegisterBlockServicesReq) (*msgs.RegisterBlockServicesResp, error) {
 	if len(req.BlockServices) == 0 {
 		return &msgs.RegisterBlockServicesResp{}, nil
 	}
@@ -809,7 +812,7 @@ func handleRegisterBlockServices(ll *lib.Logger, s *state, req *msgs.RegisterBlo
 	return &msgs.RegisterBlockServicesResp{}, nil
 }
 
-func handleUpdateBlockServicePath(ll *lib.Logger, s *state, req *msgs.UpdateBlockServicePathReq) (*msgs.UpdateBlockServicePathResp, error) {
+func handleUpdateBlockServicePath(ll *log.Logger, s *state, req *msgs.UpdateBlockServicePathReq) (*msgs.UpdateBlockServicePathResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -832,7 +835,7 @@ func handleUpdateBlockServicePath(ll *lib.Logger, s *state, req *msgs.UpdateBloc
 	return &msgs.UpdateBlockServicePathResp{}, nil
 }
 
-func setBlockServiceFilePresence(ll *lib.Logger, s *state, bsId msgs.BlockServiceId, hasFiles bool) {
+func setBlockServiceFilePresence(ll *log.Logger, s *state, bsId msgs.BlockServiceId, hasFiles bool) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -853,10 +856,10 @@ func setBlockServiceFilePresence(ll *lib.Logger, s *state, bsId msgs.BlockServic
 	}
 }
 
-func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
+func checkBlockServiceFilePresence(ll *log.Logger, s *state) {
 	sleepInterval := time.Minute
 	blockServicesAlert := ll.NewNCAlert(0)
-	blockServicesAlert.SetAppType(lib.XMON_DAYTIME)
+	blockServicesAlert.SetAppType(log.XMON_DAYTIME)
 	shids := make([]int, 256)
 	rand.Seed(time.Now().UnixNano())
 
@@ -902,7 +905,7 @@ func checkBlockServiceFilePresence(ll *lib.Logger, s *state) {
 	}
 }
 
-func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.DecommissionBlockServiceReq) (*msgs.DecommissionBlockServiceResp, error) {
+func handleSetBlockserviceDecommissioned(ll *log.Logger, s *state, req *msgs.DecommissionBlockServiceReq) (*msgs.DecommissionBlockServiceResp, error) {
 	// This lock effectively prevents decom requests running in parallel
 	// we don't want to take any chances here.
 	s.decomMutex.Lock()
@@ -959,7 +962,7 @@ func handleSetBlockserviceDecommissioned(ll *lib.Logger, s *state, req *msgs.Dec
 	return &msgs.DecommissionBlockServiceResp{}, nil
 }
 
-func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
+func handleSetBlockServiceFlags(ll *log.Logger, s *state, req *msgs.SetBlockServiceFlagsReq) (*msgs.SetBlockServiceFlagsResp, error) {
 	// Special case: the DECOMMISSIONED flag can never be unset, we assume that in
 	// a couple of cases (e.g. when fetching block services in shuckle)
 	if (req.FlagsMask&uint8(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED)) != 0 && (req.Flags&msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) == 0 {
@@ -1004,7 +1007,7 @@ func handleSetBlockServiceFlags(ll *lib.Logger, s *state, req *msgs.SetBlockServ
 	return &msgs.SetBlockServiceFlagsResp{}, nil
 }
 
-func handleStorageHostStatus(ll *lib.Logger, s *state, req *public.StorageHostStatusReq) (*public.StorageHostStatusResp, error) {
+func handleStorageHostStatus(ll *log.Logger, s *state, req *public.StorageHostStatusReq) (*public.StorageHostStatusResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -1031,7 +1034,7 @@ func handleStorageHostStatus(ll *lib.Logger, s *state, req *public.StorageHostSt
 	return &ret, nil
 }
 
-func handleLocalShards(ll *lib.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.LocalShardsResp, error) {
+func handleLocalShards(ll *log.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.LocalShardsResp, error) {
 	reqAtLocation := &msgs.ShardsAtLocationReq{DEFAULT_LOCATION}
 	resp, err := handleShardsAtLocation(ll, s, reqAtLocation)
 	if err != nil {
@@ -1040,7 +1043,7 @@ func handleLocalShards(ll *lib.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.
 	return &msgs.LocalShardsResp{resp.Shards}, nil
 }
 
-func handleShardsAtLocation(ll *lib.Logger, s *state, req *msgs.ShardsAtLocationReq) (*msgs.ShardsAtLocationResp, error) {
+func handleShardsAtLocation(ll *log.Logger, s *state, req *msgs.ShardsAtLocationReq) (*msgs.ShardsAtLocationResp, error) {
 	resp := msgs.ShardsAtLocationResp{}
 
 	shards, err := s.selectShards(req.LocationId)
@@ -1053,7 +1056,7 @@ func handleShardsAtLocation(ll *lib.Logger, s *state, req *msgs.ShardsAtLocation
 	return &resp, nil
 }
 
-func handleAllShards(ll *lib.Logger, s *state, _ *msgs.AllShardsReq) (*msgs.AllShardsResp, error) {
+func handleAllShards(ll *log.Logger, s *state, _ *msgs.AllShardsReq) (*msgs.AllShardsResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	ret := []msgs.FullShardInfo{}
@@ -1083,7 +1086,7 @@ func handleAllShards(ll *lib.Logger, s *state, _ *msgs.AllShardsReq) (*msgs.AllS
 	return &msgs.AllShardsResp{Shards: ret}, nil
 }
 
-func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
+func handleRegisterShard(ll *log.Logger, s *state, req *msgs.RegisterShardReq) (*msgs.RegisterShardResp, error) {
 	var err error = nil
 	defer func() {
 		if err != nil {
@@ -1142,7 +1145,7 @@ func handleRegisterShard(ll *lib.Logger, s *state, req *msgs.RegisterShardReq) (
 	return &msgs.RegisterShardResp{}, nil
 }
 
-func handleCdcAtLocation(log *lib.Logger, s *state, req *msgs.CdcAtLocationReq) (*msgs.CdcAtLocationResp, error) {
+func handleCdcAtLocation(log *log.Logger, s *state, req *msgs.CdcAtLocationReq) (*msgs.CdcAtLocationResp, error) {
 	resp := msgs.CdcAtLocationResp{}
 	cdc, err := s.selectCDC(req.LocationId)
 	if err != nil {
@@ -1155,7 +1158,7 @@ func handleCdcAtLocation(log *lib.Logger, s *state, req *msgs.CdcAtLocationReq) 
 	return &resp, nil
 }
 
-func handleLocalCdc(log *lib.Logger, s *state, req *msgs.LocalCdcReq) (*msgs.LocalCdcResp, error) {
+func handleLocalCdc(log *log.Logger, s *state, req *msgs.LocalCdcReq) (*msgs.LocalCdcResp, error) {
 	reqAtLocation := &msgs.CdcAtLocationReq{LocationId: 0}
 	respAtLocation, err := handleCdcAtLocation(log, s, reqAtLocation)
 	if err != nil {
@@ -1165,7 +1168,7 @@ func handleLocalCdc(log *lib.Logger, s *state, req *msgs.LocalCdcReq) (*msgs.Loc
 	return &msgs.LocalCdcResp{respAtLocation.Addrs, respAtLocation.LastSeen}, nil
 }
 
-func handleAllCdc(log *lib.Logger, s *state, req *msgs.AllCdcReq) (*msgs.AllCdcResp, error) {
+func handleAllCdc(log *log.Logger, s *state, req *msgs.AllCdcReq) (*msgs.AllCdcResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	var ret []msgs.CdcInfo
@@ -1190,7 +1193,7 @@ func handleAllCdc(log *lib.Logger, s *state, req *msgs.AllCdcReq) (*msgs.AllCdcR
 	return &msgs.AllCdcResp{Replicas: ret}, nil
 }
 
-func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasDEPRECATEDReq) (*msgs.CdcReplicasDEPRECATEDResp, error) {
+func handleCdcReplicas(log *log.Logger, s *state, req *msgs.CdcReplicasDEPRECATEDReq) (*msgs.CdcReplicasDEPRECATEDResp, error) {
 	s.semaphore.Acquire(context.Background(), 1)
 	defer s.semaphore.Release(1)
 	var ret [5]msgs.AddrsInfo
@@ -1222,7 +1225,7 @@ func handleCdcReplicas(log *lib.Logger, s *state, req *msgs.CdcReplicasDEPRECATE
 	return &msgs.CdcReplicasDEPRECATEDResp{Replicas: ret[:]}, nil
 }
 
-func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (resp *msgs.RegisterCdcResp, err error) {
+func handleRegisterCDC(log *log.Logger, s *state, req *msgs.RegisterCdcReq) (resp *msgs.RegisterCdcResp, err error) {
 	defer func() {
 		if err != nil {
 			log.RaiseAlert("error registering cdc: %s", err)
@@ -1279,7 +1282,7 @@ func handleRegisterCDC(log *lib.Logger, s *state, req *msgs.RegisterCdcReq) (res
 	return
 }
 
-func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp, error) {
+func handleInfoReq(log *log.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp, error) {
 	var resp *msgs.InfoResp
 	func() {
 		s.fsInfoMutex.RLock()
@@ -1337,7 +1340,7 @@ func handleInfoReq(log *lib.Logger, s *state, req *msgs.InfoReq) (*msgs.InfoResp
 	return resp, nil
 }
 
-func handleShardBlockServicesDEPRECATED(log *lib.Logger, s *state, req *msgs.ShardBlockServicesDEPRECATEDReq) (*msgs.ShardBlockServicesDEPRECATEDResp, error) {
+func handleShardBlockServicesDEPRECATED(log *log.Logger, s *state, req *msgs.ShardBlockServicesDEPRECATEDReq) (*msgs.ShardBlockServicesDEPRECATEDResp, error) {
 	resp, err := handleShardBlockServices(log, s, &msgs.ShardBlockServicesReq{req.ShardId})
 	if err != nil {
 		return nil, err
@@ -1352,7 +1355,7 @@ func handleShardBlockServicesDEPRECATED(log *lib.Logger, s *state, req *msgs.Sha
 	return deprecatedResp, nil
 }
 
-func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
+func handleShardBlockServices(log *log.Logger, s *state, req *msgs.ShardBlockServicesReq) (*msgs.ShardBlockServicesResp, error) {
 	s.currentShardBlockServicesMu.RLock()
 	defer s.currentShardBlockServicesMu.RUnlock()
 	currentBlockServices, ok := s.currentShardBlockServices[req.ShardId]
@@ -1362,7 +1365,7 @@ func handleShardBlockServices(log *lib.Logger, s *state, req *msgs.ShardBlockSer
 	return &msgs.ShardBlockServicesResp{currentBlockServices}, nil
 }
 
-func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderReq) (*msgs.MoveShardLeaderResp, error) {
+func handleMoveShardLeader(log *log.Logger, s *state, req *msgs.MoveShardLeaderReq) (*msgs.MoveShardLeaderResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	n := sql.Named
@@ -1384,7 +1387,7 @@ func handleMoveShardLeader(log *lib.Logger, s *state, req *msgs.MoveShardLeaderR
 	return &msgs.MoveShardLeaderResp{}, nil
 }
 
-func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) (*msgs.MoveCdcLeaderResp, error) {
+func handleMoveCDCLeader(log *log.Logger, s *state, req *msgs.MoveCdcLeaderReq) (*msgs.MoveCdcLeaderResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	n := sql.Named
@@ -1406,7 +1409,7 @@ func handleMoveCDCLeader(log *lib.Logger, s *state, req *msgs.MoveCdcLeaderReq) 
 	return &msgs.MoveCdcLeaderResp{}, nil
 }
 
-func handleCreateLocation(log *lib.Logger, s *state, req *msgs.CreateLocationReq) (*msgs.CreateLocationResp, error) {
+func handleCreateLocation(log *log.Logger, s *state, req *msgs.CreateLocationReq) (*msgs.CreateLocationResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	if _, err := s.db.Exec("INSERT INTO location (id, name) VALUES (?, ?)", req.Id, req.Name); err != nil {
@@ -1422,7 +1425,7 @@ func handleCreateLocation(log *lib.Logger, s *state, req *msgs.CreateLocationReq
 	return &msgs.CreateLocationResp{}, nil
 }
 
-func handleRenameLocation(log *lib.Logger, s *state, req *msgs.RenameLocationReq) (*msgs.RenameLocationResp, error) {
+func handleRenameLocation(log *log.Logger, s *state, req *msgs.RenameLocationReq) (*msgs.RenameLocationResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	res, err := s.db.Exec("UPDATE location SET name = ? WHERE id = ?", req.Name, req.Id)
@@ -1440,7 +1443,7 @@ func handleRenameLocation(log *lib.Logger, s *state, req *msgs.RenameLocationReq
 	return &msgs.RenameLocationResp{}, nil
 }
 
-func handleLocations(log *lib.Logger, s *state, req *msgs.LocationsReq) (*msgs.LocationsResp, error) {
+func handleLocations(log *log.Logger, s *state, req *msgs.LocationsReq) (*msgs.LocationsResp, error) {
 	resp := &msgs.LocationsResp{}
 	rows, err := s.db.Query("SELECT id, name FROM location")
 	if err != nil {
@@ -1459,7 +1462,7 @@ func handleLocations(log *lib.Logger, s *state, req *msgs.LocationsReq) (*msgs.L
 
 }
 
-func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq) (*msgs.ClearShardInfoResp, error) {
+func handleClearShardInfo(log *log.Logger, s *state, req *msgs.ClearShardInfoReq) (*msgs.ClearShardInfoResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	n := sql.Named
@@ -1484,7 +1487,7 @@ func handleClearShardInfo(log *lib.Logger, s *state, req *msgs.ClearShardInfoReq
 	return &msgs.ClearShardInfoResp{}, nil
 }
 
-func handleClearCDCInfo(log *lib.Logger, s *state, req *msgs.ClearCdcInfoReq) (*msgs.ClearCdcInfoResp, error) {
+func handleClearCDCInfo(log *log.Logger, s *state, req *msgs.ClearCdcInfoReq) (*msgs.ClearCdcInfoResp, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	n := sql.Named
@@ -1509,7 +1512,7 @@ func handleClearCDCInfo(log *lib.Logger, s *state, req *msgs.ClearCdcInfoReq) (*
 	return &msgs.ClearCdcInfoResp{}, nil
 }
 
-func handleEraseDecomissionedBlockReq(log *lib.Logger, s *state, req *msgs.EraseDecommissionedBlockReq) (*msgs.EraseDecommissionedBlockResp, error) {
+func handleEraseDecomissionedBlockReq(log *log.Logger, s *state, req *msgs.EraseDecommissionedBlockReq) (*msgs.EraseDecommissionedBlockResp, error) {
 	s.decommedBlockServicesMu.RLock()
 	defer s.decommedBlockServicesMu.RUnlock()
 
@@ -1530,14 +1533,14 @@ func handleEraseDecomissionedBlockReq(log *lib.Logger, s *state, req *msgs.Erase
 	return &msgs.EraseDecommissionedBlockResp{Proof: certificate.BlockEraseProof(req.BlockServiceId, req.BlockId, key)}, nil
 }
 
-func handleShuckle(log *lib.Logger, s *state) (*msgs.ShuckleResp, error) {
+func handleShuckle(log *log.Logger, s *state) (*msgs.ShuckleResp, error) {
 	resp := &msgs.ShuckleResp{
 		Addrs: s.config.addrs,
 	}
 	return resp, nil
 }
 
-func handleRequestParsed(log *lib.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
+func handleRequestParsed(log *log.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
 	t0 := time.Now()
 	defer func() {
 		s.counters[req.ShuckleRequestKind()].Add(time.Since(t0))
@@ -1630,7 +1633,7 @@ func isBenignConnTermination(err error) bool {
 	return false
 }
 
-func writeShuckleResponse(log *lib.Logger, w io.Writer, resp msgs.ShuckleResponse) error {
+func writeShuckleResponse(log *log.Logger, w io.Writer, resp msgs.ShuckleResponse) error {
 	// serialize
 	bytes := bincode.Pack(resp)
 	// write out
@@ -1649,7 +1652,7 @@ func writeShuckleResponse(log *lib.Logger, w io.Writer, resp msgs.ShuckleRespons
 	return nil
 }
 
-func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.TernError) error {
+func writeShuckleResponseError(log *log.Logger, w io.Writer, err msgs.TernError) error {
 	log.Debug("writing shuckle error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
@@ -1670,7 +1673,7 @@ func writeShuckleResponseError(log *lib.Logger, w io.Writer, err msgs.TernError)
 
 // returns whether the connection should be terminated
 func handleError(
-	log *lib.Logger,
+	log *log.Logger,
 	conn *net.TCPConn,
 	err error,
 ) bool {
@@ -1699,7 +1702,7 @@ func handleError(
 }
 
 func readShuckleRequest(
-	log *lib.Logger,
+	log *log.Logger,
 	r io.Reader,
 ) (msgs.ShuckleRequest, error) {
 	var protocol uint32
@@ -1785,7 +1788,7 @@ func readShuckleRequest(
 	return req, nil
 }
 
-func handleRequest(log *lib.Logger, s *state, conn *net.TCPConn) {
+func handleRequest(log *log.Logger, s *state, conn *net.TCPConn) {
 	defer conn.Close()
 
 	for {
@@ -1856,13 +1859,13 @@ func sendPage(
 }
 
 func handleWithRecover(
-	log *lib.Logger,
+	log *log.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
 	methodAllowed *string,
 	// if the ReadCloser == nil, it means that
 	// `handle` does not want us to handle the request.
-	handle func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int),
+	handle func(log *log.Logger, query url.Values) (io.ReadCloser, int64, int),
 ) {
 	if methodAllowed == nil {
 		str := http.MethodGet
@@ -1911,15 +1914,15 @@ func handleWithRecover(
 }
 
 func handlePage(
-	log *lib.Logger,
+	l *log.Logger,
 	w http.ResponseWriter,
 	r *http.Request,
 	// third result is status code
 	page func(query url.Values) (*template.Template, *pageData, int),
 ) {
 	handleWithRecover(
-		log, w, r, nil,
-		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		l, w, r, nil,
+		func(log *log.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			return sendPage(page(query))
 		},
 	)
@@ -2009,7 +2012,7 @@ func formatNanos(nanos uint64) string {
 	return fmt.Sprintf("%7.2f%s", amount, unit)
 }
 
-func handleIndex(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Request) {
+func handleIndex(ll *log.Logger, state *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
 		ll, w, r,
 		func(_ url.Values) (*template.Template, *pageData, int) {
@@ -2104,7 +2107,7 @@ type directoryData struct {
 	Info         []directoryInfoEntry
 }
 
-func refreshClient(log *lib.Logger, state *state) error {
+func refreshClient(log *log.Logger, state *state) error {
 	shards, err := state.selectShards(0)
 	if err != nil {
 		return fmt.Errorf("error reading shards: %s", err)
@@ -2137,7 +2140,7 @@ func normalizePath(path string) string {
 	return newPath
 }
 
-func lookup(log *lib.Logger, client *client.Client, path string) *msgs.InodeId {
+func lookup(log *log.Logger, client *client.Client, path string) *msgs.InodeId {
 	id := msgs.ROOT_DIR_INODE_ID
 	if path == "" {
 		return &id
@@ -2185,7 +2188,7 @@ var fileTemplate *template.Template
 var directoryTemplate *template.Template
 
 func handleInode(
-	log *lib.Logger,
+	log *log.Logger,
 	state *state,
 	w http.ResponseWriter,
 	r *http.Request,
@@ -2361,10 +2364,10 @@ func handleInode(
 	)
 }
 
-func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+func handleBlock(l *log.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
-		log, w, r, nil,
-		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		l, w, r, nil,
+		func(log *log.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "blocks" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
@@ -2423,12 +2426,12 @@ func handleBlock(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Requ
 	)
 }
 
-var readSpanBufPool *lib.BufPool
+var readSpanBufPool *bufpool.BufPool
 
-func handleFile(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+func handleFile(l *log.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handleWithRecover(
-		log, w, r, nil,
-		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		l, w, r, nil,
+		func(log *log.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "files" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
@@ -2477,7 +2480,7 @@ var transientTemplateStr string
 
 var transientTemplate *template.Template
 
-func handleTransient(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+func handleTransient(log *log.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	handlePage(
 		log, w, r,
 		func(query url.Values) (*template.Template, *pageData, int) {
@@ -2507,11 +2510,11 @@ func sendJsonErr(w http.ResponseWriter, err any, status int) (io.ReadCloser, int
 	return ioutil.NopCloser(bytes.NewReader(out)), int64(len(out)), status
 }
 
-func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+func handleApi(l *log.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	methodAllowed := http.MethodPost
 	handleWithRecover(
-		log, w, r, &methodAllowed,
-		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		l, w, r, &methodAllowed,
+		func(log *log.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "api" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
@@ -2598,7 +2601,7 @@ func handleApi(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Reques
 	)
 }
 
-func handlePublicRequestParsed(log *lib.Logger, s *state, req any) (any, error) {
+func handlePublicRequestParsed(log *log.Logger, s *state, req any) (any, error) {
 	log.Debug("handling request %T", req)
 	log.Trace("request body %+v", req)
 	var err error
@@ -2612,11 +2615,11 @@ func handlePublicRequestParsed(log *lib.Logger, s *state, req any) (any, error) 
 	return resp, err
 }
 
-func handlePublic(log *lib.Logger, st *state, w http.ResponseWriter, r *http.Request) {
+func handlePublic(l *log.Logger, st *state, w http.ResponseWriter, r *http.Request) {
 	methodAllowed := http.MethodPost
 	handleWithRecover(
-		log, w, r, &methodAllowed,
-		func(log *lib.Logger, query url.Values) (io.ReadCloser, int64, int) {
+		l, w, r, &methodAllowed,
+		func(log *log.Logger, query url.Values) (io.ReadCloser, int64, int) {
 			segments := strings.Split(r.URL.Path, "/")[1:]
 			if segments[0] != "public" {
 				panic(fmt.Errorf("bad path %v", r.URL.Path))
@@ -2665,16 +2668,16 @@ var preactHooksJsStr []byte
 //go:embed scripts.js
 var scriptsJs []byte
 
-func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
+func setupRouting(l *log.Logger, st *state, scriptsJsFile string) {
 	errorTemplate = parseTemplates(
 		namedTemplate{name: "base", body: baseTemplateStr},
 		namedTemplate{name: "error", body: errorTemplateStr},
 	)
 
-	setupPage := func(path string, handle func(ll *lib.Logger, state *state, w http.ResponseWriter, r *http.Request)) {
+	setupPage := func(path string, handle func(l *log.Logger, state *state, w http.ResponseWriter, r *http.Request)) {
 		http.HandleFunc(
 			path,
-			func(w http.ResponseWriter, r *http.Request) { handle(log, st, w, r) },
+			func(w http.ResponseWriter, r *http.Request) { handle(l, st, w, r) },
 		)
 	}
 
@@ -2737,23 +2740,23 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 	// blocks serving
 	http.HandleFunc(
 		"/blocks/",
-		func(w http.ResponseWriter, r *http.Request) { handleBlock(log, st, w, r) },
+		func(w http.ResponseWriter, r *http.Request) { handleBlock(l, st, w, r) },
 	)
 
 	// file serving
 	http.HandleFunc(
 		"/files/",
-		func(w http.ResponseWriter, r *http.Request) { handleFile(log, st, w, r) },
+		func(w http.ResponseWriter, r *http.Request) { handleFile(l, st, w, r) },
 	)
 
 	http.HandleFunc(
 		"/api/",
-		func(w http.ResponseWriter, r *http.Request) { handleApi(log, st, w, r) },
+		func(w http.ResponseWriter, r *http.Request) { handleApi(l, st, w, r) },
 	)
 
 	http.HandleFunc(
 		"/public/",
-		func(w http.ResponseWriter, r *http.Request) { handlePublic(log, st, w, r) },
+		func(w http.ResponseWriter, r *http.Request) { handlePublic(l, st, w, r) },
 	)
 
 	// pages
@@ -2781,12 +2784,12 @@ func setupRouting(log *lib.Logger, st *state, scriptsJsFile string) {
 }
 
 // Writes stats to influx db.
-func sendMetrics(log *lib.Logger, st *state, influxDB *lib.InfluxDB) error {
-	metrics := lib.MetricsBuilder{}
+func sendMetrics(l *log.Logger, st *state, influxDB *log.InfluxDB) error {
+	metrics := log.MetricsBuilder{}
 	rand := wyhash.New(rand.Uint64())
-	alert := log.NewNCAlert(10 * time.Second)
+	alert := l.NewNCAlert(10 * time.Second)
 	for {
-		log.Info("sending metrics")
+		l.Info("sending metrics")
 		metrics.Reset()
 		now := time.Now()
 		for _, req := range msgs.AllShuckleMessageKind {
@@ -2798,25 +2801,25 @@ func sendMetrics(log *lib.Logger, st *state, influxDB *lib.InfluxDB) error {
 		}
 		err := influxDB.SendMetrics(metrics.Payload())
 		if err == nil {
-			log.ClearNC(alert)
+			l.ClearNC(alert)
 			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
-			log.Info("metrics sent, sleeping for %v", sleepFor)
+			l.Info("metrics sent, sleeping for %v", sleepFor)
 			time.Sleep(sleepFor)
 		} else {
-			log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
+			l.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
 			time.Sleep(time.Second)
 		}
 	}
 }
 
-func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
+func serviceMonitor(ll *log.Logger, st *state, staleDelta time.Duration) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	staleBlockServicesAlerts := make(map[msgs.BlockServiceId]*lib.XmonNCAlert)
-	staleShardsAlerts := make(map[msgs.ShardId]*lib.XmonNCAlert)
+	staleBlockServicesAlerts := make(map[msgs.BlockServiceId]*log.XmonNCAlert)
+	staleShardsAlerts := make(map[msgs.ShardId]*log.XmonNCAlert)
 	staleCDCAlert := ll.NewNCAlert(0)
-	staleCDCAlert.SetAppType(lib.XMON_DAYTIME)
+	staleCDCAlert.SetAppType(log.XMON_DAYTIME)
 
 	gracePeriodThreshold := uint64(msgs.Now())
 
@@ -2891,7 +2894,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 				alert, found := staleBlockServicesAlerts[bsId]
 				if !found {
 					alert = ll.NewNCAlert(0)
-					alert.SetAppType(lib.XMON_DAYTIME)
+					alert.SetAppType(log.XMON_DAYTIME)
 					staleBlockServicesAlerts[bsId] = alert
 				}
 				ll.RaiseNC(alert, "stale blockservice %v, fd %s (seen %s ago)", bsId, fd, formatLastSeen(ts))
@@ -2929,7 +2932,7 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 				alert, found := staleShardsAlerts[shId]
 				if !found {
 					alert = ll.NewNCAlert(0)
-					alert.SetAppType(lib.XMON_DAYTIME)
+					alert.SetAppType(log.XMON_DAYTIME)
 					staleShardsAlerts[shId] = alert
 				}
 				ll.RaiseNC(alert, "stale shard %v (seen %s ago)", shId, formatLastSeen(ts))
@@ -2970,21 +2973,21 @@ func serviceMonitor(ll *lib.Logger, st *state, staleDelta time.Duration) error {
 	}
 }
 
-func blockServiceAlerts(log *lib.Logger, s *state) {
-	replaceDecommedAlert := log.NewNCAlert(0)
-	replaceDecommedAlert.SetAppType(lib.XMON_NEVER)
-	migrateDecommedAlert := log.NewNCAlert(0)
-	migrateDecommedAlert.SetAppType(lib.XMON_NEVER)
-	inactivePathPrefixAlert := log.NewNCAlert(0)
-	inactivePathPrefixAlert.SetAppType(lib.XMON_NEVER)
-	nonReadableFailureDomainsAlert := log.NewNCAlert(0)
-	appType := lib.XMON_NEVER
+func blockServiceAlerts(l *log.Logger, s *state) {
+	replaceDecommedAlert := l.NewNCAlert(0)
+	replaceDecommedAlert.SetAppType(log.XMON_NEVER)
+	migrateDecommedAlert := l.NewNCAlert(0)
+	migrateDecommedAlert.SetAppType(log.XMON_NEVER)
+	inactivePathPrefixAlert := l.NewNCAlert(0)
+	inactivePathPrefixAlert.SetAppType(log.XMON_NEVER)
+	nonReadableFailureDomainsAlert := l.NewNCAlert(0)
+	appType := log.XMON_NEVER
 	nonReadableFailureDomainsAlert.SetAppType(appType)
 
 	for {
 		blockServices, err := s.selectBlockServices(nil, nil, 0, 0, msgs.Now(), false, "")
 		if err != nil {
-			log.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
+			l.RaiseNC(replaceDecommedAlert, "error reading block services, will try again in one second: %s", err)
 			time.Sleep(time.Second)
 			continue
 		}
@@ -2995,7 +2998,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 		for _, bs := range blockServices {
 			pathSegments := strings.Split(bs.Path, ":")
 			if len(pathSegments) != 2 {
-				log.RaiseAlert("invalid path %q for block service", bs.Path)
+				l.RaiseAlert("invalid path %q for block service", bs.Path)
 				continue
 			}
 			pathPrefix := pathSegments[0]
@@ -3008,7 +3011,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 				activeBlockServices[pathPrefix] = make(map[string]struct{})
 			}
 			if _, alreadyPresent := activeBlockServices[pathPrefix][bs.Path]; alreadyPresent {
-				log.RaiseAlert("found duplicate block service at path %q", bs.Path)
+				l.RaiseAlert("found duplicate block service at path %q", bs.Path)
 				continue
 			}
 			activeBlockServices[pathPrefix][bs.Path] = struct{}{}
@@ -3021,14 +3024,14 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			}
 		}
 		if len(inactivePathPrefixes) == 0 {
-			log.ClearNC(inactivePathPrefixAlert)
+			l.ClearNC(inactivePathPrefixAlert)
 		} else {
 			sort.Strings(inactivePathPrefixes)
 			alertString := fmt.Sprintf("decomissioned path prefixes need to be replaced: %s", strings.Join(inactivePathPrefixes, " "))
 			if len(alertString) > 10000 {
 				alertString = alertString[:10000] + "...."
 			}
-			log.RaiseNC(inactivePathPrefixAlert, alertString)
+			l.RaiseNC(inactivePathPrefixAlert, alertString)
 		}
 
 		// collect non-replaced decommissioned block services
@@ -3057,7 +3060,7 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 		}
 
 		if len(missingBlockServices) == 0 {
-			log.ClearNC(replaceDecommedAlert)
+			l.ClearNC(replaceDecommedAlert)
 		} else {
 
 			bss := make([]string, 0, len(missingBlockServices))
@@ -3069,58 +3072,58 @@ func blockServiceAlerts(log *lib.Logger, s *state) {
 			if len(alertString) > 10000 {
 				alertString = alertString[:10000] + "...."
 			}
-			log.RaiseNC(replaceDecommedAlert, alertString)
+			l.RaiseNC(replaceDecommedAlert, alertString)
 		}
 
 		if len(decommedWithFiles) == 0 {
-			log.ClearNC(migrateDecommedAlert)
+			l.ClearNC(migrateDecommedAlert)
 		} else {
 			bss := make([]string, 0, len(decommedWithFiles))
 			for bs := range decommedWithFiles {
 				bss = append(bss, bs)
 			}
 			sort.Strings(bss)
-			log.RaiseNC(migrateDecommedAlert, "decommissioned block services still have files (including transient): %s", strings.Join(bss, " "))
+			l.RaiseNC(migrateDecommedAlert, "decommissioned block services still have files (including transient): %s", strings.Join(bss, " "))
 		}
 
 		locations, err := s.selectLocations()
 		if err != nil {
-			nonReadableFailureDomainsAlert.SetAppType(lib.XMON_CRITICAL)
-			log.RaiseNC(nonReadableFailureDomainsAlert, "error reading locations when trying to detect non readable failure domains: %s", err)
+			nonReadableFailureDomainsAlert.SetAppType(log.XMON_CRITICAL)
+			l.RaiseNC(nonReadableFailureDomainsAlert, "error reading locations when trying to detect non readable failure domains: %s", err)
 
 		} else {
 			nonReadableFailureDomainAlertText := ""
-			newAppType := lib.XMON_NEVER
+			newAppType := log.XMON_NEVER
 
 			for _, loc := range locations {
 				nonReadableFailureDomains, err := s.selectNonReadableFailureDomains(loc.Id)
 				if err != nil {
-					newAppType = lib.XMON_DAYTIME
+					newAppType = log.XMON_DAYTIME
 					nonReadableFailureDomainAlertText += fmt.Sprintf("\nerror reading non readable failure domains for location %s: %s", loc.Name, err)
 					continue
 				}
 				if len(nonReadableFailureDomains) > 0 {
 					if len(nonReadableFailureDomains) > s.config.maxNonReadableFailureDomainsPerLocation {
-						newAppType = lib.XMON_DAYTIME
+						newAppType = log.XMON_DAYTIME
 					}
 					nonReadableFailureDomainAlertText += fmt.Sprintf("\nlocation %s : non-readable failure domains %v", loc.Name, nonReadableFailureDomains)
 				}
 			}
 			if nonReadableFailureDomainAlertText != "" {
 				if appType != newAppType {
-					log.ClearNC(nonReadableFailureDomainsAlert)
+					l.ClearNC(nonReadableFailureDomainsAlert)
 					appType = newAppType
 					nonReadableFailureDomainsAlert.SetAppType(appType)
 				}
-				log.RaiseNC(nonReadableFailureDomainsAlert, "detected non readable failure domains:%s", nonReadableFailureDomainAlertText)
+				l.RaiseNC(nonReadableFailureDomainsAlert, "detected non readable failure domains:%s", nonReadableFailureDomainAlertText)
 			} else {
-				log.ClearNC(nonReadableFailureDomainsAlert)
+				l.ClearNC(nonReadableFailureDomainsAlert)
 				appType = newAppType
 				nonReadableFailureDomainsAlert.SetAppType(appType)
 			}
 		}
 
-		log.Info("checked block services, sleeping for a minute")
+		l.Info("checked block services, sleeping for a minute")
 		time.Sleep(time.Minute)
 	}
 }
@@ -3298,7 +3301,7 @@ func initAndPopulateShardsTable(db *sql.DB) error {
 
 func main() {
 	httpPort := flag.Uint("http-port", 10000, "Port on which to run the HTTP server")
-	var addresses lib.StringArrayFlags
+	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Addresses (up to two) to bind bincode server on.")
 	logFile := flag.String("log-file", "", "File in which to write logs (or stdout)")
 	verbose := flag.Bool("verbose", false, "")
@@ -3331,7 +3334,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	ownIp1, ownPort1, err := lib.ParseIPV4Addr(addresses[0])
+	ownIp1, ownPort1, err := flags.ParseIPV4Addr(addresses[0])
 	if err != nil {
 		panic(err)
 	}
@@ -3339,7 +3342,7 @@ func main() {
 	var ownIp2 [4]byte
 	var ownPort2 uint16
 	if len(addresses) == 2 {
-		ownIp2, ownPort2, err = lib.ParseIPV4Addr(addresses[1])
+		ownIp2, ownPort2, err = flags.ParseIPV4Addr(addresses[1])
 		if err != nil {
 			panic(err)
 		}
@@ -3350,25 +3353,26 @@ func main() {
 		var err error
 		logOut, err = os.OpenFile(*logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Fatalf("could not open log file %v: %v", *logFile, err)
+			fmt.Errorf("could not open log file %v: %v\n", *logFile, err)
+			os.Exit(2)
 		}
 	}
 
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical"})
+	l := log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppInstance: "eggsshuckle", AppType: "restech_eggsfs.critical"})
 
 	if *dataDir == "" {
 		fmt.Fprintf(os.Stderr, "You need to specify a -data-dir\n")
 		os.Exit(2)
 	}
 
-	var influxDB *lib.InfluxDB
+	var influxDB *log.InfluxDB
 	if *influxDBOrigin == "" {
 		if *influxDBOrg != "" || *influxDBBucket != "" {
 			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
@@ -3379,25 +3383,25 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
 			os.Exit(2)
 		}
-		influxDB = &lib.InfluxDB{
+		influxDB = &log.InfluxDB{
 			Origin: *influxDBOrigin,
 			Org:    *influxDBOrg,
 			Bucket: *influxDBBucket,
 		}
 	}
 
-	log.Info("Running shuckle with options:")
-	log.Info("  addr = %v", addresses)
-	log.Info("  httpPort = %v", *httpPort)
-	log.Info("  logFile = '%v'", *logFile)
-	log.Info("  logLevel = %v", level)
-	log.Info("  maxConnections = %d", *maxConnections)
-	log.Info("  mtu = %v", *mtu)
-	log.Info("  stale = '%v'", *stale)
-	log.Info("  blockServiceDelay ='%v' ", *blockServiceDelay)
-	log.Info("  dataDir = %s", *dataDir)
-	log.Info("  minDecomInterval = '%v'", *minDecomInterval)
-	log.Info("  maxDecommedWithFiles = %v", *maxDecommedWithFiles)
+	l.Info("Running shuckle with options:")
+	l.Info("  addr = %v", addresses)
+	l.Info("  httpPort = %v", *httpPort)
+	l.Info("  logFile = '%v'", *logFile)
+	l.Info("  logLevel = %v", level)
+	l.Info("  maxConnections = %d", *maxConnections)
+	l.Info("  mtu = %v", *mtu)
+	l.Info("  stale = '%v'", *stale)
+	l.Info("  blockServiceDelay ='%v' ", *blockServiceDelay)
+	l.Info("  dataDir = %s", *dataDir)
+	l.Info("  minDecomInterval = '%v'", *minDecomInterval)
+	l.Info("  maxDecommedWithFiles = %v", *maxDecommedWithFiles)
 
 	if *mtu != 0 {
 		client.SetMTU(*mtu)
@@ -3413,7 +3417,7 @@ func main() {
 	}
 	defer db.Close()
 
-	readSpanBufPool = lib.NewBufPool()
+	readSpanBufPool = bufpool.NewBufPool()
 
 	bincodeListener1, err := net.Listen("tcp", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), ownPort1))
 	if err != nil {
@@ -3438,9 +3442,9 @@ func main() {
 	defer httpListener.Close()
 
 	if bincodeListener2 == nil {
-		log.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener1.Addr())
+		l.Info("running on %v (HTTP) and %v (bincode)", httpListener.Addr(), bincodeListener1.Addr())
 	} else {
-		log.Info("running on %v (HTTP) and %v,%v (bincode)", httpListener.Addr(), bincodeListener1.Addr(), bincodeListener2.Addr())
+		l.Info("running on %v (HTTP) and %v,%v (bincode)", httpListener.Addr(), bincodeListener1.Addr(), bincodeListener2.Addr())
 	}
 
 	config := &shuckleConfig{
@@ -3451,7 +3455,7 @@ func main() {
 		currentBlockServiceUpdateInterval:       *currentBlockServiceUpdateInterval,
 		blockServiceDelay:                       *blockServiceDelay,
 	}
-	state, err := newState(log, db, config)
+	state, err := newState(l, db, config)
 	if err != nil {
 		panic(err)
 	}
@@ -3464,19 +3468,19 @@ func main() {
 		syscall.Kill(syscall.Getpid(), sig.(syscall.Signal))
 	}()
 
-	setupRouting(log, state, *scriptsJs)
+	setupRouting(l, state, *scriptsJs)
 
 	terminateChan := make(chan any)
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(log, recover()) }()
-		assignWritableBlockServicesToShards(log, state)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		assignWritableBlockServicesToShards(l, state)
 	}()
 
 	var activeConnections int64
 	startBincodeHandler := func(listener net.Listener) {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 			for {
 				conn, err := listener.Accept()
 				if err != nil {
@@ -3491,9 +3495,9 @@ func main() {
 				go func() {
 					defer func() {
 						atomic.AddInt64(&activeConnections, -1)
-						lib.HandleRecoverPanic(log, recover())
+						lrecover.HandleRecoverChan(l, terminateChan, recover())
 					}()
-					handleRequest(log, state, conn.(*net.TCPConn))
+					handleRequest(l, state, conn.(*net.TCPConn))
 				}()
 			}
 		}()
@@ -3504,30 +3508,30 @@ func main() {
 	}
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 		terminateChan <- http.Serve(httpListener, nil)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(log, recover()) }()
-		err := serviceMonitor(log, state, *stale)
-		log.RaiseAlert("serviceMonitor ended with error %s", err)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		err := serviceMonitor(l, state, *stale)
+		l.RaiseAlert("serviceMonitor ended with error %s", err)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(log, recover()) }()
-		blockServiceAlerts(log, state)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		blockServiceAlerts(l, state)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverPanic(log, recover()) }()
-		checkBlockServiceFilePresence(log, state)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		checkBlockServiceFilePresence(l, state)
 	}()
 
 	if influxDB != nil {
 		go func() {
-			defer func() { lib.HandleRecoverPanic(log, recover()) }()
-			sendMetrics(log, state, influxDB)
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+			sendMetrics(l, state, influxDB)
 		}()
 	}
 

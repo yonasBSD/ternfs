@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -13,7 +13,7 @@ type ZeroBlockServiceFilesStats struct {
 	ZeroBlockServiceFilesRemoved uint64
 }
 
-func CollectZeroBlockServiceFiles(log *lib.Logger, c *client.Client, stats *ZeroBlockServiceFilesStats) error {
+func CollectZeroBlockServiceFiles(log *log.Logger, c *client.Client, stats *ZeroBlockServiceFilesStats) error {
 	log.Info("starting to collect block services files")
 	reqs := make([]msgs.RemoveZeroBlockServiceFilesReq, 256)
 	resps := make([]msgs.RemoveZeroBlockServiceFilesResp, 256)

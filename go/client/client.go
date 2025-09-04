@@ -27,12 +27,13 @@ import (
 	"unsafe"
 	"xtx/ternfs/bincode"
 	"xtx/ternfs/crc32c"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/timing"
 )
 
 type ReqCounters struct {
-	Timings  lib.Timings
+	Timings  timing.Timings
 	Attempts uint64
 }
 
@@ -60,19 +61,19 @@ func NewClientCounters() *ClientCounters {
 		var shards [256]ReqCounters
 		counters.Shard[uint8(k)] = &shards
 		for i := 0; i < 256; i++ {
-			shards[i].Timings = *lib.NewTimings(40, time.Microsecond*10, 1.5)
+			shards[i].Timings = *timing.NewTimings(40, time.Microsecond*10, 1.5)
 		}
 	}
 	for _, k := range msgs.AllCDCMessageKind {
 		// max = ~2min
 		counters.CDC[uint8(k)] = &ReqCounters{
-			Timings: *lib.NewTimings(35, time.Millisecond, 1.5),
+			Timings: *timing.NewTimings(35, time.Millisecond, 1.5),
 		}
 	}
 	return &counters
 }
 
-func (counters *ClientCounters) Log(log *lib.Logger) {
+func (counters *ClientCounters) Log(log *log.Logger) {
 	formatCounters := func(c *ReqCounters) {
 		totalCount := uint64(0)
 		for _, bin := range c.Timings.Histogram() {
@@ -137,7 +138,7 @@ func (counters *ClientCounters) Log(log *lib.Logger) {
 
 }
 
-var DefaultShardTimeout = lib.ReqTimeouts{
+var DefaultShardTimeout = timing.ReqTimeouts{
 	Initial: 100 * time.Millisecond,
 	Max:     2 * time.Second,
 	Overall: 10 * time.Second,
@@ -145,7 +146,7 @@ var DefaultShardTimeout = lib.ReqTimeouts{
 	Jitter:  0.1,
 }
 
-var DefaultCDCTimeout = lib.ReqTimeouts{
+var DefaultCDCTimeout = timing.ReqTimeouts{
 	Initial: time.Second,
 	Max:     10 * time.Second,
 	Overall: time.Minute,
@@ -153,7 +154,7 @@ var DefaultCDCTimeout = lib.ReqTimeouts{
 	Jitter:  0.1,
 }
 
-var DefaultBlockTimeout = lib.ReqTimeouts{
+var DefaultBlockTimeout = timing.ReqTimeouts{
 	Initial: time.Second,
 	Max:     10 * time.Second,
 	Overall: 5 * time.Minute,
@@ -239,7 +240,7 @@ type clientMetadata struct {
 
 var whichMetadatataAddr int
 
-func (cm *clientMetadata) init(log *lib.Logger, client *Client) error {
+func (cm *clientMetadata) init(log *log.Logger, client *Client) error {
 	log.Debug("initiating clientMetadata")
 	defer log.Debug("finished initializing clientMetadata")
 	cm.client = client
@@ -282,7 +283,7 @@ func (cm *clientMetadata) close() {
 }
 
 // terminates when cm.incoming gets nil
-func (cm *clientMetadata) processRequests(log *lib.Logger) {
+func (cm *clientMetadata) processRequests(log *log.Logger) {
 	buf := bytes.NewBuffer([]byte{})
 	for req := range cm.incoming {
 		dontWait := req.resp == nil
@@ -361,7 +362,7 @@ func (cm *clientMetadata) processRequests(log *lib.Logger) {
 	log.Debug("got close request in request processor, winding down")
 }
 
-func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse, dischargeBuf bool) {
+func (cm *clientMetadata) parseResponse(log *log.Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse, dischargeBuf bool) {
 	defer func() {
 		if !dischargeBuf {
 			return
@@ -453,7 +454,7 @@ func (cm *clientMetadata) parseResponse(log *lib.Logger, req *metadataProcessorR
 	}
 }
 
-func (cm *clientMetadata) processRawResponse(log *lib.Logger, rawResp *rawMetadataResponse) {
+func (cm *clientMetadata) processRawResponse(log *log.Logger, rawResp *rawMetadataResponse) {
 	if rawResp.buf != nil {
 		if req, found := cm.requestsById[rawResp.requestId]; found {
 			// Common case, the request is already there
@@ -506,7 +507,7 @@ func (cm *clientMetadata) processRawResponse(log *lib.Logger, rawResp *rawMetada
 }
 
 // terminates when `cm.quitResponseProcessor` gets a message
-func (cm *clientMetadata) processResponses(log *lib.Logger) {
+func (cm *clientMetadata) processResponses(log *log.Logger) {
 	for {
 		// prioritize responses to requests, we want to get
 		// them soon to not get spurious timeouts
@@ -546,7 +547,7 @@ func (cm *clientMetadata) processResponses(log *lib.Logger) {
 }
 
 // terminates when the socket is closed
-func (cm *clientMetadata) drainSocket(log *lib.Logger) {
+func (cm *clientMetadata) drainSocket(log *log.Logger) {
 	for {
 		buf := <-cm.responsesBufs
 		cm.sock.SetReadDeadline(time.Now().Add(DefaultShardTimeout.Initial / 2))
@@ -600,7 +601,7 @@ type clientBlockResponse struct {
 	completionChan chan *blockCompletion
 }
 
-func (resp *clientBlockResponse) done(log *lib.Logger, addr1 *net.TCPAddr, addr2 *net.TCPAddr, extra any, err error) {
+func (resp *clientBlockResponse) done(log *log.Logger, addr1 *net.TCPAddr, addr2 *net.TCPAddr, extra any, err error) {
 	if resp.err == nil && err != nil {
 		log.InfoStack(1, "failing request %T %+v addr1=%+v addr2=%+v extra=%+v: %v", resp.req, resp.req, addr1, addr2, extra, err)
 		resp.err = err
@@ -638,7 +639,7 @@ type blocksProcessor struct {
 	sourceAddr1     *net.TCPAddr
 	sourceAddr2		*net.TCPAddr
 	what            string
-	timeout         **lib.ReqTimeouts
+	timeout         **timing.ReqTimeouts
 	_conn           *blocksProcessorConn // this must be loaded through loadConn
 }
 
@@ -659,7 +660,7 @@ func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
 var whichBlockIp uint64
 var whichSourceIp uint64
 
-func (proc *blocksProcessor) connect(log *lib.Logger) (*net.TCPConn, error) {
+func (proc *blocksProcessor) connect(log *log.Logger) (*net.TCPConn, error) {
 	var err error
 	sourceIpSelector := atomic.AddUint64(&whichSourceIp, 1)
 	var sourceAddr *net.TCPAddr
@@ -724,7 +725,7 @@ func connCheck(conn *net.TCPConn) error {
 	return sysErr
 }
 
-func (proc *blocksProcessor) processRequests(log *lib.Logger) {
+func (proc *blocksProcessor) processRequests(log *log.Logger) {
 	log.Debug("%v: starting request processor for addr1=%v addr2=%v", proc.what, proc.addr1, proc.addr2)
 	// one iteration = one request
 	for {
@@ -792,7 +793,7 @@ func (proc *blocksProcessor) processRequests(log *lib.Logger) {
 	}
 }
 
-func (proc *blocksProcessor) processResponses(log *lib.Logger) {
+func (proc *blocksProcessor) processResponses(log *log.Logger) {
 	log.Debug("%v: starting response processor for addr1=%v addr2=%v", proc.what, proc.addr1, proc.addr2)
 	// one iteration = one request
 	for resp := range proc.inFlightReqChan {
@@ -868,7 +869,7 @@ type blocksProcessorKey struct {
 
 type blocksProcessors struct {
 	what     string
-	timeouts **lib.ReqTimeouts
+	timeouts **timing.ReqTimeouts
 	// how many bits of the block service id to use for blockServiceKey
 	blockServiceBits uint8
 	// blocksProcessorKey -> *blocksProcessor
@@ -877,7 +878,7 @@ type blocksProcessors struct {
 	sourceAddr2 net.TCPAddr
 }
 
-func (procs *blocksProcessors) init(what string, timeouts **lib.ReqTimeouts, localAddresses msgs.AddrsInfo) {
+func (procs *blocksProcessors) init(what string, timeouts **timing.ReqTimeouts, localAddresses msgs.AddrsInfo) {
 	procs.what = what
 	procs.timeouts = timeouts
 	if localAddresses.Addr1.Addrs[0] != 0 {
@@ -901,7 +902,7 @@ type sendArgs struct {
 // This currently never fails (everything network related happens in
 // the processor loops), keeping error since it might fail in the future
 func (procs *blocksProcessors) send(
-	log *lib.Logger,
+	log *log.Logger,
 	args *sendArgs,
 	completionChan chan *blockCompletion,
 ) error {
@@ -973,9 +974,9 @@ type Client struct {
 	fetchBlockBufs       sync.Pool
 	eraseBlockProcessors blocksProcessors
 	checkBlockProcessors blocksProcessors
-	shardTimeout         *lib.ReqTimeouts
-	cdcTimeout           *lib.ReqTimeouts
-	blockTimeout         *lib.ReqTimeouts
+	shardTimeout         *timing.ReqTimeouts
+	cdcTimeout           *timing.ReqTimeouts
+	blockTimeout         *timing.ReqTimeouts
 	requestIdCounter     uint64
 	shuckleAddress       string
 	addrsRefreshTicker   *time.Ticker
@@ -987,7 +988,7 @@ type Client struct {
 	blockServiceToFailureDomain map[msgs.BlockServiceId]msgs.FailureDomain
 }
 
-func (c *Client) refreshAddrs(log *lib.Logger) error {
+func (c *Client) refreshAddrs(log *log.Logger) error {
 	var shardAddrs [256]msgs.AddrsInfo
 	var cdcAddrs msgs.AddrsInfo
 	{
@@ -1054,7 +1055,7 @@ func (c *Client) refreshAddrs(log *lib.Logger) error {
 // Create a new client by acquiring the CDC and Shard connection details from Shuckle. It
 // also refreshes the shard/cdc infos every minute.
 func NewClient(
-	log *lib.Logger,
+	log *log.Logger,
 	shuckleTimeout *ShuckleTimeouts,
 	shuckleAddress string,
 	localAddresses msgs.AddrsInfo,
@@ -1099,19 +1100,19 @@ func (c *Client) SetCounters(counters *ClientCounters) {
 
 // Override the shard timeout parameters.
 // This is only safe to use during initialization.
-func (c *Client) SetShardTimeouts(t *lib.ReqTimeouts) {
+func (c *Client) SetShardTimeouts(t *timing.ReqTimeouts) {
 	c.shardTimeout = t
 }
 
 // Override the CDC timeout parameters.
 // This is only safe to use during initialization.
-func (c *Client) SetCDCTimeouts(t *lib.ReqTimeouts) {
+func (c *Client) SetCDCTimeouts(t *timing.ReqTimeouts) {
 	c.cdcTimeout = t
 }
 
 // Override the block timeout parameters.
 // This is only safe to use during initialization.
-func (c *Client) SetBlockTimeout(t *lib.ReqTimeouts) {
+func (c *Client) SetBlockTimeout(t *timing.ReqTimeouts) {
 	c.blockTimeout = t
 }
 
@@ -1134,7 +1135,7 @@ func SetMTU(mtu uint64) {
 }
 
 func NewClientDirectNoAddrs(
-	log *lib.Logger,
+	log *log.Logger,
 	localAddresses msgs.AddrsInfo,
 ) (c *Client, err error) {
 	c = &Client{
@@ -1246,7 +1247,7 @@ func (c *Client) Close() {
 }
 
 // Not atomic between the read/write
-func (c *Client) MergeDirectoryInfo(log *lib.Logger, id msgs.InodeId, entry msgs.IsDirectoryInfoEntry) error {
+func (c *Client) MergeDirectoryInfo(log *log.Logger, id msgs.InodeId, entry msgs.IsDirectoryInfoEntry) error {
 	packedEntry := msgs.DirectoryInfoEntry{
 		Body: bincode.Pack(entry),
 		Tag:  entry.Tag(),
@@ -1274,7 +1275,7 @@ func (c *Client) MergeDirectoryInfo(log *lib.Logger, id msgs.InodeId, entry msgs
 }
 
 // Not atomic between the read/write
-func (c *Client) RemoveDirectoryInfoEntry(log *lib.Logger, id msgs.InodeId, tag msgs.DirectoryInfoTag) error {
+func (c *Client) RemoveDirectoryInfoEntry(log *log.Logger, id msgs.InodeId, tag msgs.DirectoryInfoTag) error {
 	statResp := msgs.StatDirectoryResp{}
 	if err := c.ShardRequest(log, id.Shard(), &msgs.StatDirectoryReq{Id: id}, &statResp); err != nil {
 		return err
@@ -1293,7 +1294,7 @@ func (c *Client) RemoveDirectoryInfoEntry(log *lib.Logger, id msgs.InodeId, tag 
 }
 
 func (c *Client) ResolveDirectoryInfoEntry(
-	log *lib.Logger,
+	log *log.Logger,
 	dirInfoCache *DirInfoCache,
 	dirId msgs.InodeId,
 	entry msgs.IsDirectoryInfoEntry, // output will be stored in here
@@ -1341,7 +1342,7 @@ TraverseDirectories:
 }
 
 // High-level helper function to take a string path and return the inode and parent inode
-func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.InodeId, creationTime msgs.TernTime, parent msgs.InodeId, err error) {
+func (c *Client) ResolvePathWithParent(log *log.Logger, path string) (id msgs.InodeId, creationTime msgs.TernTime, parent msgs.InodeId, err error) {
 	if !filepath.IsAbs(path) {
 		return msgs.NULL_INODE_ID, 0, msgs.NULL_INODE_ID, fmt.Errorf("expected absolute path, got '%v'", path)
 	}
@@ -1363,7 +1364,7 @@ func (c *Client) ResolvePathWithParent(log *lib.Logger, path string) (id msgs.In
 }
 
 // High-level helper function to take a string path and return the inode
-func (c *Client) ResolvePath(log *lib.Logger, path string) (msgs.InodeId, error) {
+func (c *Client) ResolvePath(log *log.Logger, path string) (msgs.InodeId, error) {
 	id, _, _, err := c.ResolvePathWithParent(log, path)
 	return id, err
 }
@@ -1386,7 +1387,7 @@ func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, s
 }
 
 // An asynchronous version of [StartBlock] that is currently unused.
-func (c *Client) StartWriteBlock(log *lib.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartWriteBlock(log *log.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return c.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
 }
 
@@ -1394,7 +1395,7 @@ func retriableBlockError(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)
 }
 
-func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, processor *blocksProcessors, args *sendArgs) (msgs.BlocksResponse, error) {
+func (c *Client) singleBlockReq(log *log.Logger, timeouts *timing.ReqTimeouts, processor *blocksProcessors, args *sendArgs) (msgs.BlocksResponse, error) {
 	if timeouts == nil {
 		timeouts = c.blockTimeout
 	}
@@ -1434,7 +1435,7 @@ func (c *Client) singleBlockReq(log *lib.Logger, timeouts *lib.ReqTimeouts, proc
 	}
 }
 
-func (c *Client) WriteBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
+func (c *Client) WriteBlock(log *log.Logger, timeouts *timing.ReqTimeouts, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc) (proof [8]byte, err error) {
 	resp, err := c.singleBlockReq(log, timeouts, &c.writeBlockProcessors, writeBlockSendArgs(block, r, size, crc, nil))
 	if err != nil {
 		return proof, err
@@ -1460,7 +1461,7 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 }
 
 // An asynchronous version of [FetchBlock] that is currently unused.
-func (c *Client) StartFetchBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion, crc msgs.Crc) error {
+func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion, crc msgs.Crc) error {
 	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra, crc), completion)
 }
 
@@ -1477,7 +1478,7 @@ func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 //
 // The function returns a buffer that is allocated from an internal pool. Once you have finished with this buffer it must
 // be returned via the [PutFetchedBlock] function.
-func (c *Client) FetchBlock(log *lib.Logger, timeouts *lib.ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, crc msgs.Crc) (body *bytes.Buffer, err error) {
+func (c *Client) FetchBlock(log *log.Logger, timeouts *timing.ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, crc msgs.Crc) (body *bytes.Buffer, err error) {
 	buf := c.fetchBlockBufs.Get().(*bytes.Buffer)
 	buf.Reset()
 
@@ -1504,11 +1505,11 @@ func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sen
 }
 
 // An asynchronous version of [EraseBlock] that is currently unused.
-func (c *Client) StartEraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartEraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *blockCompletion) error {
 	return c.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
 }
 
-func (c *Client) EraseBlock(log *lib.Logger, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
+func (c *Client) EraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
 	resp, err := c.singleBlockReq(log, nil, &c.eraseBlockProcessors, eraseBlockSendArgs(block, nil))
 	if err != nil {
 		return proof, err
@@ -1545,11 +1546,11 @@ func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, s
 }
 
 // An asynchronous version of [CheckBlock] that is currently unused.
-func (c *Client) StartCheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartCheckBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
 	return c.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
 }
 
-func (c *Client) CheckBlock(log *lib.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
+func (c *Client) CheckBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc) error {
 	_, err := c.singleBlockReq(log, nil, &c.checkBlockProcessors, checkBlockSendArgs(blockService, blockId, size, crc, nil))
 	return err
 }

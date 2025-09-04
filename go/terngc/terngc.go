@@ -11,10 +11,14 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/flags"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/timing"
 	"xtx/ternfs/wyhash"
 
 	"net/http"
@@ -80,7 +84,7 @@ func main() {
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
-	var addresses lib.StringArrayFlags
+	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	numShuckleHandlers := flag.Uint("num-shuckle-handlers", 10, "Number of parallel shuckle requests")
 	syslog := flag.Bool("syslog", false, "")
@@ -121,7 +125,7 @@ func main() {
 
 	var localAddresses msgs.AddrsInfo
 	if len(addresses) > 0 {
-		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+		ownIp1, port1, err := flags.ParseIPV4Addr(addresses[0])
 		if err != nil {
 			panic(err)
 		}
@@ -129,7 +133,7 @@ func main() {
 		var ownIp2 [4]byte
 		var port2 uint16
 		if len(addresses) == 2 {
-			ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+			ownIp2, port2, err = flags.ParseIPV4Addr(addresses[1])
 			if err != nil {
 				panic(err)
 			}
@@ -152,7 +156,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	var influxDB *lib.InfluxDB
+	var influxDB *log.InfluxDB
 	if *influxDBOrigin == "" {
 		if *influxDBOrg != "" || *influxDBBucket != "" {
 			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
@@ -163,7 +167,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
 			os.Exit(2)
 		}
-		influxDB = &lib.InfluxDB{
+		influxDB = &log.InfluxDB{
 			Origin: *influxDBOrigin,
 			Org:    *influxDBOrg,
 			Bucket: *influxDBBucket,
@@ -185,21 +189,21 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
 
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppType: lib.XMON_DAYTIME, AppInstance: *appInstance})
+	l := log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppType: log.XMON_DAYTIME, AppInstance: *appInstance})
 
 	if *mtu != 0 {
 		client.SetMTU(*mtu)
 	}
 
-	log.Info("Will run GC in all shards")
+	l.Info("Will run GC in all shards")
 
 	if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
 		panic(err)
@@ -231,7 +235,7 @@ func main() {
 	blockTimeouts.Overall = 10 * time.Minute
 
 	dirInfoCache := client.NewDirInfoCache()
-	c, err := client.NewClient(log, &shuckleTimeouts, *shuckleAddress, localAddresses)
+	c, err := client.NewClient(l, &shuckleTimeouts, *shuckleAddress, localAddresses)
 	if err != nil {
 		panic(err)
 	}
@@ -268,7 +272,7 @@ func main() {
 
 	// store the state
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 		for {
 			tx, err := db.Begin()
 			if err != nil {
@@ -289,7 +293,7 @@ func main() {
 			if err := tx.Commit(); err != nil {
 				panic(err)
 			}
-			log.Info("stored state, waiting one minute")
+			l.Info("stored state, waiting one minute")
 			time.Sleep(time.Minute)
 		}
 	}()
@@ -301,10 +305,10 @@ func main() {
 		}
 		defer httpListener.Close()
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 			terminateChan <- http.Serve(httpListener, nil)
 		}()
-		log.Info("http pprof listener started on port %v", httpListener.Addr().(*net.TCPAddr).Port)
+		l.Info("http pprof listener started on port %v", httpListener.Addr().(*net.TCPAddr).Port)
 	}
 
 	if *collectDirectories {
@@ -315,9 +319,9 @@ func main() {
 		for i := 0; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 				for {
-					if err := cleanup.CollectDirectories(log, c, dirInfoCache, nil, opts, collectDirectoriesState, shid, *collectDirectoriesMinEdgeAge); err != nil {
+					if err := cleanup.CollectDirectories(l, c, dirInfoCache, nil, opts, collectDirectoriesState, shid, *collectDirectoriesMinEdgeAge); err != nil {
 						panic(fmt.Errorf("could not collect directories in shard %v: %v", shid, err))
 					}
 				}
@@ -332,22 +336,22 @@ func main() {
 		for i := 0; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				alert := log.NewNCAlert(10 * time.Second)
-				defer log.ClearNC(alert)
+				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+				alert := l.NewNCAlert(10 * time.Second)
+				defer l.ClearNC(alert)
 				timesFailed := 0
 				for {
-					if err := cleanup.DestructFiles(log, c, opts, destructFilesState, shid); err != nil {
+					if err := cleanup.DestructFiles(l, c, opts, destructFilesState, shid); err != nil {
 						timesFailed++
 						if timesFailed == 5 {
-							log.RaiseNC(alert, "could not destruct files after 5 attempts. last error: %v", err )
+							l.RaiseNC(alert, "could not destruct files after 5 attempts. last error: %v", err )
 						}
-						log.Info("destructing files in shard %v failed, sleeping for 10 minutes", shid)
+						l.Info("destructing files in shard %v failed, sleeping for 10 minutes", shid)
 						time.Sleep(10 * time.Minute)
 					} else {
-						log.ClearNC(alert)
+						l.ClearNC(alert)
 						timesFailed = 0
-						log.Info("finished destructing in shard %v, sleeping for one hour", shid)
+						l.Info("finished destructing in shard %v, sleeping for one hour", shid)
 						time.Sleep(time.Hour)
 					}
 				}
@@ -356,21 +360,21 @@ func main() {
 	}
 	if *zeroBlockServices {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 			for {
 				// just do that once an hour, we don't need this often.
 				waitFor := time.Second * time.Duration(rand.Uint64()%(60*60))
-				log.Info("waiting %v before collecting zero block service files", waitFor)
+				l.Info("waiting %v before collecting zero block service files", waitFor)
 				time.Sleep(waitFor)
-				if err := cleanup.CollectZeroBlockServiceFiles(log, c, zeroBlockServiceFilesStats); err != nil {
-					log.RaiseAlert("could not collecting zero block service files: %v", err)
+				if err := cleanup.CollectZeroBlockServiceFiles(l, c, zeroBlockServiceFilesStats); err != nil {
+					l.RaiseAlert("could not collecting zero block service files: %v", err)
 				}
-				log.Info("finished zero block services cycle, will restart")
+				l.Info("finished zero block services cycle, will restart")
 			}
 		}()
 	}
 	if *scrub {
-		rateLimit := lib.NewRateLimit(&lib.RateLimitOpts{
+		rateLimit := timing.NewRateLimit(&timing.RateLimitOpts{
 			RefillInterval: time.Second,
 			Refill:         100000, // 100k blocks per second scrubs in ~1 month right now (100 billion blocks)
 			BucketSize:     100000 * 100,
@@ -384,10 +388,10 @@ func main() {
 		for i := 0; i < 256; i++ {
 			shid := msgs.ShardId(i)
 			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 				for {
-					if err := cleanup.ScrubFiles(log, c, opts, rateLimit, scrubState, shid); err != nil {
-						log.RaiseAlert("could not scrub files: %v", err)
+					if err := cleanup.ScrubFiles(l, c, opts, rateLimit, scrubState, shid); err != nil {
+						l.RaiseAlert("could not scrub files: %v", err)
 					}
 				}
 			}()
@@ -395,8 +399,8 @@ func main() {
 	}
 	if *migrate {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			migrator := cleanup.Migrator(*shuckleAddress, log, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+			migrator := cleanup.Migrator(*shuckleAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
 			migrator.Run()
 		}()
 	} else {
@@ -410,20 +414,20 @@ func main() {
 			storageClass = msgs.StorageClassFromString(*defragStorageClass)
 		}
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 			for {
-				log.Info("starting to defrag")
+				l.Info("starting to defrag")
 				defragStats = &cleanup.DefragStats{}
-				bufPool := lib.NewBufPool()
-				progressReportAlert := log.NewNCAlert(0)
-				progressReportAlert.SetAppType(lib.XMON_NEVER)
+				bufPool := bufpool.NewBufPool()
+				progressReportAlert := l.NewNCAlert(0)
+				progressReportAlert.SetAppType(log.XMON_NEVER)
 				options := cleanup.DefragOptions{
 					WorkersPerShard: *defragWorkersPerShard,
 					MinSpanSize:     uint32(*defragMinSpanSize),
 					StorageClass:    storageClass,
 				}
-				cleanup.DefragFiles(log, c, bufPool, dirInfoCache, defragStats, progressReportAlert, &options, "/")
-				log.RaiseAlertAppType(lib.XMON_DAYTIME, "finished one cycle of defragging, will start again")
+				cleanup.DefragFiles(l, c, bufPool, dirInfoCache, defragStats, progressReportAlert, &options, "/")
+				l.RaiseAlertAppType(log.XMON_DAYTIME, "finished one cycle of defragging, will start again")
 			}
 		}()
 	}
@@ -431,10 +435,10 @@ func main() {
 	if influxDB != nil && (*destructFiles || *collectDirectories || *zeroBlockServices || *scrub || *defrag) {
 		// one thing just pushing the stats every minute
 		go func() {
-			metrics := lib.MetricsBuilder{}
-			alert := log.NewNCAlert(10 * time.Second)
+			metrics := log.MetricsBuilder{}
+			alert := l.NewNCAlert(10 * time.Second)
 			for {
-				log.Info("sending stats metrics")
+				l.Info("sending stats metrics")
 				now := time.Now()
 				metrics.Reset()
 				// generic GC metrics
@@ -537,12 +541,12 @@ func main() {
 				}
 				err := influxDB.SendMetrics(metrics.Payload())
 				if err == nil {
-					log.ClearNC(alert)
+					l.ClearNC(alert)
 					sleepFor := time.Second * 30
-					log.Info("gc metrics sent, sleeping for %v", sleepFor)
+					l.Info("gc metrics sent, sleeping for %v", sleepFor)
 					time.Sleep(sleepFor)
 				} else {
-					log.RaiseNC(alert, "failed to send gc metrics, will try again in a second: %v", err)
+					l.RaiseNC(alert, "failed to send gc metrics, will try again in a second: %v", err)
 					time.Sleep(time.Second)
 				}
 			}
@@ -552,7 +556,7 @@ func main() {
 		// counting transient files/files/directories
 		go func() {
 			for {
-				log.Info("starting to count files")
+				l.Info("starting to count files")
 				for i := int(countState.Files.Shard); i < 256; i++ {
 					shid := msgs.ShardId(i)
 					countState.Files.Shard = shid
@@ -561,8 +565,8 @@ func main() {
 					count := uint64(0)
 					var err error
 					for {
-						if err = c.ShardRequest(log, shid, &req, &resp); err != nil {
-							log.RaiseAlert("could not get files for shard %v: %v", shid, err)
+						if err = c.ShardRequest(l, shid, &req, &resp); err != nil {
+							l.RaiseAlert("could not get files for shard %v: %v", shid, err)
 							break
 						}
 						count += uint64(len(resp.Ids))
@@ -580,7 +584,7 @@ func main() {
 		}()
 		go func() {
 			for {
-				log.Info("starting to count directories")
+				l.Info("starting to count directories")
 				for i := int(countState.Directories.Shard); i < 256; i++ {
 					shid := msgs.ShardId(i)
 					countState.Directories.Shard = shid
@@ -589,8 +593,8 @@ func main() {
 					count := uint64(0)
 					var err error
 					for {
-						if err = c.ShardRequest(log, shid, &req, &resp); err != nil {
-							log.RaiseAlert("could not get directories for shard %v: %v", shid, err)
+						if err = c.ShardRequest(l, shid, &req, &resp); err != nil {
+							l.RaiseAlert("could not get directories for shard %v: %v", shid, err)
 							break
 						}
 						count += uint64(len(resp.Ids))
@@ -606,7 +610,7 @@ func main() {
 		}()
 		go func() {
 			for {
-				log.Info("starting to count transient files")
+				l.Info("starting to count transient files")
 				for i := int(countState.TransientFiles.Shard); i < 256; i++ {
 					shid := msgs.ShardId(i)
 					countState.TransientFiles.Shard = shid
@@ -615,8 +619,8 @@ func main() {
 					count := uint64(0)
 					var err error
 					for {
-						if err = c.ShardRequest(log, shid, &req, &resp); err != nil {
-							log.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
+						if err = c.ShardRequest(l, shid, &req, &resp); err != nil {
+							l.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
 							break
 						}
 						count += uint64(len(resp.Files))
@@ -631,14 +635,14 @@ func main() {
 			}
 		}()
 		go func() {
-			metrics := lib.MetricsBuilder{}
-			alert := log.NewNCAlert(10 * time.Second)
+			metrics := log.MetricsBuilder{}
+			alert := l.NewNCAlert(10 * time.Second)
 			rand := wyhash.New(rand.Uint64())
 			for {
-				log.Info("sending files/transient files/dirs metrics")
+				l.Info("sending files/transient files/dirs metrics")
 				now := time.Now()
 				metrics.Reset()
-				log.ClearNC(alert)
+				l.ClearNC(alert)
 				for i := 0; i < 256; i++ {
 					metrics.Measurement("eggsfs_transient_files")
 					metrics.Tag("shard", fmt.Sprintf("%v", msgs.ShardId(i)))
@@ -655,12 +659,12 @@ func main() {
 				}
 				err = influxDB.SendMetrics(metrics.Payload())
 				if err == nil {
-					log.ClearNC(alert)
+					l.ClearNC(alert)
 					sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
-					log.Info("count metrics sent, sleeping for %v", sleepFor)
+					l.Info("count metrics sent, sleeping for %v", sleepFor)
 					time.Sleep(sleepFor)
 				} else {
-					log.RaiseNC(alert, "failed to send count metrics, will try again in a second: %v", err)
+					l.RaiseNC(alert, "failed to send count metrics, will try again in a second: %v", err)
 					time.Sleep(time.Second)
 				}
 			}
@@ -668,6 +672,6 @@ func main() {
 	}
 
 	mbErr := <-terminateChan
-	log.Info("got error, winding down: %v", mbErr)
+	l.Info("got error, winding down: %v", mbErr)
 	panic(mbErr)
 }

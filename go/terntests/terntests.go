@@ -17,8 +17,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/managedprocess"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/wyhash"
@@ -104,7 +106,7 @@ func (r *RunTests) print(format string, a ...any) error {
 }
 
 func (r *RunTests) test(
-	log *lib.Logger,
+	log *log.Logger,
 	name string,
 	extra string,
 	run func(counters *client.ClientCounters),
@@ -245,9 +247,9 @@ func (i *cfgOverrides) flag(k string) bool {
 
 func (r *RunTests) run(
 	terminateChan chan any,
-	log *lib.Logger,
+	log *log.Logger,
 ) {
-	defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+	defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 	c, err := client.NewClient(log, nil, r.shuckleAddress(), msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
@@ -593,14 +595,14 @@ func (r *RunTests) run(
 		"",
 		func(counters *client.ClientCounters) {
 			numThreads := 10000
-			bufPool := lib.NewBufPool()
+			bufPool := bufpool.NewBufPool()
 			dirInfoCache := client.NewDirInfoCache()
 			var wg sync.WaitGroup
 			wg.Add(numThreads)
 			for i := 0; i < numThreads; i++ {
 				ti := i
 				go func() {
-					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+					defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 					if _, err := c.CreateFile(log, bufPool, dirInfoCache, fmt.Sprintf("/%d", ti), bytes.NewReader([]byte{})); err != nil {
 						panic(err)
 					}
@@ -705,7 +707,7 @@ type blockServiceVictim struct {
 }
 
 func (bsv *blockServiceVictim) start(
-	log *lib.Logger,
+	log *log.Logger,
 	blocksExe string,
 	shucklePort uint16,
 	port1 uint16,
@@ -729,7 +731,7 @@ func (bsv *blockServiceVictim) start(
 }
 
 func killBlockServices(
-	log *lib.Logger,
+	log *log.Logger,
 	terminateChan chan any,
 	stopChan chan struct{},
 	pause *sync.Mutex,
@@ -752,7 +754,7 @@ func killBlockServices(
 	log.Info("will kill block service for %v", killDuration)
 	rand := wyhash.New(uint64(time.Now().UnixNano()))
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 		for {
 			// pick and kill the victim
 			pause.Lock()
@@ -937,17 +939,17 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: false, PrintQuietAlerts: true})
+	l := log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: false, PrintQuietAlerts: true})
 
 	if *mtu > 0 {
-		log.Info("Setting MTU to %v", *mtu)
+		l.Info("Setting MTU to %v", *mtu)
 		client.SetMTU(*mtu)
 	}
 
@@ -966,8 +968,8 @@ func main() {
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
-		cppExes = managedprocess.BuildCppExes(log, *repoDir, *buildType)
-		goExes = managedprocess.BuildGoExes(log, *repoDir, *race)
+		cppExes = managedprocess.BuildCppExes(l, *repoDir, *buildType)
+		goExes = managedprocess.BuildGoExes(l, *repoDir, *race)
 	}
 
 	terminateChan := make(chan any, 1)
@@ -1001,7 +1003,7 @@ func main() {
 		}
 		isQEMU := strings.TrimSpace(string(dmiOut)) == "QEMU"
 		if isQEMU {
-			log.Info("increasing metadata timeout since we're in QEMU")
+			l.Info("increasing metadata timeout since we're in QEMU")
 			sysctl("fs.eggsfs.overall_shard_timeout_ms", "60000")
 			sysctl("fs.eggsfs.overall_cdc_timeout_ms", "60000")
 		}
@@ -1045,7 +1047,7 @@ func main() {
 	if *blockServiceKiller {
 		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
 	}
-	procs.StartShuckle(log, shuckleOpts)
+	procs.StartShuckle(l, shuckleOpts)
 
 	failureDomains := 14 + 4 // so that any 4 can fail and we can still do everything.
 	hddBlockServices := 10
@@ -1066,7 +1068,7 @@ func main() {
 				storageClasses: storageClasses,
 			}
 			procId := bsv.start(
-				log,
+				l,
 				goExes.BlocksExe,
 				shucklePort,
 				0, 0,
@@ -1084,7 +1086,7 @@ func main() {
 
 	// wait for block services first, so we know that shards will immediately have all of them
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	blockServices := client.WaitForBlockServices(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), true, waitShuckleFor)
+	blockServices := client.WaitForBlockServices(l, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), true, waitShuckleFor)
 	blockServicesPorts := make(map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16
@@ -1127,7 +1129,7 @@ func main() {
 			// apparently 100ms is too little when running with valgrind
 			cdcOpts.ShardTimeout = time.Millisecond * 500
 		}
-		procs.StartCDC(log, *repoDir, cdcOpts)
+		procs.StartCDC(l, *repoDir, cdcOpts)
 	}
 
 	// Start shards
@@ -1159,20 +1161,20 @@ func main() {
 					shopts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
-			procs.StartShard(log, *repoDir, &shopts)
+			procs.StartShard(l, *repoDir, &shopts)
 		}
 	}
 
 	// now wait for shards/cdc
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	client.WaitForClient(log, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
+	client.WaitForClient(l, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
 
 	var stopBlockServiceKiller chan struct{}
 	var pauseBlockServiceKiller sync.Mutex
 	if *blockServiceKiller {
 		fmt.Printf("will kill block services\n")
 		stopBlockServiceKiller = make(chan struct{}, 1)
-		killBlockServices(log, terminateChan, stopBlockServiceKiller, &pauseBlockServiceKiller, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, blockServicesPorts)
+		killBlockServices(l, terminateChan, stopBlockServiceKiller, &pauseBlockServiceKiller, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, blockServicesPorts)
 		// stop before trying to clean up data dir etc.
 		defer func() {
 			stopBlockServiceKiller <- struct{}{}
@@ -1180,7 +1182,7 @@ func main() {
 		}()
 	}
 
-	fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
+	fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
 		Exe:                 goExes.FuseExe,
 		Path:                path.Join(*dataDir, "fuse"),
 		LogLevel:            level,
@@ -1200,9 +1202,9 @@ func main() {
 		}
 		mountKmod(shuckleAddress, mountPoint)
 		defer func() {
-			log.Info("about to unmount kmod mount")
+			l.Info("about to unmount kmod mount")
 			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
-			log.Info("done unmounting")
+			l.Info("done unmounting")
 			if err != nil {
 				fmt.Printf("could not umount fs (%v): %s", err, out)
 			}
@@ -1273,7 +1275,7 @@ func main() {
 			pauseBlockServiceKiller: &pauseBlockServiceKiller,
 			kmsgFd:                  kfd,
 		}
-		r.run(terminateChan, log)
+		r.run(terminateChan, l)
 	}()
 
 	// wait for things to finish
@@ -1283,7 +1285,7 @@ func main() {
 	}
 
 	// fsck everything
-	log.Info("stopping cluster and fscking it")
+	l.Info("stopping cluster and fscking it")
 	procsClosed = true
 	procs.Close()
 	{
@@ -1295,7 +1297,7 @@ func main() {
 			if !strings.Contains(subDir.Name(), "shard") {
 				continue
 			}
-			log.Info("fscking %q", path.Join(*dataDir, subDir.Name(), "db"))
+			l.Info("fscking %q", path.Join(*dataDir, subDir.Name(), "db"))
 			cmd := exec.Command(cppExes.DBToolsExe, "fsck", path.Join(*dataDir, subDir.Name(), "db"))
 			if err := cmd.Run(); err != nil {
 				panic(err)

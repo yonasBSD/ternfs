@@ -8,10 +8,11 @@ import (
 	"path"
 	"sync/atomic"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup/scratch"
 	"xtx/ternfs/client"
 	"xtx/ternfs/crc32c"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -27,7 +28,7 @@ type DefragStats struct {
 	DefraggedPhysicalBytesAfter  uint64
 }
 
-func defragPrintStatsLastReport(log *lib.Logger, c *client.Client, stats *DefragStats, timeStats *timeStats, progressReportAlert *lib.XmonNCAlert, lastReport int64, now int64) {
+func defragPrintStatsLastReport(log *log.Logger, c *client.Client, stats *DefragStats, timeStats *timeStats, progressReportAlert *log.XmonNCAlert, lastReport int64, now int64) {
 	timeSinceStart := time.Duration(now - atomic.LoadInt64(&timeStats.startedAt))
 	physicalDeltaMB := (float64(stats.DefraggedPhysicalBytesAfter) - float64(stats.DefraggedPhysicalBytesBefore)) / 1e6
 	physicalDeltaMBs := 1000.0 * physicalDeltaMB / float64(timeSinceStart.Milliseconds())
@@ -44,12 +45,12 @@ func defragPrintStatsLastReport(log *lib.Logger, c *client.Client, stats *Defrag
 }
 
 func defragFileInternal(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragStats,
-	progressReportAlert *lib.XmonNCAlert,
+	progressReportAlert *log.XmonNCAlert,
 	timeStats *timeStats,
 	parent msgs.InodeId,
 	fileId msgs.InodeId,
@@ -173,12 +174,12 @@ func defragFileInternal(
 }
 
 func DefragFile(
-	log *lib.Logger,
+	log *log.Logger,
 	client *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragStats,
-	progressReportAlert *lib.XmonNCAlert,
+	progressReportAlert *log.XmonNCAlert,
 	parent msgs.InodeId,
 	fileId msgs.InodeId,
 	filePath string,
@@ -195,12 +196,12 @@ type DefragOptions struct {
 }
 
 func DefragFiles(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragStats,
-	progressReportAlert *lib.XmonNCAlert,
+	progressReportAlert *log.XmonNCAlert,
 	options *DefragOptions,
 	root string,
 ) error {
@@ -234,12 +235,12 @@ type DefragSpansStats struct {
 
 // Replaces a file with another, identical one.
 func defragFileReplace(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragSpansStats,
-	progressReportAlert *lib.XmonNCAlert,
+	progressReportAlert *log.XmonNCAlert,
 	timeStats *timeStats,
 	parent msgs.InodeId,
 	fileId msgs.InodeId,
@@ -311,12 +312,12 @@ func defragFileReplace(
 }
 
 func DefragSpans(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *client.DirInfoCache,
 	stats *DefragSpansStats,
-	progressReportAlert *lib.XmonNCAlert,
+	progressReportAlert *log.XmonNCAlert,
 	root string,
 ) error {
 	timeStats := newTimeStats()

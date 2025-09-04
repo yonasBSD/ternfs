@@ -3,11 +3,11 @@ package client
 import (
 	"fmt"
 	"time"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
-func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockServices int, waitCurrentServicesCalcuation bool, timeout time.Duration) []msgs.BlockServiceDeprecatedInfo {
+func WaitForBlockServices(ll *log.Logger, shuckleAddress string, expectedBlockServices int, waitCurrentServicesCalcuation bool, timeout time.Duration) []msgs.BlockServiceDeprecatedInfo {
 	var err error
 	for {
 		var resp msgs.ShuckleResponse
@@ -37,7 +37,7 @@ func WaitForBlockServices(ll *lib.Logger, shuckleAddress string, expectedBlockSe
 	}
 }
 
-func WaitForShuckle(ll *lib.Logger, shuckleAddress string, timeout time.Duration) error {
+func WaitForShuckle(ll *log.Logger, shuckleAddress string, timeout time.Duration) error {
 	t0 := time.Now()
 	for {
 		_, err := ShuckleRequest(ll, nil, shuckleAddress, &msgs.InfoReq{})
@@ -52,7 +52,7 @@ func WaitForShuckle(ll *lib.Logger, shuckleAddress string, timeout time.Duration
 }
 
 // getting a client implies having all shards and cdc.
-func WaitForClient(log *lib.Logger, shuckleAddress string, timeout time.Duration) {
+func WaitForClient(log *log.Logger, shuckleAddress string, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
 	var client *Client

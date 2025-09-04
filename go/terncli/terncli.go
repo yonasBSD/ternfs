@@ -21,13 +21,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/certificate"
 	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
 	"xtx/ternfs/crc32c"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/flags"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/terncli/filesamples"
+	"xtx/ternfs/timing"
 )
 
 type commandSpec struct {
@@ -55,7 +58,7 @@ func usage() {
 	flag.PrintDefaults()
 }
 
-func outputFullFileSizes(log *lib.Logger, c *client.Client) {
+func outputFullFileSizes(log *log.Logger, c *client.Client) {
 	var examinedDirs uint64
 	var examinedFiles uint64
 	err := client.Parwalk(
@@ -112,10 +115,10 @@ func outputFullFileSizes(log *lib.Logger, c *client.Client) {
 	}
 }
 
-func outputBriefFileSizes(log *lib.Logger, c *client.Client) {
+func outputBriefFileSizes(log *log.Logger, c *client.Client) {
 	// histogram
 	histoBins := 256
-	histo := lib.NewHistogram(histoBins, 1024, 1.1)
+	histo := timing.NewHistogram(histoBins, 1024, 1.1)
 	var histoSizes [256][]uint64
 	var wg sync.WaitGroup
 	wg.Add(256)
@@ -182,7 +185,7 @@ func formatSize(bytes uint64) string {
 func main() {
 	flag.Usage = usage
 	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
-	var addresses lib.StringArrayFlags
+	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	mtu := flag.String("mtu", "", "MTU to use, either an integer or \"max\"")
 	shardInitialTimeout := flag.Duration("shard-initial-timeout", 0, "")
@@ -194,13 +197,13 @@ func main() {
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 
-	var log *lib.Logger
+	var l *log.Logger
 	var mbClient *client.Client
 	var clientMu sync.RWMutex
 
 	var localAddresses msgs.AddrsInfo
 	if len(addresses) > 0 {
-		ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+		ownIp1, port1, err := flags.ParseIPV4Addr(addresses[0])
 		if err != nil {
 			panic(err)
 		}
@@ -208,7 +211,7 @@ func main() {
 		var ownIp2 [4]byte
 		var port2 uint16
 		if len(addresses) == 2 {
-			ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+			ownIp2, port2, err = flags.ParseIPV4Addr(addresses[1])
 			if err != nil {
 				panic(err)
 			}
@@ -239,7 +242,7 @@ func main() {
 			panic("You need to specify -shuckle (or -prod).\n")
 		}
 		var err error
-		c, err := client.NewClient(log, nil, *shuckleAddress, localAddresses)
+		c, err := client.NewClient(l, nil, *shuckleAddress, localAddresses)
 		if err != nil {
 			clientMu.Unlock()
 			panic(fmt.Errorf("could not create client: %v", err))
@@ -276,8 +279,8 @@ func main() {
 		}
 		mbClient.SetCDCTimeouts(&cdcTimeouts)
 		if printTimeouts {
-			log.Info("shard timeouts: %+v", shardTimeouts)
-			log.Info("CDC timeouts: %+v", cdcTimeouts)
+			l.Info("shard timeouts: %+v", shardTimeouts)
+			l.Info("CDC timeouts: %+v", cdcTimeouts)
 		}
 		clientMu.Unlock()
 		return mbClient
@@ -292,7 +295,7 @@ func main() {
 		dirInfoCache := client.NewDirInfoCache()
 		if *collectDirIdU64 == 0 {
 			state := &cleanup.CollectDirectoriesState{}
-			if err := cleanup.CollectDirectoriesInAllShards(log, getClient(), dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state, *collectDirMinEdgeAge); err != nil {
+			if err := cleanup.CollectDirectoriesInAllShards(l, getClient(), dirInfoCache, nil, &cleanup.CollectDirectoriesOpts{NumWorkersPerShard: 2, WorkersQueueSize: 100}, state, *collectDirMinEdgeAge); err != nil {
 				panic(err)
 			}
 		} else {
@@ -301,10 +304,10 @@ func main() {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			var stats cleanup.CollectDirectoriesStats
-			if err := cleanup.CollectDirectory(log, getClient(), dirInfoCache, &stats, dirId, *collectDirMinEdgeAge); err != nil {
+			if err := cleanup.CollectDirectory(l, getClient(), dirInfoCache, &stats, dirId, *collectDirMinEdgeAge); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
-			log.Info("finished collecting %v, stats: %+v", dirId, stats)
+			l.Info("finished collecting %v, stats: %+v", dirId, stats)
 		}
 	}
 	commands["collect"] = commandSpec{
@@ -321,11 +324,11 @@ func main() {
 			state := &cleanup.DestructFilesState{}
 			opts := &cleanup.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
 			if *destrutcFileShardId < 0 {
-				if err := cleanup.DestructFilesInAllShards(log, getClient(), opts, state); err != nil {
+				if err := cleanup.DestructFilesInAllShards(l, getClient(), opts, state); err != nil {
 					panic(err)
 				}
 			} else {
-				if err := cleanup.DestructFiles(log, getClient(), opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
+				if err := cleanup.DestructFiles(l, getClient(), opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
 					panic(err)
 				}
 			}
@@ -337,10 +340,10 @@ func main() {
 			stats := cleanup.DestructFilesStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
-			if err := cleanup.DestructFile(log, getClient(), &stats, fileId, 0, destructFileCookie); err != nil {
+			if err := cleanup.DestructFile(l, getClient(), &stats, fileId, 0, destructFileCookie); err != nil {
 				panic(fmt.Errorf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err))
 			}
-			log.Info("finished destructing %v, stats: %+v", fileId, stats)
+			l.Info("finished destructing %v, stats: %+v", fileId, stats)
 		}
 	}
 	commands["destruct"] = commandSpec{
@@ -368,8 +371,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Can't provide the same flag both in -flags and -no-flags\n")
 			os.Exit(2)
 		}
-		log.Info("requesting block services")
-		blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		l.Info("requesting block services")
+		blockServicesResp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -398,10 +401,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Invalid shard %v.\n", *migrateShard)
 			os.Exit(2)
 		}
-		log.Info("will migrate in %v block services:", numBlockServicesToMigrate)
+		l.Info("will migrate in %v block services:", numBlockServicesToMigrate)
 		for failureDomain, bss := range blockServicesToMigrate {
 			for _, blockServiceId := range *bss {
-				log.Info("%v, %v", failureDomain, blockServiceId)
+				l.Info("%v, %v", failureDomain, blockServiceId)
 			}
 		}
 		for {
@@ -417,30 +420,30 @@ func main() {
 			}
 		}
 		stats := cleanup.MigrateStats{}
-		progressReportAlert := log.NewNCAlert(10 * time.Second)
+		progressReportAlert := l.NewNCAlert(10 * time.Second)
 		for failureDomain, bss := range blockServicesToMigrate {
 			for _, blockServiceId := range *bss {
-				log.Info("migrating block service %v, %v", blockServiceId, failureDomain)
+				l.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := cleanup.MigrateBlocksInAllShards(log, getClient(), &stats, progressReportAlert, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocksInAllShards(l, getClient(), &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := cleanup.MigrateBlocksInFile(log, getClient(), &stats, progressReportAlert, blockServiceId, fileId); err != nil {
+					if err := cleanup.MigrateBlocksInFile(l, getClient(), &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := cleanup.MigrateBlocks(log, getClient(), &stats, progressReportAlert, shid, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocks(l, getClient(), &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}
-				log.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, stats)
+				l.Info("finished migrating blocks away from block service %v, stats so far: %+v", blockServiceId, stats)
 			}
 		}
-		log.Info("finished migrating away from all block services, stats: %+v", stats)
-		log.ClearNC(progressReportAlert)
+		l.Info("finished migrating away from all block services, stats: %+v", stats)
+		l.ClearNC(progressReportAlert)
 	}
 	commands["migrate"] = commandSpec{
 		flags: migrateCmd,
@@ -476,7 +479,7 @@ func main() {
 				}
 			}
 		}
-		if err := getClient().ShardRequest(log, shard, req, resp); err != nil {
+		if err := getClient().ShardRequest(l, shard, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -515,7 +518,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		if err := getClient().CDCRequest(log, req, resp); err != nil {
+		if err := getClient().CDCRequest(l, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -554,7 +557,7 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		if err := getClient().MergeDirectoryInfo(log, id, entry); err != nil {
+		if err := getClient().MergeDirectoryInfo(l, id, entry); err != nil {
 			panic(err)
 		}
 	}
@@ -568,7 +571,7 @@ func main() {
 	removeDirInfoTag := removeDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK")
 	removeDirInfoRun := func() {
 		id := msgs.InodeId(*removeDirInfoU64)
-		if err := getClient().RemoveDirectoryInfoEntry(log, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
+		if err := getClient().RemoveDirectoryInfoEntry(l, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
 			panic(err)
 		}
 	}
@@ -592,12 +595,12 @@ func main() {
 				panic(err)
 			}
 		}
-		bufPool := lib.NewBufPool()
-		fileId, err := getClient().CreateFile(log, bufPool, client.NewDirInfoCache(), path, input)
+		bufPool := bufpool.NewBufPool()
+		fileId, err := getClient().CreateFile(l, bufPool, client.NewDirInfoCache(), path, input)
 		if err != nil {
 			panic(err)
 		}
-		log.Info("File created as %v", fileId)
+		l.Info("File created as %v", fileId)
 	}
 	commands["cp-into"] = commandSpec{
 		flags: cpIntoCmd,
@@ -627,14 +630,14 @@ func main() {
 			id = msgs.InodeId(*cpOutofId)
 		} else {
 			var err error
-			id, err = getClient().ResolvePath(log, *cpOutofInput)
+			id, err = getClient().ResolvePath(l, *cpOutofInput)
 			if err != nil {
 				panic(err)
 			}
 		}
 
-		bufPool := lib.NewBufPool()
-		r, err := getClient().FetchFile(log, bufPool, id)
+		bufPool := bufpool.NewBufPool()
+		r, err := getClient().FetchFile(l, bufPool, id)
 		if err != nil {
 			panic(err)
 		}
@@ -653,7 +656,7 @@ func main() {
 	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
 	blockReqFile := blockReqCmd.String("file", "", "")
 	blockReqRun := func() {
-		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -679,7 +682,7 @@ func main() {
 			Size:    uint32(len(fileContents)),
 		}
 		req.Certificate = certificate.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
-		log.Info("request: %+v", req)
+		l.Info("request: %+v", req)
 	}
 	commands["write-block-req"] = commandSpec{
 		flags: blockReqCmd,
@@ -690,7 +693,7 @@ func main() {
 	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
 	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
 	testBlockWriteRun := func() {
-		resp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -715,7 +718,7 @@ func main() {
 		}
 		conns := make([]*net.TCPConn, len(bsInfos))
 		for i := 0; i < len(conns); i++ {
-			conn, err := client.BlockServiceConnection(log, bsInfos[i].Addrs)
+			conn, err := client.BlockServiceConnection(l, bsInfos[i].Addrs)
 			if err != nil {
 				panic(err)
 			}
@@ -729,7 +732,7 @@ func main() {
 			conn := conns[i]
 			bsId := bsInfos[i].Id
 			go func() {
-				thisErr := client.TestWrite(log, conn, bsId, bytes.NewReader(contents), uint64(len(contents)))
+				thisErr := client.TestWrite(l, conn, bsId, bytes.NewReader(contents), uint64(len(contents)))
 				if thisErr != nil {
 					err = thisErr
 				}
@@ -741,7 +744,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		log.Info("writing %v bytes to %v block services took %v (%fGB/s)", *testBlockWriteSize, len(conns), time.Since(t), (float64(*testBlockWriteSize*uint(len(conns)))/1e9)/elapsed.Seconds())
+		l.Info("writing %v bytes to %v block services took %v (%fGB/s)", *testBlockWriteSize, len(conns), time.Since(t), (float64(*testBlockWriteSize*uint(len(conns)))/1e9)/elapsed.Seconds())
 	}
 	commands["test-block-write"] = commandSpec{
 		flags: testBlockWriteCmd,
@@ -778,8 +781,8 @@ func main() {
 			blockServiceIds = append(blockServiceIds, msgs.BlockServiceId(*blockserviceFlagsId))
 		}
 		if *blockserviceFlagsFailureDomain != "" || *blockserviceFlagsPathPrefix != "" {
-			log.Info("requesting block services")
-			blockServicesResp, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+			l.Info("requesting block services")
+			blockServicesResp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
 			if err != nil {
 				panic(err)
 			}
@@ -817,10 +820,10 @@ func main() {
 			}
 			mask = uint8(flagMask)
 		}
-		conn := client.MakeShuckleConn(log, nil, *shuckleAddress, 1)
+		conn := client.MakeShuckleConn(l, nil, *shuckleAddress, 1)
 		defer conn.Close()
 		for _, bsId := range blockServiceIds {
-			log.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
+			l.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
 			_, err := conn.Request(&msgs.SetBlockServiceFlagsReq{
 				Id:        bsId,
 				Flags:     flag,
@@ -844,8 +847,8 @@ func main() {
 			os.Exit(2)
 		}
 		bsId := msgs.BlockServiceId(*decommissionBlockserviceId)
-		log.Info("decommissioning block service %v using dedicated rate-limited endpoint", bsId)
-		_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.DecommissionBlockServiceReq{
+		l.Info("decommissioning block service %v using dedicated rate-limited endpoint", bsId)
+		_, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.DecommissionBlockServiceReq{
 			Id: bsId,
 		})
 		if err != nil {
@@ -870,8 +873,8 @@ func main() {
 			os.Exit(2)
 		}
 		bsId := msgs.BlockServiceId(*updateBlockservicePathId)
-		log.Info("setting path to %s for block service %v", *updateBlockserviceNewPath, bsId)
-		_, err := client.ShuckleRequest(log, nil, *shuckleAddress, &msgs.UpdateBlockServicePathReq{
+		l.Info("setting path to %s for block service %v", *updateBlockserviceNewPath, bsId)
+		_, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.UpdateBlockServicePathReq{
 			Id:      bsId,
 			NewPath: *updateBlockserviceNewPath,
 		})
@@ -888,9 +891,9 @@ func main() {
 	fileSizesBrief := fileSizesCmd.Bool("brief", false, "")
 	fileSizesRun := func() {
 		if *fileSizesBrief {
-			outputBriefFileSizes(log, getClient())
+			outputBriefFileSizes(l, getClient())
 		} else {
-			outputFullFileSizes(log, getClient())
+			outputFullFileSizes(l, getClient())
 		}
 	}
 	commands["file-sizes"] = commandSpec{
@@ -912,13 +915,13 @@ func main() {
 				req := msgs.VisitFilesReq{}
 				resp := msgs.VisitFilesResp{}
 				for {
-					if err := getClient().ShardRequest(log, shid, &req, &resp); err != nil {
+					if err := getClient().ShardRequest(l, shid, &req, &resp); err != nil {
 						ch <- err
 						return
 					}
 					atomic.AddUint64(&numFiles, uint64(len(resp.Ids)))
 					if atomic.AddUint64(&numReqs, 1)%uint64(1_000_000) == 0 {
-						log.Info("went through %v files, %v reqs (%0.2f files/s, %0.2f req/s)", numFiles, numReqs, float64(numFiles)/float64(time.Since(startedAt).Seconds()), float64(numReqs)/float64(time.Since(startedAt).Seconds()))
+						l.Info("went through %v files, %v reqs (%0.2f files/s, %0.2f req/s)", numFiles, numReqs, float64(numFiles)/float64(time.Since(startedAt).Seconds()), float64(numReqs)/float64(time.Since(startedAt).Seconds()))
 					}
 					req.BeginId = resp.NextId
 					if req.BeginId == 0 {
@@ -936,7 +939,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		log.Info("found %v files", numFiles)
+		l.Info("found %v files", numFiles)
 	}
 	commands["count-files"] = commandSpec{
 		flags: countFilesCmd,
@@ -964,7 +967,7 @@ func main() {
 		var numSnapshotFiles uint64
 		var totalSnapshotLogicalSize uint64
 		var totalSnapshotPhysicalSize uint64
-		histogram := lib.NewHistogram(256, 255, 1.15) // max: ~900PB
+		histogram := timing.NewHistogram(256, 255, 1.15) // max: ~900PB
 		histoLogicalSizeBins := make([]uint64, 256)
 		histoPhysicalSizeBins := make([]uint64, 256)
 		histoCountBins := make([]uint64, 256)
@@ -973,20 +976,20 @@ func main() {
 		printReport := func() {
 			if *duSnapshot {
 				if *duPhysical {
-					log.Info("went through %v files (%v current logical, %v current physical, %v snapshot logical, %v snapshot physical, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), formatSize(totalSnapshotLogicalSize), formatSize(totalSnapshotPhysicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+					l.Info("went through %v files (%v current logical, %v current physical, %v snapshot logical, %v snapshot physical, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), formatSize(totalSnapshotLogicalSize), formatSize(totalSnapshotPhysicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 				} else {
-					log.Info("went through %v files (%v current, %v snapshot, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalSnapshotLogicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+					l.Info("went through %v files (%v current, %v snapshot, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalSnapshotLogicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 				}
 			} else {
 				if *duPhysical {
-					log.Info("went through %v files (%v logical, %v physical, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+					l.Info("went through %v files (%v logical, %v physical, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), formatSize(totalPhysicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 				} else {
-					log.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
+					l.Info("went through %v files (%v, %0.2f files/s), %v directories", numFiles, formatSize(totalLogicalSize), float64(numFiles)/float64(time.Since(startedAt).Seconds()), numDirectories)
 				}
 			}
 		}
 		err = client.Parwalk(
-			log,
+			l,
 			c,
 			&client.ParwalkOptions{
 				WorkersPerShard: *duWorkersPerSshard,
@@ -1007,7 +1010,7 @@ func main() {
 				}
 				atomic.AddUint64(&numFiles, 1)
 				resp := msgs.StatFileResp{}
-				if err := c.ShardRequest(log, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
+				if err := c.ShardRequest(l, id.Shard(), &msgs.StatFileReq{Id: id}, &resp); err != nil {
 					return err
 				}
 				if current {
@@ -1026,7 +1029,7 @@ func main() {
 					fileSpansResp := msgs.FileSpansResp{}
 					physicalSize := uint64(0)
 					for {
-						if err := c.ShardRequest(log, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+						if err := c.ShardRequest(l, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 							return err
 						}
 						for spanIx := range fileSpansResp.Spans {
@@ -1071,7 +1074,7 @@ func main() {
 		}
 		printReport()
 		if *duHisto != "" {
-			log.Info("writing size histogram to %q", *duHisto)
+			l.Info("writing size histogram to %q", *duHisto)
 			histoCsvBuf := bytes.NewBuffer([]byte{})
 			if *duPhysical {
 				fmt.Fprintf(histoCsvBuf, "logical_upper_bound,file_count,total_logical_size,total_physical_size\n")
@@ -1086,7 +1089,7 @@ func main() {
 				}
 			}
 			if err := os.WriteFile(*duHisto, histoCsvBuf.Bytes(), 0644); err != nil {
-				log.ErrorNoAlert("could not write histo file %q, will print histogram here: %v", *duHisto, err)
+				l.ErrorNoAlert("could not write histo file %q, will print histogram here: %v", *duHisto, err)
 				fmt.Print(histoCsvBuf.Bytes())
 				panic(err)
 			}
@@ -1110,7 +1113,7 @@ func main() {
 		locationSize := make(map[msgs.Location]uint64)
 
 		for {
-			if err := c.ShardRequest(log, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
+			if err := c.ShardRequest(l, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
 				panic(err)
 			}
 			for spanIx := range fileSpansResp.Spans {
@@ -1128,9 +1131,9 @@ func main() {
 			}
 			fileSpansReq.ByteOffset = fileSpansResp.NextOffset
 		}
-		log.Info("Done fetching locations for file %v", id)
+		l.Info("Done fetching locations for file %v", id)
 		for locId, size := range locationSize {
-			log.Info("Location %v has size %v", locId, size)
+			l.Info("Location %v has size %v", locId, size)
 		}
 	}
 	commands["file-locations"] = commandSpec{
@@ -1169,7 +1172,7 @@ func main() {
 		}
 		c := getClient()
 		err := client.Parwalk(
-			log,
+			l,
 			c,
 			&client.ParwalkOptions{
 				WorkersPerShard: *findWorkersPerShard,
@@ -1195,10 +1198,10 @@ func main() {
 					}
 					statReq := msgs.StatFileReq{Id: id}
 					statResp := msgs.StatFileResp{}
-					if err := c.ShardRequest(log, id.Shard(), &statReq, &statResp); err != nil {
+					if err := c.ShardRequest(l, id.Shard(), &statReq, &statResp); err != nil {
 						if err == msgs.FILE_NOT_FOUND {
 							// could get collected
-							log.Info("file %q disappeared", path.Join(parentPath, name))
+							l.Info("file %q disappeared", path.Join(parentPath, name))
 						} else {
 							return err
 						}
@@ -1217,7 +1220,7 @@ func main() {
 					resp := msgs.LocalFileSpansResp{}
 					found := false
 					for {
-						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						if err := c.ShardRequest(l, id.Shard(), &req, &resp); err != nil {
 							return err
 						}
 						for _, span := range resp.Spans {
@@ -1253,7 +1256,7 @@ func main() {
 					}
 					resp := msgs.LocalFileSpansResp{}
 					for {
-						if err := c.ShardRequest(log, id.Shard(), &req, &resp); err != nil {
+						if err := c.ShardRequest(l, id.Shard(), &req, &resp); err != nil {
 							return err
 						}
 						for _, span := range resp.Spans {
@@ -1263,8 +1266,8 @@ func main() {
 							body := span.Body.(*msgs.FetchedBlocksSpan)
 							for _, block := range body.Blocks {
 								blockService := &resp.BlockServices[block.BlockServiceIx]
-								if err := c.CheckBlock(log, blockService, block.BlockId, body.CellSize*uint32(body.Stripes), block.Crc); err != nil {
-									log.ErrorNoAlert("while checking block %v in file %v got error %v", block.BlockId, path.Join(parentPath, name), err)
+								if err := c.CheckBlock(l, blockService, block.BlockId, body.CellSize*uint32(body.Stripes), block.Crc); err != nil {
+									l.ErrorNoAlert("while checking block %v in file %v got error %v", block.BlockId, path.Join(parentPath, name), err)
 								}
 							}
 						}
@@ -1274,7 +1277,7 @@ func main() {
 						}
 					}
 				}
-				log.Info("%v %q", id, path.Join(parentPath, name))
+				l.Info("%v %q", id, path.Join(parentPath, name))
 				return nil
 			},
 		)
@@ -1292,10 +1295,10 @@ func main() {
 	scrubFileRun := func() {
 		file := msgs.InodeId(*scrubFileId)
 		stats := &cleanup.ScrubState{}
-		if err := cleanup.ScrubFile(log, getClient(), stats, file); err != nil {
+		if err := cleanup.ScrubFile(l, getClient(), stats, file); err != nil {
 			panic(err)
 		}
-		log.Info("scrub stats: %+v", stats)
+		l.Info("scrub stats: %+v", stats)
 	}
 	commands["scrub-file"] = commandSpec{
 		flags: scrubFileCmd,
@@ -1305,7 +1308,7 @@ func main() {
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func() {
 		stats := cleanup.ScrubState{}
-		if err := cleanup.ScrubFilesInAllShards(log, getClient(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
+		if err := cleanup.ScrubFilesInAllShards(l, getClient(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 
@@ -1327,7 +1330,7 @@ func main() {
 				panic(err)
 			}
 			for _, c := range counters {
-				log.Info("%v: Success=%v Attempts=%v Timeouts=%v Failures=%v NetFailures=%v", msgs.ShardMessageKind(c.Kind), c.Success, c.Attempts, c.Timeouts, c.Failures, c.NetFailures)
+				l.Info("%v: Success=%v Attempts=%v Timeouts=%v Failures=%v NetFailures=%v", msgs.ShardMessageKind(c.Kind), c.Success, c.Attempts, c.Timeouts, c.Failures, c.NetFailures)
 			}
 		}
 		{
@@ -1340,7 +1343,7 @@ func main() {
 				panic(err)
 			}
 			for _, c := range counters {
-				log.Info("%v: Success=%v Attempts=%v Timeouts=%v Failures=%v NetFailures=%v", msgs.CDCMessageKind(c.Kind), c.Success, c.Attempts, c.Timeouts, c.Failures, c.NetFailures)
+				l.Info("%v: Success=%v Attempts=%v Timeouts=%v Failures=%v NetFailures=%v", msgs.CDCMessageKind(c.Kind), c.Success, c.Attempts, c.Timeouts, c.Failures, c.NetFailures)
 			}
 		}
 	}
@@ -1380,7 +1383,7 @@ func main() {
 				panic(err)
 			}
 			for i := range latencies {
-				log.Info("%v: p50=%v p90=%v p99=%v", msgs.ShardMessageKind(latencies[i].Kind), p(&header, &latencies[i], 0.5), p(&header, &latencies[i], 0.9), p(&header, &latencies[i], 0.99))
+				l.Info("%v: p50=%v p90=%v p99=%v", msgs.ShardMessageKind(latencies[i].Kind), p(&header, &latencies[i], 0.5), p(&header, &latencies[i], 0.9), p(&header, &latencies[i], 0.99))
 			}
 		}
 		{
@@ -1393,7 +1396,7 @@ func main() {
 				panic(err)
 			}
 			for i := range latencies {
-				log.Info("%v: p50=%v p90=%v p99=%v", msgs.CDCMessageKind(latencies[i].Kind), p(&header, &latencies[i], 0.5), p(&header, &latencies[i], 0.9), p(&header, &latencies[i], 0.99))
+				l.Info("%v: p50=%v p90=%v p99=%v", msgs.CDCMessageKind(latencies[i].Kind), p(&header, &latencies[i], 0.5), p(&header, &latencies[i], 0.9), p(&header, &latencies[i], 0.99))
 			}
 		}
 	}
@@ -1408,11 +1411,11 @@ func main() {
 	defragFileRun := func() {
 		c := getClient()
 		dirInfoCache := client.NewDirInfoCache()
-		bufPool := lib.NewBufPool()
+		bufPool := bufpool.NewBufPool()
 		stats := &cleanup.DefragStats{}
-		alert := log.NewNCAlert(0)
-		alert.SetAppType(lib.XMON_NEVER)
-		id, _, parent, err := c.ResolvePathWithParent(log, *defragFilePath)
+		alert := l.NewNCAlert(0)
+		alert.SetAppType(log.XMON_NEVER)
+		id, _, parent, err := c.ResolvePathWithParent(l, *defragFilePath)
 		if err != nil {
 			panic(err)
 		}
@@ -1429,18 +1432,18 @@ func main() {
 				WorkersPerShard: 5,
 				StartFrom:       startTime,
 			}
-			if err := cleanup.DefragFiles(log, c, bufPool, dirInfoCache, stats, alert, &options, *defragFilePath); err != nil {
+			if err := cleanup.DefragFiles(l, c, bufPool, dirInfoCache, stats, alert, &options, *defragFilePath); err != nil {
 				panic(err)
 			}
 		} else {
 			if *defragFileFrom != "" {
 				panic(fmt.Errorf("cannot provide -from with a file -path"))
 			}
-			if err := cleanup.DefragFile(log, c, bufPool, dirInfoCache, stats, alert, parent, id, *defragFilePath); err != nil {
+			if err := cleanup.DefragFile(l, c, bufPool, dirInfoCache, stats, alert, parent, id, *defragFilePath); err != nil {
 				panic(err)
 			}
 		}
-		log.Info("defrag stats: %+v", stats)
+		l.Info("defrag stats: %+v", stats)
 	}
 	commands["defrag"] = commandSpec{
 		flags: defragFileCmd,
@@ -1452,14 +1455,14 @@ func main() {
 	defragSpansRun := func() {
 		c := getClient()
 		dirInfoCache := client.NewDirInfoCache()
-		bufPool := lib.NewBufPool()
+		bufPool := bufpool.NewBufPool()
 		stats := &cleanup.DefragSpansStats{}
-		alert := log.NewNCAlert(0)
-		alert.SetAppType(lib.XMON_NEVER)
-		if err := cleanup.DefragSpans(log, c, bufPool, dirInfoCache, stats, alert, *defragSpansPath); err != nil {
+		alert := l.NewNCAlert(0)
+		alert.SetAppType(log.XMON_NEVER)
+		if err := cleanup.DefragSpans(l, c, bufPool, dirInfoCache, stats, alert, *defragSpansPath); err != nil {
 			panic(err)
 		}
-		log.Info("defrag stats: %+v", stats)
+		l.Info("defrag stats: %+v", stats)
 	}
 	commands["defrag-spans"] = commandSpec{
 		flags: defragSpansCmd,
@@ -1493,7 +1496,7 @@ func main() {
 					if !more {
 						return
 					}
-					dirId, err := c.ResolvePath(log, path.Dir(p))
+					dirId, err := c.ResolvePath(l, path.Dir(p))
 					if err != nil {
 						panic(err)
 					}
@@ -1503,25 +1506,25 @@ func main() {
 						StartName: path.Base(p),
 					}
 					resp := msgs.FullReadDirResp{}
-					if err := c.ShardRequest(log, dirId.Shard(), &req, &resp); err != nil {
+					if err := c.ShardRequest(l, dirId.Shard(), &req, &resp); err != nil {
 						panic(err)
 					}
 					if len(resp.Results) < 2 {
-						log.Info("%q: found < 2 edges, skipping: %+v", p, resp.Results)
+						l.Info("%q: found < 2 edges, skipping: %+v", p, resp.Results)
 						continue
 					}
 					// if we already have a current edge, no need to do anything
 					if resp.Results[0].Current {
-						log.Info("%q: a current edge already exists, skipping", p)
+						l.Info("%q: a current edge already exists, skipping", p)
 						continue
 					}
 					// otherwise, we expect a deleted edge, and then an owned edge
 					if resp.Results[0].TargetId.Id() != msgs.NULL_INODE_ID {
-						log.Info("%q: last edge is not a deletion edge, skipping: %+v", p, resp.Results[0])
+						l.Info("%q: last edge is not a deletion edge, skipping: %+v", p, resp.Results[0])
 						continue
 					}
 					if !resp.Results[1].TargetId.Extra() {
-						log.Info("%q: second to last edge is not an owned edge, skipping: %+v", p, resp.Results[1])
+						l.Info("%q: second to last edge is not an owned edge, skipping: %+v", p, resp.Results[1])
 						continue
 					}
 					// We've got everything we need, do the resurrection
@@ -1532,10 +1535,10 @@ func main() {
 						OldCreationTime: resp.Results[1].CreationTime,
 						NewName:         path.Base(p),
 					}
-					if err := c.ShardRequest(log, dirId.Shard(), &resurrectReq, &msgs.SameDirectoryRenameSnapshotResp{}); err != nil {
+					if err := c.ShardRequest(l, dirId.Shard(), &resurrectReq, &msgs.SameDirectoryRenameSnapshotResp{}); err != nil {
 						panic(fmt.Errorf("could not resurrect %q: %w", p, err))
 					}
-					log.Info("%q: resurrected", p)
+					l.Info("%q: resurrected", p)
 				}
 			}()
 		}
@@ -1552,7 +1555,7 @@ func main() {
 			scanner := bufio.NewScanner(file)
 			for scanner.Scan() {
 				if seenFiles%30_000 == 0 {
-					log.Info("Went through %v files (%0.2f files/sec)", seenFiles, 1000.0*float64(seenFiles)/float64(time.Since(t0).Milliseconds()))
+					l.Info("Went through %v files (%0.2f files/sec)", seenFiles, 1000.0*float64(seenFiles)/float64(time.Since(t0).Milliseconds()))
 				}
 				seenFiles++
 				if strings.TrimSpace(scanner.Text()) == "" {
@@ -1571,7 +1574,7 @@ func main() {
 
 	resolveSamplePathsCmd := flag.NewFlagSet("resolve-sample-paths", flag.ExitOnError)
 	resolveSamplePathsRun := func() {
-		resolver := filesamples.NewPathResolver(getClient(), log)
+		resolver := filesamples.NewPathResolver(getClient(), l)
 		resolver.ResolveFilePaths(os.Stdin, os.Stdout)
 	}
 	commands["resolve-sample-paths"] = commandSpec{
@@ -1600,14 +1603,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
-	log = lib.NewLogger(os.Stderr, &lib.LoggerOptions{Level: level})
+	l = log.NewLogger(os.Stderr, &log.LoggerOptions{Level: level})
 
 	spec, found := commands[flag.Args()[0]]
 	if !found {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -22,7 +22,7 @@ type PathResolver interface {
 }
 
 // Returns a thread-safe PathResolver that can be used concurrently in multiple goroutines.
-func NewPathResolver(cl *client.Client, logger *lib.Logger) PathResolver {
+func NewPathResolver(cl *client.Client, logger *log.Logger) PathResolver {
 	return &resolver{
 		ternClient: cl,
 		logger:     logger,
@@ -33,7 +33,7 @@ func NewPathResolver(cl *client.Client, logger *lib.Logger) PathResolver {
 
 type resolver struct {
 	ternClient *client.Client
-	logger     *lib.Logger
+	logger     *log.Logger
 	// Mapping of inode ID to directory name. Used to avoid duplicate lookups for the same inode.
 	inodeToDir map[msgs.InodeId]string
 	// Used to handle concurrent access to resolver internal data.

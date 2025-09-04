@@ -6,11 +6,11 @@ import (
 	"time"
 	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
-func deleteDir(log *lib.Logger, client *client.Client, ownerId msgs.InodeId, name string, creationTime msgs.TernTime, dirId msgs.InodeId) {
+func deleteDir(log *log.Logger, client *client.Client, ownerId msgs.InodeId, name string, creationTime msgs.TernTime, dirId msgs.InodeId) {
 	readDirReq := msgs.ReadDirReq{
 		DirId: dirId,
 	}
@@ -47,7 +47,7 @@ func deleteDir(log *lib.Logger, client *client.Client, ownerId msgs.InodeId, nam
 }
 
 func cleanupAfterTest(
-	log *lib.Logger,
+	log *log.Logger,
 	shuckleAddress string,
 	counters *client.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,

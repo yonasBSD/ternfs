@@ -14,8 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 
 	"golang.org/x/sync/errgroup"
@@ -151,18 +152,18 @@ func parseObjectPath(str string) *objectPath {
 
 // --- Handler Implementation ---
 type S3Server struct {
-	log          *lib.Logger
+	log          *log.Logger
 	c            *client.Client
-	bufPool      *lib.BufPool
+	bufPool      *bufpool.BufPool
 	dirInfoCache *client.DirInfoCache
 	bucketPaths  map[string]string
 	virtualHost  string
 }
 
 func NewS3Server(
-	log *lib.Logger,
+	log *log.Logger,
 	client *client.Client,
-	bufPool *lib.BufPool,
+	bufPool *bufpool.BufPool,
 	dirInfoCache *client.DirInfoCache,
 	buckets map[string]string, // mapping from bucket to paths
 	virtualHost string, // if not present, path-style bucket resolution will be used
@@ -879,7 +880,7 @@ func (s *S3Server) handleDeleteObjects(ctx context.Context, w http.ResponseWrite
 }
 
 // lookupPath is a helper to resolve a full path from the filesystem root to an InodeId.
-func lookupPath(ctx context.Context, log *lib.Logger, c *client.Client, path *objectPath) (msgs.InodeId, error) {
+func lookupPath(ctx context.Context, log *log.Logger, c *client.Client, path *objectPath) (msgs.InodeId, error) {
 	current := msgs.ROOT_DIR_INODE_ID
 	for _, segment := range path.segments {
 		lookupResp := &msgs.LookupResp{}

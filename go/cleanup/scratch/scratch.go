@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -16,7 +16,7 @@ type ScratchFile interface {
 	FileId() msgs.InodeId
 }
 
-func NewScratchFile(log *lib.Logger, c *client.Client, shard msgs.ShardId, note string) ScratchFile {
+func NewScratchFile(log *log.Logger, c *client.Client, shard msgs.ShardId, note string) ScratchFile {
 	scratch := &scratchFile{
 		log:   log,
 		c:     c,
@@ -186,7 +186,7 @@ func (f *scratchFile) FileId() msgs.InodeId {
 }
 
 type scratchFile struct {
-	log   *lib.Logger
+	log   *log.Logger
 	c     *client.Client
 	shard msgs.ShardId
 	note  string

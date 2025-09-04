@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"time"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/managedprocess"
 	"xtx/ternfs/msgs"
 )
@@ -90,14 +90,14 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{Level: level, Syslog: false, PrintQuietAlerts: true})
+	l := log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: false, PrintQuietAlerts: true})
 
 	var cppExes *managedprocess.CppExes
 	var goExes *managedprocess.GoExes
@@ -114,8 +114,8 @@ func main() {
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
-		cppExes = managedprocess.BuildCppExes(log, *repoDir, *buildType)
-		goExes = managedprocess.BuildGoExes(log, *repoDir, false)
+		cppExes = managedprocess.BuildCppExes(l, *repoDir, *buildType)
+		goExes = managedprocess.BuildGoExes(l, *repoDir, false)
 	}
 
 	terminateChan := make(chan any, 1)
@@ -127,7 +127,7 @@ func main() {
 
 	// Start shuckle
 	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", *shuckleBincodePort)
-	procs.StartShuckle(log, &managedprocess.ShuckleOpts{
+	procs.StartShuckle(l, &managedprocess.ShuckleOpts{
 		Exe:       goExes.ShuckleExe,
 		HttpPort:  uint16(*shuckleHttpPort),
 		LogLevel:  level,
@@ -143,20 +143,20 @@ func main() {
 	numLocations := 1
 	if *multiLocation {
 		// Waiting for shuckle
-		err := client.WaitForShuckle(log, shuckleAddress, 10*time.Second)
+		err := client.WaitForShuckle(l, shuckleAddress, 10*time.Second)
 		if err != nil {
 			panic(fmt.Errorf("failed to connect to shuckle %v", err))
 		}
-		_, err = client.ShuckleRequest(log, nil, shuckleAddress, &msgs.CreateLocationReq{1, "location1"})
+		_, err = client.ShuckleRequest(l, nil, shuckleAddress, &msgs.CreateLocationReq{1, "location1"})
 		if err != nil {
 			// it's possible location already exits, try renaming it
-			_, err = client.ShuckleRequest(log, nil, shuckleAddress, &msgs.RenameLocationReq{1, "location1"})
+			_, err = client.ShuckleRequest(l, nil, shuckleAddress, &msgs.RenameLocationReq{1, "location1"})
 			if err != nil {
 				panic(fmt.Errorf("failed to create location %v", err))
 			}
 		}
 		procs.StartShuckleProxy(
-			log, &managedprocess.ShuckleProxyOpts{
+			l, &managedprocess.ShuckleProxyOpts{
 				Exe:       goExes.ShuckleProxyExe,
 				LogLevel:  level,
 				Dir:       path.Join(*dataDir, "shuckleproxy"),
@@ -211,7 +211,7 @@ func main() {
 				opts.Addr1 = "127.0.0.1:0"
 				opts.Addr2 = "127.0.0.1:0"
 			}
-			procs.StartBlockService(log, &opts)
+			procs.StartBlockService(l, &opts)
 		}
 	}
 
@@ -220,7 +220,7 @@ func main() {
 		waitShuckleFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	client.WaitForBlockServices(log, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices*uint(numLocations)), true, waitShuckleFor)
+	client.WaitForBlockServices(l, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices*uint(numLocations)), true, waitShuckleFor)
 
 	// Start CDC
 	{
@@ -251,7 +251,7 @@ func main() {
 			} else {
 				opts.Addr1 = "127.0.0.1:0"
 			}
-			procs.StartCDC(log, *repoDir, &opts)
+			procs.StartCDC(l, *repoDir, &opts)
 		}
 	}
 
@@ -292,13 +292,13 @@ func main() {
 				} else {
 					opts.Addr1 = "127.0.0.1:0"
 				}
-				procs.StartShard(log, *repoDir, &opts)
+				procs.StartShard(l, *repoDir, &opts)
 			}
 		}
 	}
 
 	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	client.WaitForClient(log, shuckleAddress, waitShuckleFor)
+	client.WaitForClient(l, shuckleAddress, waitShuckleFor)
 
 	if !*noFuse {
 		for loc :=0; loc < numLocations; loc++ {
@@ -308,7 +308,7 @@ func main() {
 				shuckleAddressToUse = shuckleProxyAddress
 				fuseDir = "fuse1"
 			}
-			fuseMountPoint := procs.StartFuse(log, &managedprocess.FuseOpts{
+			fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
 				Exe:               goExes.FuseExe,
 				Path:              path.Join(*dataDir, fuseDir),
 				LogLevel:          level,

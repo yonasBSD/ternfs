@@ -5,7 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
 )
 
@@ -33,7 +34,7 @@ func (c CouldNotEraseBlocksInBlockServices) Error() string {
 }
 
 func DestructFile(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	stats *DestructFilesStats,
 	id msgs.InodeId,
@@ -138,7 +139,7 @@ type destructFileRequest struct {
 }
 
 func destructFilesWorker(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	stats *DestructFilesState,
 	shid msgs.ShardId,
@@ -170,7 +171,7 @@ func destructFilesWorker(
 }
 
 func destructFilesScraper(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	state *DestructFilesState,
 	terminateChan chan<- any,
@@ -222,7 +223,7 @@ type DestructFilesOptions struct {
 }
 
 func DestructFiles(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
@@ -238,7 +239,7 @@ func DestructFiles(
 	log.Info("destructing files in shard %v", shid)
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 		destructFilesScraper(log, c, stats, terminateChan, shid, workersChan)
 	}()
 
@@ -248,7 +249,7 @@ func DestructFiles(
 		for j := 0; j < opts.NumWorkersPerShard; j++ {
 			go func() {
 				defer workersWg.Done()
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+				defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 				destructFilesWorker(log, c, stats, shid, workersChan, terminateChan)
 			}()
 		}
@@ -278,7 +279,7 @@ func DestructFiles(
 }
 
 func DestructFilesInAllShards(
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	opts *DestructFilesOptions,
 	stats *DestructFilesState,
@@ -290,7 +291,7 @@ func DestructFilesInAllShards(
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			if err := DestructFiles(log, c, opts, stats, shid); err != nil {
 				panic(err)
 			}

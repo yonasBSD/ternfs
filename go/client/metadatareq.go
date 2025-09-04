@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"time"
 	"xtx/ternfs/bincode"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
@@ -14,7 +14,7 @@ func (c *Client) newRequestId() uint64 {
 }
 
 func (c *Client) metadataRequest(
-	log *lib.Logger,
+	log *log.Logger,
 	shid int16, // -1 for cdc
 	reqBody bincode.Packable,
 	respBody bincode.Unpackable,

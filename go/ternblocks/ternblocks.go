@@ -27,11 +27,16 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+	"xtx/ternfs/bufpool"
+	"xtx/ternfs/cbcmac"
 	"xtx/ternfs/certificate"
 	"xtx/ternfs/client"
 	"xtx/ternfs/crc32c"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/flags"
+	"xtx/ternfs/log"
+	lrecover "xtx/ternfs/log/recover"
 	"xtx/ternfs/msgs"
+	"xtx/ternfs/timing"
 	"xtx/ternfs/wyhash"
 
 	"golang.org/x/sys/unix"
@@ -117,9 +122,9 @@ type blockServiceStats struct {
 	blockConversionDiscarded uint64
 }
 type env struct {
-	bufPool        *lib.BufPool
+	bufPool        *bufpool.BufPool
 	stats          map[msgs.BlockServiceId]*blockServiceStats
-	counters       map[msgs.BlocksMessageKind]*lib.Timings
+	counters       map[msgs.BlocksMessageKind]*timing.Timings
 	eraseLocks     map[msgs.BlockServiceId]*sync.Mutex
 	shuckleConn    *client.ShuckleConn
 	failureDomain  string
@@ -135,10 +140,10 @@ func BlockWriteProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, k
 	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
 	buf.Write([]byte{'W'})
 	binary.Write(buf, binary.LittleEndian, uint64(blockId))
-	return lib.CBCMAC(key, buf.Bytes())
+	return cbcmac.CBCMAC(key, buf.Bytes())
 }
 
-func raiseAlertAndHardwareEvent(logger *lib.Logger, hostname string, blockServiceId string, msg string) {
+func raiseAlertAndHardwareEvent(logger *log.Logger, hostname string, blockServiceId string, msg string) {
 	logger.RaiseHardwareEvent(hostname, blockServiceId, msg)
 }
 
@@ -171,7 +176,7 @@ func countBlocks(basePath string) (uint64, error) {
 }
 
 func updateBlockServiceInfoCapacity(
-	_ *lib.Logger,
+	_ *log.Logger,
 	blockService *blockService,
 	reservedStorage uint64,
 ) error {
@@ -199,7 +204,7 @@ func updateBlockServiceInfoCapacity(
 
 // either updates `blockService`, or returns an error.
 func updateBlockServiceInfoBlocks(
-	log *lib.Logger,
+	log *log.Logger,
 	blockService *blockService,
 ) error {
 	t := time.Now()
@@ -216,7 +221,7 @@ func updateBlockServiceInfoBlocks(
 
 func initBlockServicesInfo(
 	env *env,
-	log *lib.Logger,
+	log *log.Logger,
 	locationId msgs.Location,
 	addrs msgs.AddrsInfo,
 	failureDomain [16]byte,
@@ -264,7 +269,7 @@ var maximumRegisterInterval time.Duration = minimumRegisterInterval * 2
 var variantRegisterInterval time.Duration = maximumRegisterInterval - minimumRegisterInterval
 
 func registerPeriodically(
-	log *lib.Logger,
+	log *log.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	env *env,
 ) {
@@ -293,7 +298,7 @@ func registerPeriodically(
 }
 
 func updateBlockServiceInfoBlocksForever(
-	log *lib.Logger,
+	log *log.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
 ) {
 	for {
@@ -311,7 +316,7 @@ func updateBlockServiceInfoBlocksForever(
 }
 
 func updateBlockServiceInfoCapacityForever(
-	log *lib.Logger,
+	log *log.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	reservedStorage uint64,
 ) {
@@ -329,7 +334,7 @@ func updateBlockServiceInfoCapacityForever(
 	}
 }
 
-func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) error {
+func checkEraseCertificate(log *log.Logger, blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) error {
 	expectedMac, good := certificate.CheckBlockEraseCertificate(blockServiceId, cipher, req)
 	if !good {
 		log.RaiseAlert("bad MAC, got %v, expected %v", req.Certificate, expectedMac)
@@ -338,7 +343,7 @@ func checkEraseCertificate(log *lib.Logger, blockServiceId msgs.BlockServiceId, 
 	return nil
 }
 
-func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
+func eraseBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
 	m := env.eraseLocks[blockServiceId]
 	m.Lock()
 	defer m.Unlock()
@@ -352,7 +357,7 @@ func eraseBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	return nil
 }
 
-func writeBlocksResponse(log *lib.Logger, w io.Writer, resp msgs.BlocksResponse) error {
+func writeBlocksResponse(log *log.Logger, w io.Writer, resp msgs.BlocksResponse) error {
 	log.Trace("writing response %T %+v", resp, resp)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
@@ -370,7 +375,7 @@ func writeBlocksResponse(log *lib.Logger, w io.Writer, resp msgs.BlocksResponse)
 	return nil
 }
 
-func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.TernError) error {
+func writeBlocksResponseError(log *log.Logger, w io.Writer, err msgs.TernError) error {
 	log.Debug("writing blocks error %v", err)
 	buf := bytes.NewBuffer([]byte{})
 	if err := binary.Write(buf, binary.LittleEndian, msgs.BLOCKS_RESP_PROTOCOL_VERSION); err != nil {
@@ -389,7 +394,7 @@ func writeBlocksResponseError(log *lib.Logger, w io.Writer, err msgs.TernError) 
 }
 
 type newToOldReadConverter struct {
-	log           *lib.Logger
+	log           *log.Logger
 	r             io.Reader
 	b             []byte
 	totalRead     int
@@ -441,7 +446,7 @@ func (c *newToOldReadConverter) Read(p []byte) (int, error) {
 	return read, nil
 }
 
-func sendFetchBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, fileId msgs.InodeId) error {
+func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, fileId msgs.InodeId) error {
 	if offset%msgs.TERN_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
@@ -569,7 +574,7 @@ func getPhysicalBlockSize(path string) (int, error) {
 	return int(fs.Bsize), nil
 }
 
-func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, expectedSize uint32, crc msgs.Crc, conn *net.TCPConn) error {
+func checkBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, expectedSize uint32, crc msgs.Crc, conn *net.TCPConn) error {
 	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("checking block id %v at path %v", blockId, blockPath)
 
@@ -632,7 +637,7 @@ func checkBlock(log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, b
 	return nil
 }
 
-func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) error {
+func checkWriteCertificate(log *log.Logger, cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) error {
 	expectedMac, good := certificate.CheckBlockWriteCertificate(cipher, blockServiceId, req)
 	if !good {
 		log.Debug("mac computed for %v %v %v %v", blockServiceId, req.BlockId, req.Crc, req.Size)
@@ -642,7 +647,7 @@ func checkWriteCertificate(log *lib.Logger, cipher cipher.Block, blockServiceId 
 	return nil
 }
 
-func writeToBuf(log *lib.Logger, env *env, reader io.Reader, size int64) (*lib.Buf, error) {
+func writeToBuf(log *log.Logger, env *env, reader io.Reader, size int64) (*bufpool.Buf, error) {
 	readBufPtr := env.bufPool.Get(1 << 20)
 	defer env.bufPool.Put(readBufPtr)
 	readBuffer := readBufPtr.Bytes()
@@ -707,7 +712,7 @@ func writeToBuf(log *lib.Logger, env *env, reader io.Reader, size int64) (*lib.B
 }
 
 func writeBlockInternal(
-	log *lib.Logger,
+	log *log.Logger,
 	env *env,
 	reader io.LimitedReader,
 	blockServiceId msgs.BlockServiceId,
@@ -743,7 +748,7 @@ func writeBlockInternal(
 }
 
 func writeBlock(
-	log *lib.Logger,
+	log *log.Logger,
 	env *env,
 	blockServiceId msgs.BlockServiceId, cipher cipher.Block, basePath string,
 	blockId msgs.BlockId, expectedCrc msgs.Crc, size uint32, conn *net.TCPConn,
@@ -765,7 +770,7 @@ func writeBlock(
 }
 
 func testWrite(
-	log *lib.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, size uint64, conn *net.TCPConn,
+	log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, size uint64, conn *net.TCPConn,
 ) error {
 	filePath := path.Join(basePath, fmt.Sprintf("tmp.test-write%d", rand.Int63()))
 	defer os.Remove(filePath)
@@ -788,7 +793,7 @@ const MAX_OBJECT_SIZE uint32 = 100 << 20
 
 // The bool is whether we should keep going
 func handleRequestError(
-	log *lib.Logger,
+	log *log.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
 	conn *net.TCPConn,
@@ -892,7 +897,7 @@ func handleRequestError(
 type deadBlockService struct{}
 
 func readBlocksRequest(
-	log *lib.Logger,
+	log *log.Logger,
 	r io.Reader,
 ) (msgs.BlockServiceId, msgs.BlocksRequest, error) {
 	var protocol uint32
@@ -938,7 +943,7 @@ func readBlocksRequest(
 
 // The bool tells us whether we should keep going
 func handleSingleRequest(
-	log *lib.Logger,
+	log *log.Logger,
 	env *env,
 	_ chan any,
 	lastError *error,
@@ -1052,7 +1057,7 @@ func handleSingleRequest(
 }
 
 func handleRequest(
-	log *lib.Logger,
+	log *log.Logger,
 	env *env,
 	terminateChan chan any,
 	blockServices map[msgs.BlockServiceId]*blockService,
@@ -1089,7 +1094,7 @@ Options:`
 	flag.PrintDefaults()
 }
 
-func retrieveOrCreateKey(log *lib.Logger, dir string) [16]byte {
+func retrieveOrCreateKey(log *log.Logger, dir string) [16]byte {
 	var err error
 	var keyFile *os.File
 	keyFilePath := path.Join(dir, "secret.key")
@@ -1147,7 +1152,7 @@ type diskStats struct {
 	weightedIoMs uint64
 }
 
-func getDiskStats(log *lib.Logger, statsPath string) (map[string]diskStats, error) {
+func getDiskStats(log *log.Logger, statsPath string) (map[string]diskStats, error) {
 	file, err := os.Open(statsPath)
 	if err != nil {
 		return nil, err
@@ -1187,7 +1192,7 @@ func getDiskStats(log *lib.Logger, statsPath string) (map[string]diskStats, erro
 	return ret, nil
 }
 
-func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService) {
+func raiseAlerts(log *log.Logger, env *env, blockServices map[msgs.BlockServiceId]*blockService) {
 	for {
 		for bsId, bs := range blockServices {
 			ioErrors := bs.lastIoErrors
@@ -1208,17 +1213,17 @@ func raiseAlerts(log *lib.Logger, env *env, blockServices map[msgs.BlockServiceI
 	}
 }
 
-func sendMetrics(log *lib.Logger, env *env, influxDB *lib.InfluxDB, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
-	metrics := lib.MetricsBuilder{}
+func sendMetrics(l *log.Logger, env *env, influxDB *log.InfluxDB, blockServices map[msgs.BlockServiceId]*blockService, failureDomain string) {
+	metrics := log.MetricsBuilder{}
 	rand := wyhash.New(mrand.Uint64())
-	alert := log.NewNCAlert(10 * time.Second)
+	alert := l.NewNCAlert(10 * time.Second)
 	failureDomainEscaped := strings.ReplaceAll(failureDomain, " ", "-")
 	for {
-		diskMetrics, err := getDiskStats(log, "/proc/diskstats")
+		diskMetrics, err := getDiskStats(l, "/proc/diskstats")
 		if err != nil {
-			log.RaiseAlert("failed reading diskstats: %v", err)
+			l.RaiseAlert("failed reading diskstats: %v", err)
 		}
-		log.Info("sending metrics")
+		l.Info("sending metrics")
 		metrics.Reset()
 		now := time.Now()
 		for bsId, bsStats := range env.stats {
@@ -1273,12 +1278,12 @@ func sendMetrics(log *lib.Logger, env *env, influxDB *lib.InfluxDB, blockService
 		}
 		err = influxDB.SendMetrics(metrics.Payload())
 		if err == nil {
-			log.ClearNC(alert)
+			l.ClearNC(alert)
 			sleepFor := time.Minute + time.Duration(rand.Uint64() & ^(uint64(1)<<63))%time.Minute
-			log.Info("metrics sent, sleeping for %v", sleepFor)
+			l.Info("metrics sent, sleeping for %v", sleepFor)
 			time.Sleep(sleepFor)
 		} else {
-			log.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
+			l.RaiseNC(alert, "failed to send metrics, will try again in a second: %v", err)
 			time.Sleep(time.Second)
 		}
 	}
@@ -1292,17 +1297,17 @@ type blockService struct {
 	storageClass                    msgs.StorageClass
 	cachedInfo                      msgs.RegisterBlockServiceInfo
 	couldNotUpdateInfoBlocks        bool
-	couldNotUpdateInfoBlocksAlert   lib.XmonNCAlert
+	couldNotUpdateInfoBlocksAlert   log.XmonNCAlert
 	couldNotUpdateInfoCapacity      bool
-	couldNotUpdateInfoCapacityAlert lib.XmonNCAlert
-	ioErrorsAlert                   lib.XmonNCAlert
+	couldNotUpdateInfoCapacityAlert log.XmonNCAlert
+	ioErrorsAlert                   log.XmonNCAlert
 	ioErrors                        uint64
 	requests                        uint64
 	lastIoErrors                    uint64
 	lastRequests                    uint64
 }
 
-func getMountsInfo(log *lib.Logger, mountsPath string) (map[string]string, error) {
+func getMountsInfo(log *log.Logger, mountsPath string) (map[string]string, error) {
 	file, err := os.Open(mountsPath)
 	if err != nil {
 		return nil, err
@@ -1332,7 +1337,7 @@ func main() {
 	pathPrefixStr := flag.String("path-prefix", "", "We filter our block service not only by failure domain but also by path prefix")
 
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
-	var addresses lib.StringArrayFlags
+	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to, and that will be advertised to shuckle.")
 	verbose := flag.Bool("verbose", false, "")
 	xmon := flag.String("xmon", "", "Xmon address (empty for no xmon)")
@@ -1396,7 +1401,7 @@ func main() {
 		flagErrors = true
 	}
 
-	var influxDB *lib.InfluxDB
+	var influxDB *log.InfluxDB
 	if *influxDBOrigin == "" {
 		if *influxDBOrg != "" || *influxDBBucket != "" {
 			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
@@ -1407,7 +1412,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Either all or none of the -influx-db flags must be passed\n")
 			flagErrors = true
 		}
-		influxDB = &lib.InfluxDB{
+		influxDB = &log.InfluxDB{
 			Origin: *influxDBOrigin,
 			Org:    *influxDBOrg,
 			Bucket: *influxDBBucket,
@@ -1419,14 +1424,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	ownIp1, port1, err := lib.ParseIPV4Addr(addresses[0])
+	ownIp1, port1, err := flags.ParseIPV4Addr(addresses[0])
 	if err != nil {
 		panic(err)
 	}
 	var ownIp2 [4]byte
 	var port2 uint16
 	if len(addresses) == 2 {
-		ownIp2, port2, err = lib.ParseIPV4Addr(addresses[1])
+		ownIp2, port2, err = flags.ParseIPV4Addr(addresses[1])
 		if err != nil {
 			panic(err)
 		}
@@ -1457,14 +1462,14 @@ func main() {
 		}
 		defer logOut.Close()
 	}
-	level := lib.INFO
+	level := log.INFO
 	if *verbose {
-		level = lib.DEBUG
+		level = log.DEBUG
 	}
 	if *trace {
-		level = lib.TRACE
+		level = log.TRACE
 	}
-	log := lib.NewLogger(logOut, &lib.LoggerOptions{
+	l := log.NewLogger(logOut, &log.LoggerOptions{
 		Level:                  level,
 		Syslog:                 *syslog,
 		XmonAddr:               *xmon,
@@ -1482,7 +1487,7 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 		stopCpuProfile := func() {
-			log.Info("stopping cpu profile")
+			l.Info("stopping cpu profile")
 			pprof.StopCPUProfile()
 		}
 		defer stopCpuProfile()
@@ -1497,20 +1502,20 @@ func main() {
 		}()
 	}
 
-	log.Info("Running block service with options:")
-	log.Info("  locationId = %v", *locationId)
-	log.Info("  failureDomain = %v", *failureDomainStr)
-	log.Info("  pathPrefix = %v", *pathPrefixStr)
-	log.Info("  futureCutoff = %v", *futureCutoff)
-	log.Info("  addr = '%v'", addresses)
-	log.Info("  logLevel = %v", level)
-	log.Info("  logFile = '%v'", *logFile)
-	log.Info("  shuckleAddress = '%v'", *shuckleAddress)
-	log.Info("  connectionTimeout = %v", *connectionTimeout)
-	log.Info("  reservedStorage = %v", *reservedStorage)
-	log.Info("  shuckleConnectionTimeout = %v", *shuckleConnectionTimeout)
+	l.Info("Running block service with options:")
+	l.Info("  locationId = %v", *locationId)
+	l.Info("  failureDomain = %v", *failureDomainStr)
+	l.Info("  pathPrefix = %v", *pathPrefixStr)
+	l.Info("  futureCutoff = %v", *futureCutoff)
+	l.Info("  addr = '%v'", addresses)
+	l.Info("  logLevel = %v", level)
+	l.Info("  logFile = '%v'", *logFile)
+	l.Info("  shuckleAddress = '%v'", *shuckleAddress)
+	l.Info("  connectionTimeout = %v", *connectionTimeout)
+	l.Info("  reservedStorage = %v", *reservedStorage)
+	l.Info("  shuckleConnectionTimeout = %v", *shuckleConnectionTimeout)
 
-	bufPool := lib.NewBufPool()
+	bufPool := bufpool.NewBufPool()
 	env := &env{
 		bufPool:        bufPool,
 		stats:          make(map[msgs.BlockServiceId]*blockServiceStats),
@@ -1519,12 +1524,12 @@ func main() {
 		failureDomain:  *failureDomainStr,
 		pathPrefix:     *pathPrefixStr,
 		ioAlertPercent: uint8(*ioAlertPercent),
-		shuckleConn:    client.MakeShuckleConn(log, nil, *shuckleAddress, 1),
+		shuckleConn:    client.MakeShuckleConn(l, nil, *shuckleAddress, 1),
 	}
 
-	mountsInfo, err := getMountsInfo(log, "/proc/self/mountinfo")
+	mountsInfo, err := getMountsInfo(l, "/proc/self/mountinfo")
 	if err != nil {
-		log.RaiseAlert("Disk stats for mounted paths will not be collected due to failure collecting mount info: %v", err)
+		l.RaiseAlert("Disk stats for mounted paths will not be collected due to failure collecting mount info: %v", err)
 	}
 
 	blockServices := make(map[msgs.BlockServiceId]*blockService)
@@ -1535,7 +1540,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Storage class cannot be EMPTY/INLINE")
 			os.Exit(2)
 		}
-		key := retrieveOrCreateKey(log, dir)
+		key := retrieveOrCreateKey(l, dir)
 		id := blockServiceIdFromKey(key)
 		cipher, err := aes.NewCipher(key[:])
 		if err != nil {
@@ -1551,13 +1556,13 @@ func main() {
 			key:                             key,
 			cipher:                          cipher,
 			storageClass:                    storageClass,
-			couldNotUpdateInfoBlocksAlert:   *log.NewNCAlert(time.Second),
-			couldNotUpdateInfoCapacityAlert: *log.NewNCAlert(time.Second),
-			ioErrorsAlert:                   *log.NewNCAlert(time.Second),
+			couldNotUpdateInfoBlocksAlert:   *l.NewNCAlert(time.Second),
+			couldNotUpdateInfoCapacityAlert: *l.NewNCAlert(time.Second),
+			ioErrorsAlert:                   *l.NewNCAlert(time.Second),
 		}
 	}
 	for id, blockService := range blockServices {
-		log.Info("block service %v at %v, storage class %v", id, blockService.path, blockService.storageClass)
+		l.Info("block service %v at %v, storage class %v", id, blockService.path, blockService.storageClass)
 	}
 
 	if len(blockServices) != flag.NArg()/2 {
@@ -1570,14 +1575,14 @@ func main() {
 	{
 		var shuckleBlockServices []msgs.BlockServiceDeprecatedInfo
 		{
-			alert := log.NewNCAlert(0)
-			log.RaiseNC(alert, "fetching block services")
+			alert := l.NewNCAlert(0)
+			l.RaiseNC(alert, "fetching block services")
 
 			resp, err := env.shuckleConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
 			if err != nil {
 				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
 			}
-			log.ClearNC(alert)
+			l.ClearNC(alert)
 			shuckleBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
 		}
 		for i := range shuckleBlockServices {
@@ -1607,7 +1612,7 @@ func main() {
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				log.ErrorNoAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
+				l.ErrorNoAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
 				delete(blockServices, bs.Id)
 				deadBlockServices[bs.Id] = deadBlockService{}
 			}
@@ -1629,7 +1634,7 @@ func main() {
 	}
 	defer listener1.Close()
 
-	log.Info("running 1 on %v", listener1.Addr())
+	l.Info("running 1 on %v", listener1.Addr())
 	actualPort1 := uint16(listener1.Addr().(*net.TCPAddr).Port)
 
 	var listener2 net.Listener
@@ -1641,12 +1646,12 @@ func main() {
 		}
 		defer listener2.Close()
 
-		log.Info("running 2 on %v", listener2.Addr())
+		l.Info("running 2 on %v", listener2.Addr())
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(env, log, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage)
-	log.Info("finished updating block service info, will now start")
+	initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage)
+	l.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)
 
@@ -1658,66 +1663,66 @@ func main() {
 		env.stats[bsId] = &blockServiceStats{}
 		env.eraseLocks[bsId] = &sync.Mutex{}
 	}
-	env.counters = make(map[msgs.BlocksMessageKind]*lib.Timings)
+	env.counters = make(map[msgs.BlocksMessageKind]*timing.Timings)
 	for _, k := range msgs.AllBlocksMessageKind {
-		env.counters[k] = lib.NewTimings(40, 100*time.Microsecond, 1.5)
+		env.counters[k] = timing.NewTimings(40, 100*time.Microsecond, 1.5)
 	}
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		registerPeriodically(log, blockServices, env)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		registerPeriodically(l, blockServices, env)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		updateBlockServiceInfoBlocksForever(log, blockServices)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		updateBlockServiceInfoBlocksForever(l, blockServices)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		updateBlockServiceInfoCapacityForever(log, blockServices, *reservedStorage)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		updateBlockServiceInfoCapacityForever(l, blockServices, *reservedStorage)
 	}()
 
 	if influxDB != nil {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-			sendMetrics(log, env, influxDB, blockServices, *failureDomainStr)
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+			sendMetrics(l, env, influxDB, blockServices, *failureDomainStr)
 		}()
 	}
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-		raiseAlerts(log, env, blockServices)
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+		raiseAlerts(l, env, blockServices)
 	}()
 
 	go func() {
-		defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 		for {
 			conn, err := listener1.Accept()
-			log.Trace("new conn %+v", conn)
+			l.Trace("new conn %+v", conn)
 			if err != nil {
 				terminateChan <- err
 				return
 			}
 			go func() {
-				defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-				handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
+				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+				handleRequest(l, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
 			}()
 		}
 	}()
 	if listener2 != nil {
 		go func() {
-			defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
+			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 			for {
 				conn, err := listener2.Accept()
-				log.Trace("new conn %+v", conn)
+				l.Trace("new conn %+v", conn)
 				if err != nil {
 					terminateChan <- err
 					return
 				}
 				go func() {
-					defer func() { lib.HandleRecoverChan(log, terminateChan, recover()) }()
-					handleRequest(log, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
+					defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
+					handleRequest(l, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
 				}()
 			}
 		}()
@@ -1774,7 +1779,7 @@ func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, err
 	return tmpName, err
 }
 
-func verifyCrcFile(log *lib.Logger, readBuffer []byte, path string, expectedSize int64, expectedCrc msgs.Crc) error {
+func verifyCrcFile(log *log.Logger, readBuffer []byte, path string, expectedSize int64, expectedCrc msgs.Crc) error {
 	f, err := os.Open(path)
 	if err != nil {
 		log.Debug("failed opening file %s with error: %v", path, err)
@@ -1793,7 +1798,7 @@ func verifyCrcFile(log *lib.Logger, readBuffer []byte, path string, expectedSize
 	return verifyCrcReader(log, readBuffer, f, expectedCrc)
 }
 
-func verifyCrcReader(log *lib.Logger, readBuffer []byte, r io.Reader, expectedCrc msgs.Crc) error {
+func verifyCrcReader(log *log.Logger, readBuffer []byte, r io.Reader, expectedCrc msgs.Crc) error {
 	cursor := uint32(0)
 	remainingData := 0
 	actualCrc := uint32(0)

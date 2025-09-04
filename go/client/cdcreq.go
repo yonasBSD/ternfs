@@ -3,12 +3,12 @@ package client
 import (
 	"fmt"
 	"net"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
 func (c *Client) checkRepeatedCDCRequestError(
-	logger *lib.Logger,
+	logger *log.Logger,
 	// these are already filled in by now
 	reqBody msgs.CDCRequest,
 	resp msgs.CDCResponse,
@@ -66,7 +66,7 @@ func (c *Client) checkRepeatedCDCRequestError(
 }
 
 func (c *Client) CDCRequest(
-	logger *lib.Logger,
+	logger *log.Logger,
 	reqBody msgs.CDCRequest,
 	// Result will be written in here. If an error is returned, no guarantees
 	// are made regarding the contents of `respBody`.

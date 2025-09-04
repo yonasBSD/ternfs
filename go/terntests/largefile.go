@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"strings"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/wyhash"
 )
 
@@ -18,7 +18,7 @@ type largeFileTestOpts struct {
 }
 
 func largeFileTest(
-	log *lib.Logger,
+	log *log.Logger,
 	opts *largeFileTestOpts,
 	mountPoint string,
 ) {

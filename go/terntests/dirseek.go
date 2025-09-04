@@ -10,7 +10,7 @@ import (
 	"sort"
 	"unsafe"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 	"xtx/ternfs/wyhash"
 )
@@ -159,7 +159,7 @@ func dirSeek(fd C.int, off C.long, whence C.int) (C.long, error) {
 	return off, nil
 }
 
-func dirSeekTest(log *lib.Logger, shuckleAddress string, mountPoint string) {
+func dirSeekTest(log *log.Logger, shuckleAddress string, mountPoint string) {
 	c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)

@@ -20,9 +20,10 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"xtx/ternfs/bufpool"
 	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 	terns3 "xtx/ternfs/s3"
 	"xtx/ternfs/wyhash"
@@ -51,23 +52,23 @@ type fsTestOpts struct {
 }
 
 type fsTestHarness[Id comparable] interface {
-	createDirectory(log *lib.Logger, owner Id, name string) (Id, msgs.TernTime)
-	rename(log *lib.Logger, isDirectory bool, targetId Id, oldOwner Id, oldCreationTime msgs.TernTime, oldName string, newOwner Id, newName string) (Id, msgs.TernTime)
-	createFile(log *lib.Logger, owner Id, spanSize uint32, name string, size uint64, dataSeed uint64) (Id, msgs.TernTime)
-	checkFileData(log *lib.Logger, id Id, size uint64, dataSeed uint64)
+	createDirectory(log *log.Logger, owner Id, name string) (Id, msgs.TernTime)
+	rename(log *log.Logger, isDirectory bool, targetId Id, oldOwner Id, oldCreationTime msgs.TernTime, oldName string, newOwner Id, newName string) (Id, msgs.TernTime)
+	createFile(log *log.Logger, owner Id, spanSize uint32, name string, size uint64, dataSeed uint64) (Id, msgs.TernTime)
+	checkFileData(log *log.Logger, id Id, size uint64, dataSeed uint64)
 	// files, directories
-	readDirectory(log *lib.Logger, dir Id) ([]string, []string)
-	removeFile(log *lib.Logger, dir Id, name string)
-	removeDirectory(log *lib.Logger, dir Id, name string)
+	readDirectory(log *log.Logger, dir Id) ([]string, []string)
+	removeFile(log *log.Logger, dir Id, name string)
+	removeDirectory(log *log.Logger, dir Id, name string)
 }
 
 type apiFsTestHarness struct {
 	client       *client.Client
 	dirInfoCache *client.DirInfoCache
-	readBufPool  *lib.BufPool
+	readBufPool  *bufpool.BufPool
 }
 
-func (c *apiFsTestHarness) createDirectory(log *lib.Logger, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.TernTime) {
+func (c *apiFsTestHarness) createDirectory(log *log.Logger, owner msgs.InodeId, name string) (id msgs.InodeId, creationTime msgs.TernTime) {
 	// TODO random parity
 	req := msgs.MakeDirectoryReq{
 		OwnerId: owner,
@@ -79,7 +80,7 @@ func (c *apiFsTestHarness) createDirectory(log *lib.Logger, owner msgs.InodeId, 
 }
 
 func (c *apiFsTestHarness) rename(
-	log *lib.Logger,
+	log *log.Logger,
 	isDirectory bool,
 	targetId msgs.InodeId,
 	oldOwner msgs.InodeId,
@@ -130,12 +131,12 @@ func (c *apiFsTestHarness) rename(
 }
 
 func (c *apiFsTestHarness) createFile(
-	log *lib.Logger, owner msgs.InodeId, spanSize uint32, name string, size uint64, dataSeed uint64,
+	log *log.Logger, owner msgs.InodeId, spanSize uint32, name string, size uint64, dataSeed uint64,
 ) (msgs.InodeId, msgs.TernTime) {
 	return createFile(log, c.client, c.dirInfoCache, owner, spanSize, name, size, dataSeed, c.readBufPool)
 }
 
-func (c *apiFsTestHarness) readDirectory(log *lib.Logger, dir msgs.InodeId) (files []string, dirs []string) {
+func (c *apiFsTestHarness) readDirectory(log *log.Logger, dir msgs.InodeId) (files []string, dirs []string) {
 	edges := readDir(log, c.client, dir)
 	for _, edge := range edges {
 		if edge.targetId.Type() == msgs.DIRECTORY {
@@ -181,7 +182,7 @@ func ensureLen(buf []byte, l int) []byte {
 	return buf
 }
 
-func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size uint64, dataSeed uint64) {
+func (c *apiFsTestHarness) checkFileData(log *log.Logger, id msgs.InodeId, size uint64, dataSeed uint64) {
 	actualData := readFile(log, c.readBufPool, c.client, id, size)
 	defer c.readBufPool.Put(actualData)
 	expectedData := c.readBufPool.Get(int(size))
@@ -190,7 +191,7 @@ func (c *apiFsTestHarness) checkFileData(log *lib.Logger, id msgs.InodeId, size 
 	checkFileData(id, 0, int(size), actualData.Bytes(), expectedData.Bytes())
 }
 
-func (c *apiFsTestHarness) removeFile(log *lib.Logger, ownerId msgs.InodeId, name string) {
+func (c *apiFsTestHarness) removeFile(log *log.Logger, ownerId msgs.InodeId, name string) {
 	lookupResp := msgs.LookupResp{}
 	if err := c.client.ShardRequest(log, ownerId.Shard(), &msgs.LookupReq{DirId: ownerId, Name: name}, &lookupResp); err != nil {
 		panic(err)
@@ -200,7 +201,7 @@ func (c *apiFsTestHarness) removeFile(log *lib.Logger, ownerId msgs.InodeId, nam
 	}
 }
 
-func (c *apiFsTestHarness) removeDirectory(log *lib.Logger, ownerId msgs.InodeId, name string) {
+func (c *apiFsTestHarness) removeDirectory(log *log.Logger, ownerId msgs.InodeId, name string) {
 	lookupResp := msgs.LookupResp{}
 	if err := c.client.ShardRequest(log, ownerId.Shard(), &msgs.LookupReq{DirId: ownerId, Name: name}, &lookupResp); err != nil {
 		panic(err)
@@ -215,10 +216,10 @@ var _ = (fsTestHarness[msgs.InodeId])((*apiFsTestHarness)(nil))
 type s3TestHarness struct {
 	client  *s3.Client
 	bucket  string
-	bufPool *lib.BufPool
+	bufPool *bufpool.BufPool
 }
 
-func (c *s3TestHarness) createDirectory(log *lib.Logger, owner string, name string) (id string, creationTime msgs.TernTime) {
+func (c *s3TestHarness) createDirectory(log *log.Logger, owner string, name string) (id string, creationTime msgs.TernTime) {
 	fullPath := path.Join(owner, name) + "/"
 	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(c.bucket),
@@ -231,7 +232,7 @@ func (c *s3TestHarness) createDirectory(log *lib.Logger, owner string, name stri
 	return path.Join(owner, name), 0
 }
 
-func (c *s3TestHarness) rename(log *lib.Logger, isDirectory bool, targetFullPath string, oldDir string, oldCreationTime msgs.TernTime, oldName string, newDir string, newName string) (string, msgs.TernTime) {
+func (c *s3TestHarness) rename(log *log.Logger, isDirectory bool, targetFullPath string, oldDir string, oldCreationTime msgs.TernTime, oldName string, newDir string, newName string) (string, msgs.TernTime) {
 	if targetFullPath != path.Join(oldDir, oldName) {
 		panic(fmt.Errorf("mismatching %v and %v", targetFullPath, path.Join(oldDir, oldName)))
 	}
@@ -275,7 +276,7 @@ func (c *s3TestHarness) rename(log *lib.Logger, isDirectory bool, targetFullPath
 	return path.Join(newDir, newName), 0
 }
 
-func (c *s3TestHarness) createFile(log *lib.Logger, owner string, spanSize uint32, name string, size uint64, dataSeed uint64) (string, msgs.TernTime) {
+func (c *s3TestHarness) createFile(log *log.Logger, owner string, spanSize uint32, name string, size uint64, dataSeed uint64) (string, msgs.TernTime) {
 	fullPath := path.Join(owner, name)
 	rand := wyhash.New(dataSeed)
 	bodyBuf := c.bufPool.Get(int(size))
@@ -293,7 +294,7 @@ func (c *s3TestHarness) createFile(log *lib.Logger, owner string, spanSize uint3
 	return fullPath, 0
 }
 
-func (c *s3TestHarness) checkFileData(log *lib.Logger, filePath string, size uint64, dataSeed uint64) {
+func (c *s3TestHarness) checkFileData(log *log.Logger, filePath string, size uint64, dataSeed uint64) {
 	fullSize := int(size)
 	expectedData := c.bufPool.Get(fullSize)
 	defer c.bufPool.Put(expectedData)
@@ -341,7 +342,7 @@ func (c *s3TestHarness) checkFileData(log *lib.Logger, filePath string, size uin
 	checkFileData(filePath, 0, fullSize, actualData.Bytes(), expectedData.Bytes())
 }
 
-func (c *s3TestHarness) readDirectory(log *lib.Logger, dir string) (files []string, directories []string) {
+func (c *s3TestHarness) readDirectory(log *log.Logger, dir string) (files []string, directories []string) {
 	files = []string{}
 	directories = []string{}
 
@@ -366,7 +367,7 @@ func (c *s3TestHarness) readDirectory(log *lib.Logger, dir string) (files []stri
 	return files, directories
 }
 
-func (c *s3TestHarness) removeFile(log *lib.Logger, dir string, name string) {
+func (c *s3TestHarness) removeFile(log *log.Logger, dir string, name string) {
 	_, err := c.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(path.Join(dir, name)),
@@ -376,7 +377,7 @@ func (c *s3TestHarness) removeFile(log *lib.Logger, dir string, name string) {
 	}
 }
 
-func (c *s3TestHarness) removeDirectory(log *lib.Logger, dir string, name string) {
+func (c *s3TestHarness) removeDirectory(log *log.Logger, dir string, name string) {
 	_, err := c.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(path.Join(dir, name) + "/"),
@@ -389,13 +390,13 @@ func (c *s3TestHarness) removeDirectory(log *lib.Logger, dir string, name string
 var _ = (fsTestHarness[string])((*s3TestHarness)(nil))
 
 type posixFsTestHarness struct {
-	bufPool      *lib.BufPool
+	bufPool      *bufpool.BufPool
 	readWithMmap bool
 }
 
-func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name string) (fullPath string, creationTime msgs.TernTime) {
+func (*posixFsTestHarness) createDirectory(l *log.Logger, owner string, name string) (fullPath string, creationTime msgs.TernTime) {
 	fullPath = path.Join(owner, name)
-	log.LogStack(1, lib.DEBUG, "posix mkdir %v", fullPath)
+	l.LogStack(1, log.DEBUG, "posix mkdir %v", fullPath)
 	if err := os.Mkdir(fullPath, 0777); err != nil {
 		panic(err)
 	}
@@ -403,7 +404,7 @@ func (*posixFsTestHarness) createDirectory(log *lib.Logger, owner string, name s
 }
 
 func (*posixFsTestHarness) rename(
-	log *lib.Logger,
+	l *log.Logger,
 	isDirectory bool,
 	targetFullPath string,
 	oldDir string,
@@ -416,14 +417,14 @@ func (*posixFsTestHarness) rename(
 		panic(fmt.Errorf("mismatching %v and %v", targetFullPath, path.Join(oldDir, oldName)))
 	}
 	newFullPath := path.Join(newDir, newName)
-	log.LogStack(1, lib.DEBUG, "posix rename %v -> %v", targetFullPath, newFullPath)
+	l.LogStack(1, log.DEBUG, "posix rename %v -> %v", targetFullPath, newFullPath)
 	if err := os.Rename(targetFullPath, path.Join(newDir, newName)); err != nil {
 		panic(err)
 	}
 	return newFullPath, 0
 }
 
-func getInodeId(log *lib.Logger, path string) msgs.InodeId {
+func getInodeId(log *log.Logger, path string) msgs.InodeId {
 	info, err := os.Stat(path)
 	if err != nil {
 		panic(err)
@@ -440,7 +441,7 @@ func getInodeId(log *lib.Logger, path string) msgs.InodeId {
 }
 
 func (c *posixFsTestHarness) createFile(
-	log *lib.Logger, dirFullPath string, spanSize uint32, name string, size uint64, dataSeed uint64,
+	l *log.Logger, dirFullPath string, spanSize uint32, name string, size uint64, dataSeed uint64,
 ) (fileFullPath string, t msgs.TernTime) {
 	fileFullPath = path.Join(dirFullPath, name)
 
@@ -453,7 +454,7 @@ func (c *posixFsTestHarness) createFile(
 	if err != nil {
 		panic(err)
 	}
-	log.LogStack(1, lib.DEBUG, "posix create file %v (%v size)", fileFullPath, size)
+	l.LogStack(1, log.DEBUG, "posix create file %v (%v size)", fileFullPath, size)
 	if size > 0 {
 		// write in randomly sized chunks
 		chunks := int(rand.Uint32()%10) + 1
@@ -465,7 +466,7 @@ func (c *posixFsTestHarness) createFile(
 		offsets[chunks] = int(size)
 		sort.Ints(offsets)
 		for i := 0; i < chunks; i++ {
-			log.Debug("writing from %v to %v (pid %v)", offsets[i], offsets[i+1], os.Getpid())
+			l.Debug("writing from %v to %v (pid %v)", offsets[i], offsets[i+1], os.Getpid())
 			if _, err := f.Write(actualDataBuf.Bytes()[offsets[i]:offsets[i+1]]); err != nil {
 				panic(err)
 			}
@@ -477,10 +478,10 @@ func (c *posixFsTestHarness) createFile(
 	return fileFullPath, 0
 }
 
-func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) (files []string, dirs []string) {
-	log.LogStack(1, lib.DEBUG, "posix readdir for %v", dirFullPath)
+func (c *posixFsTestHarness) readDirectory(l *log.Logger, dirFullPath string) (files []string, dirs []string) {
+	l.LogStack(1, log.DEBUG, "posix readdir for %v", dirFullPath)
 	fileInfo, err := os.ReadDir(dirFullPath)
-	log.LogStack(1, lib.DEBUG, "posix readdir for %v finished", dirFullPath)
+	l.LogStack(1, log.DEBUG, "posix readdir for %v finished", dirFullPath)
 	if err != nil {
 		panic(err)
 	}
@@ -494,7 +495,7 @@ func (c *posixFsTestHarness) readDirectory(log *lib.Logger, dirFullPath string) 
 	return files, dirs
 }
 
-func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string, size uint64, dataSeed uint64) {
+func (c *posixFsTestHarness) checkFileData(log *log.Logger, fullFilePath string, size uint64, dataSeed uint64) {
 	log.Debug("checking data for file %v tid(%d)", fullFilePath, syscall.Gettid())
 	fullSize := int(size)
 	expectedData := c.bufPool.Get(fullSize)
@@ -566,11 +567,11 @@ func (c *posixFsTestHarness) checkFileData(log *lib.Logger, fullFilePath string,
 	checkFileData(fullFilePath, 0, fullSize, actualData.Bytes(), expectedData.Bytes())
 }
 
-func (c *posixFsTestHarness) removeFile(log *lib.Logger, ownerId string, name string) {
+func (c *posixFsTestHarness) removeFile(log *log.Logger, ownerId string, name string) {
 	os.Remove(path.Join(ownerId, name))
 }
 
-func (c *posixFsTestHarness) removeDirectory(log *lib.Logger, ownerId string, name string) {
+func (c *posixFsTestHarness) removeDirectory(log *log.Logger, ownerId string, name string) {
 	os.Remove(path.Join(ownerId, name))
 }
 
@@ -630,7 +631,7 @@ func (s *fsTestState[Id]) dir(path []int) *fsTestDir[Id] {
 	return s.rootDir.dir(path)
 }
 
-func (state *fsTestState[Id]) incrementDirs(log *lib.Logger, opts *fsTestOpts) {
+func (state *fsTestState[Id]) incrementDirs(log *log.Logger, opts *fsTestOpts) {
 	if state.totalDirs >= opts.numDirs {
 		panic("ran out of dirs!")
 	}
@@ -640,7 +641,7 @@ func (state *fsTestState[Id]) incrementDirs(log *lib.Logger, opts *fsTestOpts) {
 	}
 }
 
-func (state *fsTestState[Id]) makeDir(log *lib.Logger, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int) []int {
+func (state *fsTestState[Id]) makeDir(log *log.Logger, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int) []int {
 	state.incrementDirs(log, opts)
 	dir := state.dir(parent)
 	_, dirExists := dir.children.directories[name]
@@ -661,7 +662,7 @@ func (state *fsTestState[Id]) makeDir(log *lib.Logger, harness fsTestHarness[Id]
 	return path
 }
 
-func (state *fsTestState[Id]) makeDirFromTemp(log *lib.Logger, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int, tmpParent []int) []int {
+func (state *fsTestState[Id]) makeDirFromTemp(log *log.Logger, harness fsTestHarness[Id], opts *fsTestOpts, parent []int, name int, tmpParent []int) []int {
 	dir := state.dir(parent)
 	_, dirExists := dir.children.directories[name]
 	if dirExists {
@@ -688,7 +689,7 @@ func (state *fsTestState[Id]) makeDirFromTemp(log *lib.Logger, harness fsTestHar
 	return path
 }
 
-func (state *fsTestState[Id]) incrementFiles(log *lib.Logger, opts *fsTestOpts) {
+func (state *fsTestState[Id]) incrementFiles(log *log.Logger, opts *fsTestOpts) {
 	if state.totalFiles >= opts.numFiles {
 		panic("ran out of files!")
 	}
@@ -698,7 +699,7 @@ func (state *fsTestState[Id]) incrementFiles(log *lib.Logger, opts *fsTestOpts) 
 	}
 }
 
-func (state *fsTestState[Id]) calcFileSize(log *lib.Logger, opts *fsTestOpts, rand *wyhash.Rand) (size uint64) {
+func (state *fsTestState[Id]) calcFileSize(log *log.Logger, opts *fsTestOpts, rand *wyhash.Rand) (size uint64) {
 	p := rand.Float64()
 	if p < opts.emptyFileProb || opts.maxFileSize == 0 {
 		size = 0
@@ -712,7 +713,7 @@ func (state *fsTestState[Id]) calcFileSize(log *lib.Logger, opts *fsTestOpts, ra
 	return size
 }
 
-func (state *fsTestState[Id]) makeFile(log *lib.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *wyhash.Rand, dirPath []int, name int) {
+func (state *fsTestState[Id]) makeFile(log *log.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *wyhash.Rand, dirPath []int, name int) {
 	state.incrementFiles(log, opts)
 	dir := state.dir(dirPath)
 	_, dirExists := dir.children.directories[name]
@@ -738,7 +739,7 @@ func (state *fsTestState[Id]) makeFile(log *lib.Logger, harness fsTestHarness[Id
 	}
 }
 
-func (state *fsTestState[Id]) makeFileFromTemp(log *lib.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *wyhash.Rand, dirPath []int, name int, tmpDirPath []int) {
+func (state *fsTestState[Id]) makeFileFromTemp(log *log.Logger, harness fsTestHarness[Id], opts *fsTestOpts, rand *wyhash.Rand, dirPath []int, name int, tmpDirPath []int) {
 	state.incrementFiles(log, opts)
 	dir := state.dir(dirPath)
 	_, dirExists := dir.children.directories[name]
@@ -766,7 +767,7 @@ func (state *fsTestState[Id]) makeFileFromTemp(log *lib.Logger, harness fsTestHa
 	}
 }
 
-func (d *fsTestDir[Id]) check(log *lib.Logger, harness fsTestHarness[Id]) {
+func (d *fsTestDir[Id]) check(log *log.Logger, harness fsTestHarness[Id]) {
 	files, dirs := harness.readDirectory(log, d.id)
 	if len(files)+len(dirs) != len(d.children.files)+len(d.children.directories) {
 		panic(fmt.Errorf("bad number of edges -- got %v + %v, expected %v + %v", len(files), len(dirs), len(d.children.files), len(d.children.files)))
@@ -802,7 +803,7 @@ func (d *fsTestDir[Id]) check(log *lib.Logger, harness fsTestHarness[Id]) {
 	}
 }
 
-func (d *fsTestDir[Id]) clean(log *lib.Logger, harness fsTestHarness[Id]) {
+func (d *fsTestDir[Id]) clean(log *log.Logger, harness fsTestHarness[Id]) {
 	files, dirs := harness.readDirectory(log, d.id)
 	for _, fileName := range files {
 		log.Debug("removing file %v", fileName)
@@ -824,7 +825,7 @@ func (d *fsTestDir[Id]) clean(log *lib.Logger, harness fsTestHarness[Id]) {
 }
 
 // Just the first block service id we can find
-func findBlockServiceToPurge(log *lib.Logger, client *client.Client) msgs.BlockServiceId {
+func findBlockServiceToPurge(log *log.Logger, client *client.Client) msgs.BlockServiceId {
 	filesReq := msgs.VisitFilesReq{}
 	filesResp := msgs.VisitFilesResp{}
 	for {
@@ -851,7 +852,7 @@ func findBlockServiceToPurge(log *lib.Logger, client *client.Client) msgs.BlockS
 
 // returns how many blocks were corrupted
 func corruptFiles(
-	log *lib.Logger,
+	log *log.Logger,
 	shuckleAddress string,
 	c *client.Client,
 	opts *fsTestOpts,
@@ -957,7 +958,7 @@ func corruptFiles(
 }
 
 func fsTestInternal[Id comparable](
-	log *lib.Logger,
+	log *log.Logger,
 	c *client.Client,
 	state *fsTestState[Id],
 	shuckleAddress string,
@@ -1134,7 +1135,7 @@ func fsTestInternal[Id comparable](
 		options := &cleanup.DefragOptions{
 			WorkersPerShard: 5,
 		}
-		if err := cleanup.DefragFiles(log, c, lib.NewBufPool(), client.NewDirInfoCache(), stats, alert, options, "/"); err != nil {
+		if err := cleanup.DefragFiles(log, c, bufpool.NewBufPool(), client.NewDirInfoCache(), stats, alert, options, "/"); err != nil {
 			panic(err)
 		}
 		if stats.DefraggedSpans == 0 {
@@ -1259,7 +1260,7 @@ func (s3Harness) isHarness() {}
 func (apiHarness) isHarness() {}
 
 func fsTest(
-	log *lib.Logger,
+	log *log.Logger,
 	shuckleAddress string,
 	opts *fsTestOpts,
 	counters *client.ClientCounters,
@@ -1275,7 +1276,7 @@ func fsTest(
 	switch h := harnessType.(type) {
 	case posixHarness:
 		harness := &posixFsTestHarness{
-			bufPool:      lib.NewBufPool(),
+			bufPool:      bufpool.NewBufPool(),
 			readWithMmap: opts.readWithMmap,
 		}
 		state := fsTestState[string]{
@@ -1287,7 +1288,7 @@ func fsTest(
 		harness := &apiFsTestHarness{
 			client:       c,
 			dirInfoCache: client.NewDirInfoCache(),
-			readBufPool:  lib.NewBufPool(),
+			readBufPool:  bufpool.NewBufPool(),
 		}
 		state := fsTestState[msgs.InodeId]{
 			totalDirs: 1, // root dir
@@ -1300,7 +1301,7 @@ func fsTest(
 			panic(err)
 		}
 		port := listener.Addr().(*net.TCPAddr).Port
-		bufPool := lib.NewBufPool()
+		bufPool := bufpool.NewBufPool()
 		server := terns3.NewS3Server(log, c, bufPool, client.NewDirInfoCache(), map[string]string{"bucket": "/"}, "")
 		go http.Serve(listener, server)
 		cfg, err := s3config.LoadDefaultConfig(context.TODO(),

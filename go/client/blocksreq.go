@@ -6,14 +6,14 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"xtx/ternfs/lib"
+	"xtx/ternfs/log"
 	"xtx/ternfs/msgs"
 )
 
 // A low-level utility for directly communication with block services.
 //
 // Currently this is not used by the main [Client] library at all.
-func BlockServiceConnection(log *lib.Logger, addrs msgs.AddrsInfo) (*net.TCPConn, error) {
+func BlockServiceConnection(log *log.Logger, addrs msgs.AddrsInfo) (*net.TCPConn, error) {
 	if addrs.Addr1.Port == 0 {
 		panic(fmt.Errorf("ip1/port1 must be provided"))
 	}
@@ -47,7 +47,7 @@ func BlockServiceConnection(log *lib.Logger, addrs msgs.AddrsInfo) (*net.TCPConn
 	panic("impossible")
 }
 
-func writeBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
+func writeBlocksRequest(log *log.Logger, w io.Writer, blockServiceId msgs.BlockServiceId, req msgs.BlocksRequest) error {
 	// log.Debug("writing blocks request %v for block service id %v: %+v", req.BlocksRequestKind(), blockServiceId, req)
 	if err := binary.Write(w, binary.LittleEndian, msgs.BLOCKS_REQ_PROTOCOL_VERSION); err != nil {
 		return err
@@ -65,7 +65,7 @@ func writeBlocksRequest(log *lib.Logger, w io.Writer, blockServiceId msgs.BlockS
 }
 
 func readBlocksResponse(
-	log *lib.Logger,
+	log *log.Logger,
 	r io.Reader,
 	resp msgs.BlocksResponse,
 ) error {
@@ -102,7 +102,7 @@ func readBlocksResponse(
 }
 
 func WriteBlock(
-	logger *lib.Logger,
+	logger *log.Logger,
 	conn interface {
 		io.ReaderFrom
 		io.Reader
@@ -147,7 +147,7 @@ func WriteBlock(
 // Note that this function will _not_ check the CRC of the block! You should probably do that
 // before using the block in any meaningful way.
 func FetchBlock(
-	logger *lib.Logger,
+	logger *log.Logger,
 	conn interface {
 		io.Reader
 		io.Writer
@@ -174,7 +174,7 @@ func FetchBlock(
 }
 
 func EraseBlock(
-	logger *lib.Logger,
+	logger *log.Logger,
 	conn interface {
 		io.Writer
 		io.Reader
@@ -199,7 +199,7 @@ func EraseBlock(
 }
 
 func TestWrite(
-	logger *lib.Logger,
+	logger *log.Logger,
 	conn interface {
 		io.ReaderFrom
 		io.Reader

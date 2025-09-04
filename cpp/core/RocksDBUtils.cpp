@@ -5,14 +5,9 @@
 
 #include "RocksDBUtils.hpp"
 
-// Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under both the GPLv2 (found in the
-//  COPYING file in the root directory) and Apache 2.0 License
-//  (found in the LICENSE.Apache file in the root directory).
-namespace { // anonymous namespace
+namespace {
 
-// A 'model' merge operator with int64 addition semantics
-// Implemented as an AssociativeMergeOperator for simplicity and example.
+// A merge operator with int64 addition semantics
 class Int64AddOperator : public rocksdb::AssociativeMergeOperator {
 public:
     bool Merge(
@@ -33,13 +28,11 @@ public:
         return true;
     }
 
-    static const char* kClassName() { return "Int64AddOperator"; }
-    static const char* kNickName() { return "int64add"; }
-    const char* Name() const override { return kClassName(); }
-    const char* NickName() const override { return kNickName(); }
+    const char* Name() const override { return "Int64AddOperator"; }
+    const char* NickName() const override { return "int64add"; }
 };
 
-}  // anonymous namespace
+}
 
 std::shared_ptr<rocksdb::MergeOperator> CreateInt64AddOperator() {
     return std::make_shared<Int64AddOperator>();

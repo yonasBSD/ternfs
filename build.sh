@@ -19,6 +19,7 @@ ${PWD}/go/build.py
 
 # copy binaries
 binaries=(
+    cpp/build/$build_variant/registry/ternregistry
     cpp/build/$build_variant/shard/ternshard
     cpp/build/$build_variant/dbtools/terndbtools
     cpp/build/$build_variant/cdc/terncdc

@@ -1577,3 +1577,7 @@ func (c *Client) GetFailureDomainForBlockService(blockServiceId msgs.BlockServic
 	failureDomain, ok := c.blockServiceToFailureDomain[blockServiceId]
 	return failureDomain, ok
 }
+
+func (c *Client) RegistryRequest(logger *log.Logger, reqBody msgs.RegistryRequest) (msgs.RegistryResponse, error) {	
+	return c.registryConn.Request(reqBody)
+}

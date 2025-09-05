@@ -33,11 +33,10 @@ func main() {
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	registryBincodePort := flag.Uint("registry-bincode-port", 10001, "")
 	registryHttpPort := flag.Uint("registry-http-port", 10000, "")
-	startingPort := flag.Uint("start-port", 10003, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
+	startingPort := flag.Uint("start-port", 10010, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	xmon := flag.String("xmon", "", "")
-	registryScriptsJs := flag.String("registry-scripts-js", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	multiLocation := flag.Bool("multi-location", false, "Run 2 sets of shards/registry/cdc/storages to simulate multi data centre setup")
@@ -103,13 +102,13 @@ func main() {
 	var goExes *managedprocess.GoExes
 	if *binariesDir != "" {
 		cppExes = &managedprocess.CppExes{
-			ShardExe: path.Join(*binariesDir, "ternshard"),
-			CDCExe:   path.Join(*binariesDir, "terncdc"),
+			RegistryExe: path.Join(*binariesDir, "ternregistry"),
+			ShardExe:    path.Join(*binariesDir, "ternshard"),
+			CDCExe:      path.Join(*binariesDir, "terncdc"),
 		}
 		goExes = &managedprocess.GoExes{
-			RegistryExe:      path.Join(*binariesDir, "ternweb"),
-			BlocksExe:       path.Join(*binariesDir, "ternblocks"),
-			FuseExe:         path.Join(*binariesDir, "ternfuse"),
+			BlocksExe:        path.Join(*binariesDir, "ternblocks"),
+			FuseExe:          path.Join(*binariesDir, "ternfuse"),
 			RegistryProxyExe: path.Join(*binariesDir, "ternregistryproxy"),
 		}
 	} else {
@@ -125,28 +124,50 @@ func main() {
 
 	fmt.Printf("starting components\n")
 
+	replicaCount := uint(5)
+	if *leaderOnly {
+		replicaCount = 1
+	}
+
 	// Start registry
 	registryAddress := fmt.Sprintf("127.0.0.1:%v", *registryBincodePort)
-	procs.StartRegistry(l, &managedprocess.RegistryOpts{
-		Exe:       goExes.RegistryExe,
-		HttpPort:  uint16(*registryHttpPort),
-		LogLevel:  level,
-		Dir:       path.Join(*dataDir, "registry"),
-		Xmon:      *xmon,
-		ScriptsJs: *registryScriptsJs,
-		Addr1:     registryAddress,
-	})
+	{
+		for r := uint8(0); r < uint8(replicaCount); r++ {
+			dir := path.Join(*dataDir, fmt.Sprintf("registry_%d", r))
+			if r == 0 {
+				dir = path.Join(*dataDir, "registry")
+			}
+			opts := managedprocess.RegistryOpts{
+				Exe:             cppExes.RegistryExe,
+				LogLevel:        level,
+				Dir:             dir,
+				RegistryAddress: registryAddress,
+				Replica:         msgs.ReplicaId(r),
+				Xmon:            *xmon,
+			}
+			if r == 0 {
+				if *leaderOnly {
+					opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
+				} else {
+					opts.LogsDBFlags = []string{"-logsdb-leader"}
+				}
+			}
+			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*registryBincodePort)+uint16(r))
+			procs.StartRegistry(l, &opts)
+		}
+	}
 
-	registryProxyPort := *registryBincodePort + 1
+	// Waiting for registry
+	err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
+	if err != nil {
+		panic(fmt.Errorf("failed to connect to registry %v", err))
+	}
+
+	registryProxyPort := *registryBincodePort + replicaCount
 	registryProxyAddress := fmt.Sprintf("127.0.0.1:%v", registryProxyPort)
 
 	numLocations := 1
 	if *multiLocation {
-		// Waiting for registry
-		err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
-		if err != nil {
-			panic(fmt.Errorf("failed to connect to registry %v", err))
-		}
 		_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.CreateLocationReq{1, "location1"})
 		if err != nil {
 			// it's possible location already exits, try renaming it
@@ -157,20 +178,20 @@ func main() {
 		}
 		procs.StartRegistryProxy(
 			l, &managedprocess.RegistryProxyOpts{
-				Exe:            goExes.RegistryProxyExe,
-				LogLevel:       level,
-				Dir:            path.Join(*dataDir, "registryproxy"),
-				Xmon:           *xmon,
-				Addr1:          registryProxyAddress,
+				Exe:             goExes.RegistryProxyExe,
+				LogLevel:        level,
+				Dir:             path.Join(*dataDir, "registryproxy"),
+				Xmon:            *xmon,
+				Addr1:           registryProxyAddress,
 				RegistryAddress: registryAddress,
-				Location:       1,
+				Location:        1,
 			},
 		)
+		err = client.WaitForRegistry(l, registryProxyAddress, 10*time.Second)
+		if err != nil {
+			panic(fmt.Errorf("failed to connect to registry %v", err))
+		}
 		numLocations = 2
-	}
-	replicaCount := 5
-	if *leaderOnly {
-		replicaCount = 1
 	}
 
 	// Start block services
@@ -200,7 +221,7 @@ func main() {
 				FailureDomain:    fmt.Sprintf("%d_%d", i, loc),
 				Location:         msgs.Location(loc),
 				LogLevel:         level,
-				RegistryAddress:   registryAddressToUse,
+				RegistryAddress:  registryAddressToUse,
 				Profile:          *profile,
 				Xmon:             *xmon,
 				ReserverdStorage: 10 << 30, // 10GB
@@ -230,14 +251,14 @@ func main() {
 				dir = path.Join(*dataDir, "cdc")
 			}
 			opts := managedprocess.CDCOpts{
-				ReplicaId:      msgs.ReplicaId(r),
-				Exe:            cppExes.CDCExe,
-				Dir:            dir,
-				LogLevel:       level,
-				Valgrind:       *buildType == "valgrind",
+				ReplicaId:       msgs.ReplicaId(r),
+				Exe:             cppExes.CDCExe,
+				Dir:             dir,
+				LogLevel:        level,
+				Valgrind:        *buildType == "valgrind",
 				RegistryAddress: registryAddress,
-				Perf:           *profile,
-				Xmon:           *xmon,
+				Perf:            *profile,
+				Xmon:            *xmon,
 			}
 			if r == 0 {
 				if *leaderOnly {
@@ -269,16 +290,16 @@ func main() {
 					dirName = fmt.Sprintf("%s_loc%d", dirName, loc)
 				}
 				opts := managedprocess.ShardOpts{
-					Exe:            cppExes.ShardExe,
-					Shrid:          shrid,
-					Dir:            path.Join(*dataDir, dirName),
-					LogLevel:       level,
-					Valgrind:       *buildType == "valgrind",
+					Exe:             cppExes.ShardExe,
+					Shrid:           shrid,
+					Dir:             path.Join(*dataDir, dirName),
+					LogLevel:        level,
+					Valgrind:        *buildType == "valgrind",
 					RegistryAddress: registryAddressToUse,
-					Perf:           *profile,
-					Xmon:           *xmon,
-					Location:       msgs.Location(loc),
-					LogsDBFlags:    nil,
+					Perf:            *profile,
+					Xmon:            *xmon,
+					Location:        msgs.Location(loc),
+					LogsDBFlags:     nil,
 				}
 				if r == 0 {
 					if *leaderOnly {
@@ -309,12 +330,12 @@ func main() {
 				fuseDir = "fuse1"
 			}
 			fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
-				Exe:            goExes.FuseExe,
-				Path:           path.Join(*dataDir, fuseDir),
-				LogLevel:       level,
-				Wait:           true,
+				Exe:             goExes.FuseExe,
+				Path:            path.Join(*dataDir, fuseDir),
+				LogLevel:        level,
+				Wait:            true,
 				RegistryAddress: registryAddressToUse,
-				Profile:        *profile,
+				Profile:         *profile,
 			})
 
 			fmt.Printf("operational, mounted at %v\n", fuseMountPoint)
@@ -323,8 +344,8 @@ func main() {
 		fmt.Printf("operational\n")
 	}
 
-	err := <-terminateChan
-	if err != nil {
-		panic(err)
+	errT := <-terminateChan
+	if errT != nil {
+		panic(errT)
 	}
 }

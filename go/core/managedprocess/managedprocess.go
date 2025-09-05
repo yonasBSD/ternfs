@@ -270,7 +270,7 @@ type BlockServiceOpts struct {
 	Location         msgs.Location
 	FutureCutoff     *time.Duration
 	LogLevel         log.LogLevel
-	RegistryAddress   string
+	RegistryAddress  string
 	Profile          bool
 	Xmon             string
 	ReserverdStorage uint64
@@ -334,7 +334,7 @@ type FuseOpts struct {
 	Path                string
 	LogLevel            log.LogLevel
 	Wait                bool
-	RegistryAddress      string
+	RegistryAddress     string
 	Profile             bool
 	InitialShardTimeout time.Duration
 	InitialCDCTimeout   time.Duration
@@ -387,24 +387,26 @@ func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string 
 }
 
 type RegistryOpts struct {
-	Exe       string
-	Dir       string
-	LogLevel  log.LogLevel
-	HttpPort  uint16
-	Stale     time.Duration
-	Xmon      string
-	ScriptsJs string
-	Addr1     string
-	Addr2     string
+	Exe             string
+	Dir             string
+	Replica         msgs.ReplicaId
+	LogLevel        log.LogLevel
+	Stale           time.Duration
+	Xmon            string
+	RegistryAddress string
+	Addr1           string
+	Addr2           string
+	LogsDBFlags     []string
 }
 
 func (procs *ManagedProcesses) StartRegistry(ll *log.Logger, opts *RegistryOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
-		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
 		"-log-file", path.Join(opts.Dir, "log"),
-		"-data-dir", opts.Dir,
+		"-db-dir", opts.Dir,
 		"-addr", opts.Addr1,
+		"-replica", fmt.Sprintf("%d", opts.Replica),
+		"-registry", opts.RegistryAddress,
 	}
 	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
@@ -413,16 +415,16 @@ func (procs *ManagedProcesses) StartRegistry(ll *log.Logger, opts *RegistryOpts)
 		args = append(args, "-trace")
 	}
 	if opts.Stale != 0 {
-		args = append(args, "-stale", opts.Stale.String())
+		args = append(args, "-staleness-delay", fmt.Sprintf("%dms", opts.Stale.Milliseconds()))
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
 	}
-	if opts.ScriptsJs != "" {
-		args = append(args, "-scripts-js", opts.ScriptsJs)
-	}
 	if opts.Addr2 != "" {
 		args = append(args, "-addr", opts.Addr2)
+	}
+	if opts.LogsDBFlags != nil {
+		args = append(args, opts.LogsDBFlags...)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "registry",
@@ -435,14 +437,14 @@ func (procs *ManagedProcesses) StartRegistry(ll *log.Logger, opts *RegistryOpts)
 }
 
 type RegistryProxyOpts struct {
-	Exe            string
-	Dir            string
-	LogLevel       log.LogLevel
-	Xmon           string
-	Addr1          string
-	Addr2          string
+	Exe             string
+	Dir             string
+	LogLevel        log.LogLevel
+	Xmon            string
+	Addr1           string
+	Addr2           string
 	RegistryAddress string
-	Location       msgs.Location
+	Location        msgs.Location
 }
 
 func (procs *ManagedProcesses) StartRegistryProxy(ll *log.Logger, opts *RegistryProxyOpts) {
@@ -476,14 +478,13 @@ func (procs *ManagedProcesses) StartRegistryProxy(ll *log.Logger, opts *Registry
 }
 
 type GoExes struct {
-	RegistryExe      string
-	BlocksExe       string
-	FuseExe         string
+	BlocksExe        string
+	FuseExe          string
 	RegistryProxyExe string
 }
 
 func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
-	args := []string{"ternweb", "ternblocks", "ternfuse"}
+	args := []string{"ternblocks", "ternfuse"}
 	if race {
 		args = append(args, "--race")
 	}
@@ -496,9 +497,8 @@ func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
 		panic(fmt.Errorf("could not build shucke/blocks/fuse: %w", err))
 	}
 	return &GoExes{
-		RegistryExe:      path.Join(goDir(repoDir), "ternweb", "ternweb"),
-		BlocksExe:       path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
-		FuseExe:         path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
+		BlocksExe:        path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
+		FuseExe:          path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
 		RegistryProxyExe: path.Join(goDir(repoDir), "ternregistryproxy", "ternregistryproxy"),
 	}
 }
@@ -511,7 +511,7 @@ type ShardOpts struct {
 	Valgrind                  bool
 	Perf                      bool
 	OutgoingPacketDrop        float64
-	RegistryAddress            string
+	RegistryAddress           string
 	Addr1                     string
 	Addr2                     string
 	TransientDeadlineInterval *time.Duration
@@ -600,18 +600,18 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 }
 
 type CDCOpts struct {
-	Exe            string
-	Dir            string
-	ReplicaId      msgs.ReplicaId
-	LogLevel       log.LogLevel
-	Valgrind       bool
-	Perf           bool
+	Exe             string
+	Dir             string
+	ReplicaId       msgs.ReplicaId
+	LogLevel        log.LogLevel
+	Valgrind        bool
+	Perf            bool
 	RegistryAddress string
-	Addr1          string
-	Addr2          string
-	ShardTimeout   time.Duration
-	Xmon           string
-	LogsDBFlags    []string
+	Addr1           string
+	Addr2           string
+	ShardTimeout    time.Duration
+	Xmon            string
+	LogsDBFlags     []string
 }
 
 func (procs *ManagedProcesses) StartCDC(ll *log.Logger, repoDir string, opts *CDCOpts) {
@@ -710,16 +710,18 @@ func buildCpp(ll *log.Logger, repoDir string, buildType string, targets []string
 }
 
 type CppExes struct {
-	ShardExe   string
-	CDCExe     string
-	DBToolsExe string
+	RegistryExe string
+	ShardExe    string
+	CDCExe      string
+	DBToolsExe  string
 }
 
 func BuildCppExes(ll *log.Logger, repoDir string, buildType string) *CppExes {
-	buildDir := buildCpp(ll, repoDir, buildType, []string{"shard/ternshard", "cdc/terncdc", "dbtools/terndbtools"})
+	buildDir := buildCpp(ll, repoDir, buildType, []string{"registry/ternregistry", "shard/ternshard", "cdc/terncdc", "dbtools/terndbtools"})
 	return &CppExes{
-		ShardExe:   path.Join(buildDir, "shard/ternshard"),
-		CDCExe:     path.Join(buildDir, "cdc/terncdc"),
-		DBToolsExe: path.Join(buildDir, "dbtools/terndbtools"),
+		RegistryExe: path.Join(buildDir, "registry/ternregistry"),
+		ShardExe:    path.Join(buildDir, "shard/ternshard"),
+		CDCExe:      path.Join(buildDir, "cdc/terncdc"),
+		DBToolsExe:  path.Join(buildDir, "dbtools/terndbtools"),
 	}
 }

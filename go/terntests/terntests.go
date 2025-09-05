@@ -957,12 +957,12 @@ func main() {
 	var goExes *managedprocess.GoExes
 	if *binariesDir != "" {
 		cppExes = &managedprocess.CppExes{
+			RegistryExe: path.Join(*binariesDir, "ternregistry"),
 			ShardExe:   path.Join(*binariesDir, "ternshard"),
 			CDCExe:     path.Join(*binariesDir, "terncdc"),
 			DBToolsExe: path.Join(*binariesDir, "terndbtools"),
 		}
 		goExes = &managedprocess.GoExes{
-			RegistryExe: path.Join(*binariesDir, "ternweb"),
 			BlocksExe:  path.Join(*binariesDir, "ternblocks"),
 			FuseExe:    path.Join(*binariesDir, "ternfuse"),
 		}
@@ -1037,17 +1037,38 @@ func main() {
 	registryPort := uint16(*registryPortArg)
 	registryAddress := fmt.Sprintf("127.0.0.1:%v", registryPort)
 
-	// Start registry
-	registryOpts := &managedprocess.RegistryOpts{
-		Exe:      goExes.RegistryExe,
-		LogLevel: level,
-		Dir:      path.Join(*dataDir, "registry"),
-		Addr1:    registryAddress,
+	{
+		for r := uint8(0); r < uint8(5); r++ {
+			dir := path.Join(*dataDir, fmt.Sprintf("registry_%d", r))
+			if r == 0 {
+				dir = path.Join(*dataDir, "registry")
+			}
+			opts := managedprocess.RegistryOpts{
+				Exe:             cppExes.RegistryExe,
+				LogLevel:        level,
+				Dir:             dir,
+				RegistryAddress: registryAddress,
+				Replica:         msgs.ReplicaId(r),
+			}
+			if r == 0 {
+				if *leaderOnly {
+					opts.LogsDBFlags = []string{"-logsdb-leader", "-logsdb-no-replication"}
+				} else {
+					opts.LogsDBFlags = []string{"-logsdb-leader"}
+				}
+			}
+			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", registryPort+uint16(r))
+			if *blockServiceKiller {
+				opts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
+			}
+			procs.StartRegistry(l, &opts)
+		}
 	}
-	if *blockServiceKiller {
-		registryOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
+	
+	err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
+	if err != nil {
+		panic(fmt.Errorf("failed to connect to registry %v", err))
 	}
-	procs.StartRegistry(l, registryOpts)
 
 	failureDomains := 14 + 4 // so that any 4 can fail and we can still do everything.
 	hddBlockServices := 10
@@ -1279,9 +1300,9 @@ func main() {
 	}()
 
 	// wait for things to finish
-	err := <-terminateChan
-	if err != nil {
-		panic(err)
+	errT := <-terminateChan
+	if errT != nil {
+		panic(errT)
 	}
 
 	// fsck everything

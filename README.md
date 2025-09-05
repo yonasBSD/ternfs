@@ -34,16 +34,21 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
 TODO decorate list below with links drilling down on specific concepts.
 
 * **servers**
-  * **shuckle**
+  * **web**
     * 1 logical instance
-    * `ternshuckle`, Go binary
-    * state currently persisted through SQLite (1 physical instance), should move to a Galera cluster soon (see #41)
-    * TCP -- both bincode and HTTP
+    * `ternweb`, go binary
+    * TCP http server
+    * stateless
+    * serves web UI
+  * **registry**
+    * 1 logical instance
+    * `ternregistry`, C++ binary
+    * TCP bincode req/resp
+    * UDP replication
     * stores metadata about a specific TernFS deployment
       * shard/cdc addresses
       * block services addressea and storage statistics
-      * latency histograms
-    * serves web UI
+    * state persisted through RocksDB with 5-node distributed consensus through LogsDB
   * **filesystem data**
     * **metadata**
       * **shard**
@@ -57,7 +62,7 @@ TODO decorate list below with links drilling down on specific concepts.
           * block service to file mapping
         * UDP bincode req/resp
         * state persisted through RocksDB with 5-node distributed consensus through LogsDB
-        * communicates with shuckle to fetch block services, register itself, insert statistics
+        * communicates with registry to fetch block services, register itself, insert statistics
     * **CDC**
       * 1 logical instance
       * `terncdc`, C++ binary
@@ -72,7 +77,7 @@ TODO decorate list below with links drilling down on specific concepts.
         * directory -> parent directory mapping to perform "no loops" checks
       * state persisted through RocksDB with 5-node distributed consensus through LogsDB
       * communicates with the shards to perform the cross-directory actions
-      * communicates with shuckle to register itself, fetch shards, insert statistics
+      * communicates with registry to register itself, fetch shards, insert statistics
   * **block service**
     * up to 1 million logical instances
     * 1 logical instance = 1 disk
@@ -84,7 +89,7 @@ TODO decorate list below with links drilling down on specific concepts.
     * TCP bincode req/resp
     * extremely dumb, the only state is the blobs themselves
     * its entire job is efficiently streaming blobs of data from disks into TCP connections
-    * communicates with shuckle to register itself and to update information about free space, number of blocks, etc.
+    * communicates with registry to register itself and to update information about free space, number of blocks, etc.
 * **clients**, these all talk to all of the servers
   * **cli**
     * `terncli`, Go binary
@@ -169,7 +174,7 @@ The above will run all the processes needed to run TernFS. This includes:
 * 256 metadata shards;
 * 1 cross directory coordinator (CDC)
 * A bunch of block services (this is tunable with the `-flash-block-services`, `-hdd-block-services`, and `-failure-domains` flags)
-* 1 shuckle instance
+* 1 registry instance
 
 A multitude of directories to persist the whole thing will appear in `<data-dir>`. The filesystem will also be mounted using FUSE under `<data-dir>/fuse/mnt`.
 

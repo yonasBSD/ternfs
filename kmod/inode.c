@@ -579,7 +579,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry*
     struct iov_iter from;
     vec.iov_base = (void*)path;
     vec.iov_len = len;
-    iov_iter_kvec(&from, READ, &vec, 1, vec.iov_len);
+    iov_iter_kvec(&from, WRITE, &vec, 1, vec.iov_len);
     inode_lock(&enode->inode);
     int err = ternfs_file_write(enode, 0, &ppos, &from);
     inode_unlock(&enode->inode);

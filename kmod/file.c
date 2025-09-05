@@ -100,7 +100,7 @@ static int file_open(struct inode* inode, struct file* filp) {
             int err = ternfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
             if (err) {
                 inode_unlock(inode);
-                return err;
+                goto out;
             }
             diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
             if (diff < ternfs_atime_update_interval_sec) {
@@ -1358,7 +1358,7 @@ static void file_readahead(struct readahead_control *rac)
                 
             page->index = index + i;
             zero_user_segment(page, 0, PAGE_SIZE);
-            list_add_tail(&page->lru, &pages);
+            list_add(&page->lru, &pages);
             pages_allocated++;
         }
         goto out_process;

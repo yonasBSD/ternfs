@@ -14,18 +14,18 @@ import (
 	"xtx/ternfs/msgs"
 )
 
-func writeShuckleRequest(log *log.Logger, w io.Writer, req msgs.ShuckleRequest) error {
-	log.Debug("sending request %v to shuckle", req.ShuckleRequestKind())
+func writeRegistryRequest(log *log.Logger, w io.Writer, req msgs.RegistryRequest) error {
+	log.Debug("sending request %v to registry", req.RegistryRequestKind())
 	// serialize
 	bytes := bincode.Pack(req)
 	// write out
-	if err := binary.Write(w, binary.LittleEndian, msgs.SHUCKLE_REQ_PROTOCOL_VERSION); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, msgs.REGISTRY_REQ_PROTOCOL_VERSION); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.LittleEndian, uint32(1+len(bytes))); err != nil {
 		return err
 	}
-	if _, err := w.Write([]byte{uint8(req.ShuckleRequestKind())}); err != nil {
+	if _, err := w.Write([]byte{uint8(req.RegistryRequestKind())}); err != nil {
 		return err
 	}
 	if _, err := w.Write(bytes); err != nil {
@@ -34,17 +34,17 @@ func writeShuckleRequest(log *log.Logger, w io.Writer, req msgs.ShuckleRequest) 
 	return nil
 }
 
-func readShuckleResponse(
+func readRegistryResponse(
 	log *log.Logger,
 	r io.Reader,
-) (msgs.ShuckleResponse, error) {
-	log.Debug("reading response from shuckle")
+) (msgs.RegistryResponse, error) {
+	log.Debug("reading response from registry")
 	var protocol uint32
 	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
 		return nil, fmt.Errorf("could not read protocol: %w", err)
 	}
-	if protocol != msgs.SHUCKLE_RESP_PROTOCOL_VERSION {
-		return nil, fmt.Errorf("bad shuckle protocol, expected %v, got %v", msgs.SHUCKLE_RESP_PROTOCOL_VERSION, protocol)
+	if protocol != msgs.REGISTRY_RESP_PROTOCOL_VERSION {
+		return nil, fmt.Errorf("bad registry protocol, expected %v, got %v", msgs.REGISTRY_RESP_PROTOCOL_VERSION, protocol)
 	}
 	var len uint32
 	if err := binary.Read(r, binary.LittleEndian, &len); err != nil {
@@ -61,8 +61,8 @@ func readShuckleResponse(
 		}
 		return nil, msgs.TernError(err)
 	}
-	kind := msgs.ShuckleMessageKind(data[0])
-	var resp msgs.ShuckleResponse
+	kind := msgs.RegistryMessageKind(data[0])
+	var resp msgs.RegistryResponse
 	switch kind {
 	case msgs.LOCAL_SHARDS:
 		resp = &msgs.LocalShardsResp{}
@@ -119,21 +119,21 @@ func readShuckleResponse(
 	case msgs.UPDATE_BLOCK_SERVICE_PATH:
 		resp = &msgs.UpdateBlockServicePathResp{}
 	default:
-		return nil, fmt.Errorf("bad shuckle response kind %v", kind)
+		return nil, fmt.Errorf("bad registry response kind %v", kind)
 	}
-	log.Debug("read response %v from shuckle", kind)
+	log.Debug("read response %v from registry", kind)
 	if err := bincode.Unpack(data[1:], resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
 }
 
-type ShuckleTimeouts struct {
+type RegistryTimeouts struct {
 	ReconnectTimeout timing.ReqTimeouts
 	RequestTimeout   time.Duration
 }
 
-var DefaultShuckleTimeout = ShuckleTimeouts{
+var DefaultRegistryTimeout = RegistryTimeouts{
 	ReconnectTimeout: timing.ReqTimeouts{
 		Initial: 100 * time.Millisecond,
 		Max:     1 * time.Second,
@@ -144,51 +144,51 @@ var DefaultShuckleTimeout = ShuckleTimeouts{
 	RequestTimeout: 20 * time.Second,
 }
 
-func ShuckleRequest(
+func RegistryRequest(
 	log *log.Logger,
-	timeout *ShuckleTimeouts,
-	shuckleAddress string,
-	req msgs.ShuckleRequest,
-) (msgs.ShuckleResponse, error) {
-	conn := MakeShuckleConn(log, timeout, shuckleAddress, 1)
+	timeout *RegistryTimeouts,
+	registryAddress string,
+	req msgs.RegistryRequest,
+) (msgs.RegistryResponse, error) {
+	conn := MakeRegistryConn(log, timeout, registryAddress, 1)
 	defer conn.Close()
 	return conn.Request(req)
 }
 
 type shuckResp struct {
-	resp msgs.ShuckleResponse
+	resp msgs.RegistryResponse
 	err  error
 }
 
 type shuckReq struct {
-	req       msgs.ShuckleRequest
+	req       msgs.RegistryRequest
 	respC     chan<- shuckResp
 	startedAt time.Time
 }
 
-type ShuckleConn struct {
+type RegistryConn struct {
 	log            *log.Logger
-	timeout        ShuckleTimeouts
-	shuckleAddress string
+	timeout        RegistryTimeouts
+	registryAddress string
 	reqChan        chan shuckReq
 	numHandlers    uint
 }
 
-func MakeShuckleConn(
+func MakeRegistryConn(
 	log *log.Logger,
-	timeout *ShuckleTimeouts,
-	shuckleAddress string,
+	timeout *RegistryTimeouts,
+	registryAddress string,
 	numHandlers uint,
-) *ShuckleConn {
+) *RegistryConn {
 	if timeout == nil {
-		timeout = &DefaultShuckleTimeout
+		timeout = &DefaultRegistryTimeout
 	}
-	shuckConn := ShuckleConn{log, *timeout, shuckleAddress, make(chan shuckReq), 0}
+	shuckConn := RegistryConn{log, *timeout, registryAddress, make(chan shuckReq), 0}
 	shuckConn.IncreaseNumHandlersTo(numHandlers)
 	return &shuckConn
 }
 
-func (c *ShuckleConn) IncreaseNumHandlersTo(numHandlers uint) {
+func (c *RegistryConn) IncreaseNumHandlersTo(numHandlers uint) {
 	for i := c.numHandlers; i < numHandlers; i++ {
 		go func() {
 			c.requestHandler()
@@ -197,7 +197,7 @@ func (c *ShuckleConn) IncreaseNumHandlersTo(numHandlers uint) {
 	c.numHandlers = numHandlers
 }
 
-func (c *ShuckleConn) requestHandler() {
+func (c *RegistryConn) requestHandler() {
 	var conn net.Conn
 	var err error
 	defer func() {
@@ -232,7 +232,7 @@ func (c *ShuckleConn) requestHandler() {
 			continue
 		}
 		conn.SetWriteDeadline(reqDeadline)
-		if err = writeShuckleRequest(c.log, conn, req.req); err != nil {
+		if err = writeRegistryRequest(c.log, conn, req.req); err != nil {
 			conn.Close()
 			conn = nil
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -243,7 +243,7 @@ func (c *ShuckleConn) requestHandler() {
 		}
 		conn.SetWriteDeadline(time.Time{})
 		conn.SetReadDeadline(reqDeadline)
-		resp, err := readShuckleResponse(c.log, conn)
+		resp, err := readRegistryResponse(c.log, conn)
 		if err != nil {
 			if _, isTernErr := err.(msgs.TernError); !isTernErr {
 				conn.Close()
@@ -260,7 +260,7 @@ func (c *ShuckleConn) requestHandler() {
 	}
 }
 
-func (c *ShuckleConn) connect() (net.Conn, error) {
+func (c *RegistryConn) connect() (net.Conn, error) {
 	start := time.Now()
 
 	var err error
@@ -272,13 +272,13 @@ func (c *ShuckleConn) connect() (net.Conn, error) {
 Reconnect:
 	delay = c.timeout.ReconnectTimeout.Next(start)
 	if delay == 0 {
-		c.log.Info("could not connect to shuckle and we're out of attempts: %v", err)
+		c.log.Info("could not connect to registry and we're out of attempts: %v", err)
 		return nil, err
 	}
 	time.Sleep(delay)
 
 ReconnectBegin:
-	conn, err = net.DialTimeout("tcp", c.shuckleAddress, c.timeout.ReconnectTimeout.Max)
+	conn, err = net.DialTimeout("tcp", c.registryAddress, c.timeout.ReconnectTimeout.Max)
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
@@ -293,12 +293,12 @@ ReconnectBegin:
 				goto Reconnect
 			}
 		}
-		c.log.Info("could not connect to shuckle: %v", err)
+		c.log.Info("could not connect to registry: %v", err)
 		return nil, err
 	}
 	tcpConn := conn.(*net.TCPConn)
 	if err = tcpConn.SetKeepAlive(true); err != nil {
-		c.log.RaiseAlert("could not set keepalive on connection to shuckle: %v", err)
+		c.log.RaiseAlert("could not set keepalive on connection to registry: %v", err)
 		tcpConn.Close()
 		return nil, err
 	}
@@ -307,24 +307,24 @@ ReconnectBegin:
 		keepAlivePeriod = c.timeout.RequestTimeout
 	}
 	if err = tcpConn.SetKeepAlivePeriod(keepAlivePeriod); err != nil {
-		c.log.RaiseAlert("could not set keepalive period on connection to shuckle: %v", err)
+		c.log.RaiseAlert("could not set keepalive period on connection to registry: %v", err)
 		tcpConn.Close()
 		return nil, err
 	}
 	return conn, nil
 }
 
-func (c *ShuckleConn) Request(req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
+func (c *RegistryConn) Request(req msgs.RegistryRequest) (msgs.RegistryResponse, error) {
 	respC := make(chan shuckResp)
 	c.reqChan <- shuckReq{req, respC, time.Now()}
 	resp := <-respC
 	return resp.resp, resp.err
 }
 
-func (c *ShuckleConn) ShuckleAddress() string {
-	return c.shuckleAddress
+func (c *RegistryConn) RegistryAddress() string {
+	return c.registryAddress
 }
 
-func (c *ShuckleConn) Close() {
+func (c *RegistryConn) Close() {
 	close(c.reqChan)
 }

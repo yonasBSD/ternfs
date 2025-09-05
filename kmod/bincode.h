@@ -137,11 +137,11 @@ static const u32 TERNFS_CDC_RESP_PROTOCOL_VERSION = 0x1434443;
 
 // >>> format(struct.unpack('<I', b'SHU\0')[0], 'x')
 // '554853'
-static const u32 TERNFS_SHUCKLE_REQ_PROTOCOL_VERSION = 0x554853;
+static const u32 TERNFS_REGISTRY_REQ_PROTOCOL_VERSION = 0x554853;
 
 // >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
 // '1554853'
-static const u32 TERNFS_SHUCKLE_RESP_PROTOCOL_VERSION = 0x1554853;
+static const u32 TERNFS_REGISTRY_RESP_PROTOCOL_VERSION = 0x1554853;
 
 // >>> format(struct.unpack('<I', b'BLO\0')[0], 'x')
 // '4f4c42'

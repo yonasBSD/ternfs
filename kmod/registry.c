@@ -5,28 +5,28 @@
 #include <linux/sunrpc/addr.h>
 
 #include "bincode.h"
-#include "shuckle.h"
+#include "registry.h"
 #include "log.h"
 #include "err.h"
 #include "super.h"
 #include "net_compat.h"
 
-void ternfs_write_shuckle_req_header(char* buf, u32 req_len, u8 req_kind) {
-    put_unaligned_le32(TERNFS_SHUCKLE_REQ_PROTOCOL_VERSION, buf); buf += 4;
+void ternfs_write_registry_req_header(char* buf, u32 req_len, u8 req_kind) {
+    put_unaligned_le32(TERNFS_REGISTRY_REQ_PROTOCOL_VERSION, buf); buf += 4;
     // automatically include the kind, much nicer for the caller
     put_unaligned_le32(req_len+1, buf); buf += 4;
     *(u8*)buf = req_kind; buf++;
 }
 
-int ternfs_read_shuckle_resp_header(char* buf, u32* resp_len, u8* resp_kind) {
+int ternfs_read_registry_resp_header(char* buf, u32* resp_len, u8* resp_kind) {
     u32 protocol = get_unaligned_le32(buf); buf += 4;
-    if (protocol != TERNFS_SHUCKLE_RESP_PROTOCOL_VERSION) {
-        ternfs_warn("bad shuckle protocol, expected 0x%08x, got 0x%08x", TERNFS_SHUCKLE_RESP_PROTOCOL_VERSION, protocol);
+    if (protocol != TERNFS_REGISTRY_RESP_PROTOCOL_VERSION) {
+        ternfs_warn("bad registry protocol, expected 0x%08x, got 0x%08x", TERNFS_REGISTRY_RESP_PROTOCOL_VERSION, protocol);
         return -EINVAL;
     }
     *resp_len = get_unaligned_le32(buf); buf += 4;
     if (*resp_len == 0) {
-        ternfs_warn("unexpected zero-length shuckle response (the kind should at least be there)");
+        ternfs_warn("unexpected zero-length registry response (the kind should at least be there)");
         return -EINVAL;
     }
     *resp_kind = *(u8*)buf; buf++;
@@ -39,9 +39,9 @@ static int ternfs_parse_ipv4_addr(const char* str, int len, struct sockaddr_in* 
     int err;
     const char* addr_end;
 
-    ternfs_debug("parsing shuckle address %*pE", len, str);
+    ternfs_debug("parsing registry address %*pE", len, str);
 
-    // parse device, which is the shuckle address in 0.0.0.0:0 form (ipv4, port)
+    // parse device, which is the registry address in 0.0.0.0:0 form (ipv4, port)
 
     if (in4_pton(str, len, (__force u8*)&addr->sin_addr, ':', &addr_end) != 1) {
         return -EINVAL;
@@ -70,15 +70,15 @@ static int ternfs_parse_ipv4_addr(const char* str, int len, struct sockaddr_in* 
     }
 
     addr->sin_family = AF_INET;
-    ternfs_debug("parsed shuckle addr %pI4:%d", &addr->sin_addr, port);
+    ternfs_debug("parsed registry addr %pI4:%d", &addr->sin_addr, port);
 
     return 0;
 }
 
-static int ternfs_resolve_domain_name_addr(struct ternfs_shuckle_addr* saddr, struct sockaddr_in* addr) {
+static int ternfs_resolve_domain_name_addr(struct ternfs_registry_addr* saddr, struct sockaddr_in* addr) {
     const char* domain_name_end = strchr(saddr->addr, ':');
     if (domain_name_end == NULL) {
-        ternfs_info("shuckle address %s does not have port", saddr->addr);
+        ternfs_info("registry address %s does not have port", saddr->addr);
         return -EINVAL;
     }
 
@@ -96,13 +96,13 @@ static int ternfs_resolve_domain_name_addr(struct ternfs_shuckle_addr* saddr, st
         false
     );
     if (ip_len < 0) {
-        ternfs_info("could not resolve shuckle address %s: %d", saddr->addr, ip_len);
+        ternfs_info("could not resolve registry address %s: %d", saddr->addr, ip_len);
         return ip_len;
     }
     size_t addrsz = rpc_pton(saddr->net, ip_addr, ip_len, (struct sockaddr*)addr, sizeof(*addr));
     kfree(ip_addr);
     if (addrsz == 0) {
-        ternfs_info("could not parse DNS query result for shuckle address %s: %d", saddr->addr, ip_len);
+        ternfs_info("could not parse DNS query result for registry address %s: %d", saddr->addr, ip_len);
         return -EINVAL;
     }
 
@@ -120,7 +120,7 @@ static int ternfs_resolve_domain_name_addr(struct ternfs_shuckle_addr* saddr, st
     return 0;
 }
 
-int ternfs_process_shuckle_addr(struct ternfs_shuckle_addr* saddr, struct sockaddr_in* addr1, struct sockaddr_in* addr2) {
+int ternfs_process_registry_addr(struct ternfs_registry_addr* saddr, struct sockaddr_in* addr1, struct sockaddr_in* addr2) {
     memset(addr1, 0, sizeof(*addr1));
     memset(addr2, 0, sizeof(*addr2));
 
@@ -143,13 +143,13 @@ int ternfs_process_shuckle_addr(struct ternfs_shuckle_addr* saddr, struct sockad
     }
 }
 
-int ternfs_create_shuckle_socket(struct ternfs_shuckle_addr* saddr, struct socket** sock) {
+int ternfs_create_registry_socket(struct ternfs_registry_addr* saddr, struct socket** sock) {
     int err;
 
     struct sockaddr_in addrs[2];
     memset(&addrs, 0, sizeof(addrs));
 
-    err = ternfs_process_shuckle_addr(saddr, &addrs[0], &addrs[1]);
+    err = ternfs_process_registry_addr(saddr, &addrs[0], &addrs[1]);
     if (err) {
         return err;
     }
@@ -157,7 +157,7 @@ int ternfs_create_shuckle_socket(struct ternfs_shuckle_addr* saddr, struct socke
     // create socket
     err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, sock);
     if (err < 0) {
-        ternfs_warn("could not create shuckle socket: %d", err);
+        ternfs_warn("could not create registry socket: %d", err);
         return err;
     }
 
@@ -166,19 +166,19 @@ int ternfs_create_shuckle_socket(struct ternfs_shuckle_addr* saddr, struct socke
     tv.tv_usec = 0;
     err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, &tv, sizeof(tv));
     if (err < 0) {
-        ternfs_warn("could not set receive timeout on shuckle socket: %d", err);
+        ternfs_warn("could not set receive timeout on registry socket: %d", err);
         goto out_sock;
     }
     err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, &tv, sizeof(tv));
     if (err < 0) {
-        ternfs_warn("could not set send timeout on shuckle socket: %d", err);
+        ternfs_warn("could not set send timeout on registry socket: %d", err);
         goto out_sock;
     }
 
     int syn_count = 3;
     err = COMPAT_SET_SOCKOPT(*sock, SOL_TCP, TCP_SYNCNT, &syn_count, sizeof(syn_count));
     if (err < 0) {
-        ternfs_warn("could not set TCP_SYNCNT=%d on shuckle socket: %d", syn_count, err);
+        ternfs_warn("could not set TCP_SYNCNT=%d on registry socket: %d", syn_count, err);
         goto out_sock;
     }
 
@@ -194,10 +194,10 @@ int ternfs_create_shuckle_socket(struct ternfs_shuckle_addr* saddr, struct socke
         ternfs_debug("connecting to address %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
         err = kernel_connect(*sock, (struct sockaddr*)addr, sizeof(*addr), 0);
         if (err < 0) {
-            ternfs_warn("could not connect to shuckle addr %pI4:%d, might retry", &addr->sin_addr, ntohs(addr->sin_port));
+            ternfs_warn("could not connect to registry addr %pI4:%d, might retry", &addr->sin_addr, ntohs(addr->sin_port));
             continue;
         }
-        ternfs_debug("connected to shuckle");
+        ternfs_debug("connected to registry");
 
         return 0;
     }

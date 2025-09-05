@@ -184,7 +184,7 @@ func formatSize(bytes uint64) string {
 
 func main() {
 	flag.Usage = usage
-	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	registryAddress := flag.String("registry", "", "Registry address (host:port).")
 	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	mtu := flag.String("mtu", "", "MTU to use, either an integer or \"max\"")
@@ -237,12 +237,12 @@ func main() {
 			clientMu.Unlock()
 			return mbClient
 		}
-		if *shuckleAddress == "" {
+		if *registryAddress == "" {
 			clientMu.Unlock()
-			panic("You need to specify -shuckle (or -prod).\n")
+			panic("You need to specify -registry (or -prod).\n")
 		}
 		var err error
-		c, err := client.NewClient(l, nil, *shuckleAddress, localAddresses)
+		c, err := client.NewClient(l, nil, *registryAddress, localAddresses)
 		if err != nil {
 			clientMu.Unlock()
 			panic(fmt.Errorf("could not create client: %v", err))
@@ -372,7 +372,7 @@ func main() {
 			os.Exit(2)
 		}
 		l.Info("requesting block services")
-		blockServicesResp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -656,7 +656,7 @@ func main() {
 	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
 	blockReqFile := blockReqCmd.String("file", "", "")
 	blockReqRun := func() {
-		resp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -693,7 +693,7 @@ func main() {
 	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
 	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
 	testBlockWriteRun := func() {
-		resp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -782,7 +782,7 @@ func main() {
 		}
 		if *blockserviceFlagsFailureDomain != "" || *blockserviceFlagsPathPrefix != "" {
 			l.Info("requesting block services")
-			blockServicesResp, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+			blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 			if err != nil {
 				panic(err)
 			}
@@ -820,7 +820,7 @@ func main() {
 			}
 			mask = uint8(flagMask)
 		}
-		conn := client.MakeShuckleConn(l, nil, *shuckleAddress, 1)
+		conn := client.MakeRegistryConn(l, nil, *registryAddress, 1)
 		defer conn.Close()
 		for _, bsId := range blockServiceIds {
 			l.Info("setting flags %v with mask %v for block service %v", flag, msgs.BlockServiceFlags(mask), bsId)
@@ -848,7 +848,7 @@ func main() {
 		}
 		bsId := msgs.BlockServiceId(*decommissionBlockserviceId)
 		l.Info("decommissioning block service %v using dedicated rate-limited endpoint", bsId)
-		_, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.DecommissionBlockServiceReq{
+		_, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.DecommissionBlockServiceReq{
 			Id: bsId,
 		})
 		if err != nil {
@@ -874,7 +874,7 @@ func main() {
 		}
 		bsId := msgs.BlockServiceId(*updateBlockservicePathId)
 		l.Info("setting path to %s for block service %v", *updateBlockserviceNewPath, bsId)
-		_, err := client.ShuckleRequest(l, nil, *shuckleAddress, &msgs.UpdateBlockServicePathReq{
+		_, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.UpdateBlockServicePathReq{
 			Id:      bsId,
 			NewPath: *updateBlockserviceNewPath,
 		})

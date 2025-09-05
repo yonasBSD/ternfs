@@ -301,7 +301,7 @@ func generateGoErrorCodes(out io.Writer, errors []string) {
 //go:embed msgs_bincode.go.header
 var goHeader string
 
-func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	out.Write([]byte(goHeader))
@@ -310,7 +310,7 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 
 	generateGoMsgKind(out, "ShardMessageKind", "ShardRequest", "ShardResponse", "MkShardMessage", shardReqResps)
 	generateGoMsgKind(out, "CDCMessageKind", "CDCRequest", "CDCResponse", "MkCDCMessage", cdcReqResps)
-	generateGoMsgKind(out, "ShuckleMessageKind", "ShuckleRequest", "ShuckleResponse", "MkShuckleMessage", shuckleReqResps)
+	generateGoMsgKind(out, "RegistryMessageKind", "RegistryRequest", "RegistryResponse", "MkRegistryMessage", registryReqResps)
 	generateGoMsgKind(out, "BlocksMessageKind", "BlocksRequest", "BlocksResponse", "MkBlocksMessage", blocksReqResps)
 	generateGoMsgKind(out, "LogMessageKind", "LogRequest", "LogResponse", "MkLogMessage", logReqResps)
 
@@ -323,8 +323,8 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	for _, typ := range extras {
 		generateGoSingle(out, typ)
 	}
-	for _, reqResp := range shuckleReqResps {
-		generateGoReqResp(out, reqResp, "ShuckleMessageKind", "ShuckleRequestKind", "ShuckleResponseKind")
+	for _, reqResp := range registryReqResps {
+		generateGoReqResp(out, reqResp, "RegistryMessageKind", "RegistryRequestKind", "RegistryResponseKind")
 	}
 	for _, reqResp := range blocksReqResps {
 		generateGoReqResp(out, reqResp, "BlocksMessageKind", "BlocksRequestKind", "BlocksResponseKind")
@@ -698,7 +698,7 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 	fmt.Fprintf(h, "    struct %s_end* next __attribute__((unused)) = NULL\n\n", kmodStructName(typ))
 }
 
-func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
+func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hOut := new(bytes.Buffer)
 	cOut := new(bytes.Buffer)
 
@@ -728,7 +728,7 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 
 	generateKmodMsgKind(hOut, cOut, "SHARD", shardReqResps)
 	generateKmodMsgKind(hOut, cOut, "CDC", cdcReqResps)
-	generateKmodMsgKind(hOut, cOut, "SHUCKLE", shuckleReqResps)
+	generateKmodMsgKind(hOut, cOut, "REGISTRY", registryReqResps)
 	generateKmodMsgKind(hOut, cOut, "BLOCKS", blocksReqResps)
 
 	fmt.Fprintln(hOut)
@@ -754,7 +754,7 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 
 	generateReqResps(shardReqResps)
 	generateReqResps(cdcReqResps)
-	generateReqResps(shuckleReqResps)
+	generateReqResps(registryReqResps)
 	generateReqResps(blocksReqResps)
 
 	return hOut.Bytes(), cOut.Bytes()
@@ -1322,7 +1322,7 @@ var fetchedSpanCpp string
 //go:embed FetchedFullSpan.hpp
 var fetchedFullSpanCpp string
 
-func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, shuckleReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
+func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hppOut := new(bytes.Buffer)
 	cppOut := new(bytes.Buffer)
 
@@ -1341,7 +1341,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 
 	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppKind(hppOut, cppOut, "CDC", cdcReqResps)
-	generateCppKind(hppOut, cppOut, "Shuckle", shuckleReqResps)
+	generateCppKind(hppOut, cppOut, "Registry", registryReqResps)
 	generateCppKind(hppOut, cppOut, "Blocks", blocksReqResps)
 	generateCppKind(hppOut, cppOut, "Log", logReqResps)
 
@@ -1364,7 +1364,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.req)
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
-	for _, reqResp := range shuckleReqResps {
+	for _, reqResp := range registryReqResps {
 		generateCppSingle(hppOut, cppOut, reqResp.req)
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
@@ -1379,7 +1379,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 
 	generateCppReqResp(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppReqResp(hppOut, cppOut, "CDC", cdcReqResps)
-	generateCppReqResp(hppOut, cppOut, "Shuckle", shuckleReqResps)
+	generateCppReqResp(hppOut, cppOut, "Registry", registryReqResps)
 	generateCppReqResp(hppOut, cppOut, "Log", logReqResps)
 
 	generateCppLogEntries(
@@ -1826,7 +1826,7 @@ func main() {
 		},
 	}...)
 
-	kernelShuckleReqResps := []reqRespType{
+	kernelRegistryReqResps := []reqRespType{
 		{
 			0x03,
 			reflect.TypeOf(msgs.LocalShardsReq{}),
@@ -1844,8 +1844,8 @@ func main() {
 		},
 		{
 			0x0F,
-			reflect.TypeOf(msgs.ShuckleReq{}),
-			reflect.TypeOf(msgs.ShuckleResp{}),
+			reflect.TypeOf(msgs.RegistryReq{}),
+			reflect.TypeOf(msgs.RegistryResp{}),
 		},
 		{
 			0x22,
@@ -1854,7 +1854,7 @@ func main() {
 		},
 	}
 
-	shuckleReqResps := append(kernelShuckleReqResps, []reqRespType{
+	registryReqResps := append(kernelRegistryReqResps, []reqRespType{
 		{
 			0x01,
 			reflect.TypeOf(msgs.CreateLocationReq{}),
@@ -2095,15 +2095,15 @@ func main() {
 		reflect.TypeOf(msgs.AddrsInfo{})},
 		kernelExtras...)
 
-	goCode := generateGo(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, goExtras)
+	goCode := generateGo(errors, shardReqResps, cdcReqResps, registryReqResps, blocksReqResps, logReqResps, goExtras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
 	writeIfChanged(goOutFileName, goCode)
 
-	kmodHBytes, kmodCBytes := generateKmod(errors, kernelShardReqResps, kernelCdcReqResps, kernelShuckleReqResps, kernelBlocksReqResps, kernelExtras)
+	kmodHBytes, kmodCBytes := generateKmod(errors, kernelShardReqResps, kernelCdcReqResps, kernelRegistryReqResps, kernelBlocksReqResps, kernelExtras)
 	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.h", cwd), kmodHBytes)
 	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.c", cwd), kmodCBytes)
 
-	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, shuckleReqResps, blocksReqResps, logReqResps, extras)
+	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, registryReqResps, blocksReqResps, logReqResps, extras)
 	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd), hppBytes)
 	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.cpp", cwd), cppBytes)
 }

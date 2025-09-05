@@ -15,8 +15,8 @@
 // (the shard needs to know which ones exist to fill in addrs), but it also
 // fills in the block services for the shard specifically.
 std::pair<int, std::string> fetchBlockServices(
-    const std::string& shuckleHost,
-    uint16_t shucklePort,
+    const std::string& registryHost,
+    uint16_t registryPort,
     Duration timeout,
     ShardId shid,
     std::vector<BlockServiceDeprecatedInfo>& blockServices,
@@ -24,8 +24,8 @@ std::pair<int, std::string> fetchBlockServices(
 );
 
 std::pair<int, std::string> registerShard(
-    const std::string& shuckleHost,
-    uint16_t shucklePort,
+    const std::string& registryHost,
+    uint16_t registryPort,
     Duration timeout,
     ShardReplicaId shrid,
     uint8_t location,
@@ -34,16 +34,16 @@ std::pair<int, std::string> registerShard(
 );
 
 std::pair<int, std::string> fetchShardReplicas(
-    const std::string& shuckleHost,
-    uint16_t shucklePort,
+    const std::string& registryHost,
+    uint16_t registryPort,
     Duration timeout,
     ShardId shid,
     std::vector<FullShardInfo>& replicas
 );
 
 std::pair<int, std::string> registerCDCReplica(
-    const std::string& shuckleHost,
-    uint16_t shucklePort,
+    const std::string& registryHost,
+    uint16_t registryPort,
     Duration timeout,
     ReplicaId replicaId,
     uint8_t location,
@@ -52,17 +52,17 @@ std::pair<int, std::string> registerCDCReplica(
 );
 
 std::pair<int, std::string> fetchCDCReplicas(
-    const std::string& shuckleHost,
-    uint16_t shucklePort,
+    const std::string& registryHost,
+    uint16_t registryPort,
     Duration timeout,
     std::array<AddrsInfo, 5>& replicas
 );
 
 std::pair<int, std::string> fetchLocalShards(
-    const std::string& shuckleHost,
-    uint16_t shucklePort,
+    const std::string& registryHost,
+    uint16_t registryPort,
     Duration timeout,
     std::array<ShardInfo, 256>& shards
 );
 
-bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shuckleHost, uint16_t& shucklePort);
+bool parseRegistryAddress(const std::string& fullRegistryAddress, std::string& registryHost, uint16_t& registryPort);

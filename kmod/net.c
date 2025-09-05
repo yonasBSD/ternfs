@@ -292,7 +292,7 @@ int ternfs_metadata_send_request(
 
     if (unlikely(!ternfs_shard_fill_msghdr(&msg, &addr, addr_data[state->which_addr%2]))) {
         if (!ternfs_shard_fill_msghdr(&msg, &addr, addr_data[0])) {
-            ternfs_warn("could not find any shard addresses! does everything look good in shuckle?");
+            ternfs_warn("could not find any shard addresses! does everything look good in registry?");
             err = -EIO;
             goto out_err_no_trace; // we have no addr
         }

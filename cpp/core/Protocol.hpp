@@ -40,11 +40,11 @@ constexpr uint32_t CDC_RESP_PROTOCOL_VERSION = 0x1434443;
 
 // >>> format(struct.unpack('<I', b'SHU\0')[0], 'x')
 // '554853'
-constexpr uint32_t SHUCKLE_REQ_PROTOCOL_VERSION = 0x554853;
+constexpr uint32_t REGISTRY_REQ_PROTOCOL_VERSION = 0x554853;
 
 // >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
 // '1554853'
-constexpr uint32_t SHUCKLE_RESP_PROTOCOL_VERSION = 0x1554853;
+constexpr uint32_t REGISTRY_RESP_PROTOCOL_VERSION = 0x1554853;
 
 // >>> format(struct.unpack('<I', b'LOG\0')[0], 'x')
 // '474f4c'

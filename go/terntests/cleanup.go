@@ -48,11 +48,11 @@ func deleteDir(log *log.Logger, client *client.Client, ownerId msgs.InodeId, nam
 
 func cleanupAfterTest(
 	log *log.Logger,
-	shuckleAddress string,
+	registryAddress string,
 	counters *client.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,
 ) {
-	c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}

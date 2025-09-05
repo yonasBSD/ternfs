@@ -18,7 +18,7 @@
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Protocol.hpp"
-#include "Shuckle.hpp"
+#include "Registry.hpp"
 #include "Exception.hpp"
 #include "Connect.hpp"
 #include "Loop.hpp"
@@ -33,7 +33,7 @@ static std::string generateErrString(const std::string& what, int err) {
     return explicitGenerateErrString(what, err, (std::string(translateErrno(err)) + "=" + safe_strerror(err)).c_str());
 }
 
-static std::pair<Sock, std::string> shuckleSock(const std::string& host, uint16_t port, Duration timeout) {
+static std::pair<Sock, std::string> registrySock(const std::string& host, uint16_t port, Duration timeout) {
     auto [sock, err] = connectToHost(host, port, timeout);
     if (sock.error()) {
         return {std::move(sock), err};
@@ -50,7 +50,7 @@ static std::pair<Sock, std::string> shuckleSock(const std::string& host, uint16_
     return {std::move(sock), ""};
 }
 
-static std::pair<int, std::string> writeShuckleRequest(int fd, const ShuckleReqContainer& req, Duration timeout) {
+static std::pair<int, std::string> writeRegistryRequest(int fd, const RegistryReqContainer& req, Duration timeout) {
     static_assert(std::endian::native == std::endian::little);
     // Serialize
     std::vector<char> buf(req.packedSize());
@@ -71,7 +71,7 @@ static std::pair<int, std::string> writeShuckleRequest(int fd, const ShuckleReqC
             return {EIO, "couldn't write full request"}; \
         } \
     } while (false)
-    WRITE_OUT(&SHUCKLE_REQ_PROTOCOL_VERSION, sizeof(SHUCKLE_REQ_PROTOCOL_VERSION));
+    WRITE_OUT(&REGISTRY_REQ_PROTOCOL_VERSION, sizeof(REGISTRY_REQ_PROTOCOL_VERSION));
     uint32_t len = bbuf.len();
     WRITE_OUT(&len, sizeof(len));
     WRITE_OUT(bbuf.data, bbuf.len());
@@ -79,7 +79,7 @@ static std::pair<int, std::string> writeShuckleRequest(int fd, const ShuckleReqC
     return {};
 }
 
-static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContainer& resp, Duration timeout) {
+static std::pair<int, std::string> readRegistryResponse(int fd, RegistryRespContainer& resp, Duration timeout) {
     static_assert(std::endian::native == std::endian::little);
     struct pollfd pfd{.fd = fd, .events = POLLIN};
 #define READ_IN(buf, count) \
@@ -101,9 +101,9 @@ static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContai
     } while (0)
     uint32_t protocol;
     READ_IN(&protocol, sizeof(protocol));
-    if (protocol != SHUCKLE_RESP_PROTOCOL_VERSION) {
+    if (protocol != REGISTRY_RESP_PROTOCOL_VERSION) {
         std::ostringstream ss;
-        ss << "bad shuckle protocol (expected " << SHUCKLE_RESP_PROTOCOL_VERSION << ", got " << protocol << ")";
+        ss << "bad registry protocol (expected " << REGISTRY_RESP_PROTOCOL_VERSION << ", got " << protocol << ")";
         return {EIO, ss.str()};
     }
     uint32_t len;
@@ -113,7 +113,7 @@ static std::pair<int, std::string> readShuckleResponse(int fd, ShuckleRespContai
 #undef READ_IN
     BincodeBuf bbuf(buf.data(), buf.size());
     resp.unpack(bbuf);
-    if (resp.kind() == ShuckleMessageKind::ERROR) {
+    if (resp.kind() == RegistryMessageKind::ERROR) {
         std::stringstream ss;
         ss << "got error " << resp.getError();
         return {EIO, ss.str()};
@@ -127,23 +127,23 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 
 #define FAIL(err, errStr) do { blockServices.clear(); currentBlockServices.clear(); return {err, errStr}; } while (0)
 
-    auto [sock, err] = shuckleSock(addr, port, timeout);
+    auto [sock, err] = registrySock(addr, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), err};
     }
 
     // all block services
     {
-        ShuckleReqContainer reqContainer;
+        RegistryReqContainer reqContainer;
         auto& req = reqContainer.setAllBlockServicesDeprecated();
         {
-            const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+            const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
             if (err) { FAIL(err, errStr); }
         }
 
-        ShuckleRespContainer respContainer;
+        RegistryRespContainer respContainer;
         {
-            const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+            const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
             if (err) { FAIL(err, errStr); }
         }
 
@@ -152,17 +152,17 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 
     // current block services
     {
-        ShuckleReqContainer reqContainer;
+        RegistryReqContainer reqContainer;
         auto& req = reqContainer.setShardBlockServices();
         req.shardId = shid;
         {
-            const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+            const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
             if (err) { FAIL(err, errStr); }
         }
 
-        ShuckleRespContainer respContainer;
+        RegistryRespContainer respContainer;
         {
-            const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+            const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
             if (err) { FAIL(err, errStr); }
         }
 
@@ -172,7 +172,7 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     // check that all current block services are known -- there's a small race here
     // the caller should just retry in these cases.
     // check that all current block services are from different failure domains
-    // shuckle should guarantee that when sending response but verify the invariant
+    // registry should guarantee that when sending response but verify the invariant
     {
         std::unordered_set<uint64_t> knownBlockServices;
         std::unordered_map<uint64_t, const BlockServiceDeprecatedInfo* > bsIdToBlockService;
@@ -215,25 +215,25 @@ std::pair<int, std::string> registerShard(
     const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, uint8_t location, bool isLeader,
     const AddrsInfo& addrs
 ) {
-    const auto [sock, errStr] = shuckleSock(addr, port, timeout);
+    const auto [sock, errStr] = registrySock(addr, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
     }
 
-    ShuckleReqContainer reqContainer;
+    RegistryReqContainer reqContainer;
     auto& req = reqContainer.setRegisterShard();
     req.shrid = shrid;
     req.location = location;
     req.isLeader = isLeader;
     req.addrs = addrs;
     {
-        const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
-    ShuckleRespContainer respContainer;
+    RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterShard(); // check that the response is of the right type
@@ -244,21 +244,21 @@ std::pair<int, std::string> registerShard(
 std::pair<int, std::string> fetchShardReplicas(
     const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<FullShardInfo>& replicas
 ) {
-    const auto [sock, errStr] = shuckleSock(addr, port, timeout);
+    const auto [sock, errStr] = registrySock(addr, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
     }
 
-    ShuckleReqContainer reqContainer;
+    RegistryReqContainer reqContainer;
     auto& req = reqContainer.setAllShards();
     {
-        const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
-    ShuckleRespContainer respContainer;
+    RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
@@ -272,25 +272,25 @@ std::pair<int, std::string> fetchShardReplicas(
 }
 
 std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, uint8_t location, bool isLeader, const AddrsInfo& addrs) {
-    const auto [sock, errStr] = shuckleSock(host, port, timeout);
+    const auto [sock, errStr] = registrySock(host, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
     }
 
-    ShuckleReqContainer reqContainer;
+    RegistryReqContainer reqContainer;
     auto& req = reqContainer.setRegisterCdc();
     req.replica = replicaId;
     req.location = location;
     req.isLeader = isLeader;
     req.addrs = addrs;
     {
-        const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
-    ShuckleRespContainer respContainer;
+    RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterCdc();
@@ -301,22 +301,22 @@ std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t
 std::pair<int, std::string> fetchCDCReplicas(
     const std::string& addr, uint16_t port, Duration timeout, std::array<AddrsInfo, 5>& replicas
 ) {
-    const auto [sock, errStr] = shuckleSock(addr, port, timeout);
+    const auto [sock, errStr] = registrySock(addr, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
     }
 
-    ShuckleReqContainer reqContainer;
+    RegistryReqContainer reqContainer;
     auto& req = reqContainer.setCdcReplicasDEPRECATED();
 
     {
-        const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
-    ShuckleRespContainer respContainer;
+    RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
@@ -331,21 +331,21 @@ std::pair<int, std::string> fetchCDCReplicas(
 }
 
 std::pair<int, std::string> fetchLocalShards(const std::string& host, uint16_t port, Duration timeout, std::array<ShardInfo, 256>& shards) {
-    const auto [sock, errStr] = shuckleSock(host, port, timeout);
+    const auto [sock, errStr] = registrySock(host, port, timeout);
     if (sock.error()) {
         return {sock.getErrno(), errStr};
     }
 
-    ShuckleReqContainer reqContainer;
+    RegistryReqContainer reqContainer;
     reqContainer.setLocalShards();
     {
-        const auto [err, errStr] = writeShuckleRequest(sock.get(), reqContainer, timeout);
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
-    ShuckleRespContainer respContainer;
+    RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readShuckleResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
     if (respContainer.getLocalShards().shards.els.size() != shards.size()) {
@@ -358,20 +358,20 @@ std::pair<int, std::string> fetchLocalShards(const std::string& host, uint16_t p
     return {};
 }
 
-bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shuckleHost, uint16_t& shucklePort) {
+bool parseRegistryAddress(const std::string& fullRegistryAddress, std::string& registryHost, uint16_t& registryPort) {
     // split host:port
-    auto colon = fullShuckleAddress.find(":");
-    if (colon == fullShuckleAddress.size()) {
+    auto colon = fullRegistryAddress.find(":");
+    if (colon == fullRegistryAddress.size()) {
         std::cerr << "Could not find colon" << std::endl;
         return false;
     }
     // parse port
-    if (fullShuckleAddress.size() - colon > 6) {
+    if (fullRegistryAddress.size() - colon > 6) {
         return false; // port too long
     }
     uint32_t port = 0;
-    for (int i = colon + 1; i < fullShuckleAddress.size(); i++) {
-        char ch = fullShuckleAddress[i];
+    for (int i = colon + 1; i < fullRegistryAddress.size(); i++) {
+        char ch = fullRegistryAddress[i];
         if ((i == colon + 1 && ch == '0') || ch < '0' || ch > '9') {
             return false;
         }
@@ -380,7 +380,7 @@ bool parseShuckleAddress(const std::string& fullShuckleAddress, std::string& shu
     if (port == 0 || port > 65535) {
         return false;
     }
-    shucklePort = port;
-    shuckleHost = {fullShuckleAddress.begin(), fullShuckleAddress.begin()+colon};
+    registryPort = port;
+    registryHost = {fullRegistryAddress.begin(), fullRegistryAddress.begin()+colon};
     return true;
 }

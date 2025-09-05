@@ -51,7 +51,7 @@ if not args.short:
     # valgrind is super slow, it still surfaced bugs in the past but run the short
     # versions only in the long tests.
     tests.append(['./go/terntests/terntests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', fuse_tests] + leader_only)
-# we need three free ports, we get them here upfront rather than in shuckle to reduce
+# we need three free ports, we get them here upfront rather than in registry to reduce
 # the chance of races -- if we got it from the integration tests it'll be while
 # tons of things are started in another integration test
 ports = []
@@ -61,5 +61,5 @@ for _ in range(len(tests)):
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Ensure the port is immediately reusable
         ports.append(s.getsockname()[1])
 wait_cmds(
-    [run_cmd(test + ['-shuckle-port', str(port)]) for test, port in zip(tests, ports)],
+    [run_cmd(test + ['-registry-port', str(port)]) for test, port in zip(tests, ports)],
 )

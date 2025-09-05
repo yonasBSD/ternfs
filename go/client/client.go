@@ -978,10 +978,10 @@ type Client struct {
 	cdcTimeout           *timing.ReqTimeouts
 	blockTimeout         *timing.ReqTimeouts
 	requestIdCounter     uint64
-	shuckleAddress       string
+	registryAddress       string
 	addrsRefreshTicker   *time.Ticker
 	addrsRefreshClose    chan (struct{})
-	shuckleConn          *ShuckleConn
+	registryConn          *RegistryConn
 
 	fetchBlockServices          bool
 	blockServicesLock           *sync.RWMutex
@@ -992,25 +992,25 @@ func (c *Client) refreshAddrs(log *log.Logger) error {
 	var shardAddrs [256]msgs.AddrsInfo
 	var cdcAddrs msgs.AddrsInfo
 	{
-		log.Info("Getting shard/CDC info from shuckle at '%v'", c.shuckleAddress)
-		resp, err := c.shuckleConn.Request(&msgs.LocalShardsReq{})
+		log.Info("Getting shard/CDC info from registry at '%v'", c.registryAddress)
+		resp, err := c.registryConn.Request(&msgs.LocalShardsReq{})
 		if err != nil {
-			return fmt.Errorf("could not request shards from shuckle: %w", err)
+			return fmt.Errorf("could not request shards from registry: %w", err)
 		}
 		shards := resp.(*msgs.LocalShardsResp)
 		for i, shard := range shards.Shards {
 			if shard.Addrs.Addr1.Port == 0 {
-				return fmt.Errorf("shard %v not present in shuckle", i)
+				return fmt.Errorf("shard %v not present in registry", i)
 			}
 			shardAddrs[i] = shard.Addrs
 		}
-		resp, err = c.shuckleConn.Request(&msgs.LocalCdcReq{})
+		resp, err = c.registryConn.Request(&msgs.LocalCdcReq{})
 		if err != nil {
-			return fmt.Errorf("could not request CDC from shuckle: %w", err)
+			return fmt.Errorf("could not request CDC from registry: %w", err)
 		}
 		cdc := resp.(*msgs.LocalCdcResp)
 		if cdc.Addrs.Addr1.Port == 0 {
-			return fmt.Errorf("CDC not present in shuckle")
+			return fmt.Errorf("CDC not present in registry")
 		}
 		cdcAddrs = cdc.Addrs
 	}
@@ -1025,9 +1025,9 @@ func (c *Client) refreshAddrs(log *log.Logger) error {
 		return nil
 	}
 
-	blockServicesResp, err := c.shuckleConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
+	blockServicesResp, err := c.registryConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
 	if err != nil {
-		return fmt.Errorf("could not request block services from shuckle: %w", err)
+		return fmt.Errorf("could not request block services from registry: %w", err)
 	}
 	blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
 	var blockServicesToAdd []msgs.BlacklistEntry
@@ -1052,22 +1052,22 @@ func (c *Client) refreshAddrs(log *log.Logger) error {
 	return nil
 }
 
-// Create a new client by acquiring the CDC and Shard connection details from Shuckle. It
+// Create a new client by acquiring the CDC and Shard connection details from Registry. It
 // also refreshes the shard/cdc infos every minute.
 func NewClient(
 	log *log.Logger,
-	shuckleTimeout *ShuckleTimeouts,
-	shuckleAddress string,
+	registryTimeout *RegistryTimeouts,
+	registryAddress string,
 	localAddresses msgs.AddrsInfo,
 ) (*Client, error) {
 	c, err := NewClientDirectNoAddrs(log, localAddresses)
 	if err != nil {
 		return nil, err
 	}
-	c.shuckleAddress = shuckleAddress
-	c.shuckleConn = MakeShuckleConn(log, shuckleTimeout, shuckleAddress, 1)
+	c.registryAddress = registryAddress
+	c.registryConn = MakeRegistryConn(log, registryTimeout, registryAddress, 1)
 	if err := c.refreshAddrs(log); err != nil {
-		c.shuckleConn.Close()
+		c.registryConn.Close()
 		return nil, err
 	}
 	c.addrsRefreshTicker = time.NewTicker(time.Minute)
@@ -1116,8 +1116,8 @@ func (c *Client) SetBlockTimeout(t *timing.ReqTimeouts) {
 	c.blockTimeout = t
 }
 
-func (c *Client) IncreaseNumShuckleHandlersTo(numHandlers uint) {
-	c.shuckleConn.IncreaseNumHandlersTo(numHandlers)
+func (c *Client) IncreaseNumRegistryHandlersTo(numHandlers uint) {
+	c.registryConn.IncreaseNumHandlersTo(numHandlers)
 }
 
 var clientMtu uint16 = msgs.DEFAULT_UDP_MTU
@@ -1241,8 +1241,8 @@ func (c *Client) Close() {
 	c.fetchBlockProcessors.close()
 	c.eraseBlockProcessors.close()
 	c.checkBlockProcessors.close()
-	if c.shuckleConn != nil {
-		c.shuckleConn.Close()
+	if c.registryConn != nil {
+		c.registryConn.Close()
 	}
 }
 
@@ -1517,12 +1517,12 @@ func (c *Client) EraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlock
 	return resp.(*msgs.EraseBlockResp).Proof, nil
 }
 
-func (c *Client) ShuckleAddress() string {
-	return c.shuckleAddress
+func (c *Client) RegistryAddress() string {
+	return c.registryAddress
 }
 
 func (c *Client) EraseDecommissionedBlock(block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
-	resp, err := c.shuckleConn.Request(&msgs.EraseDecommissionedBlockReq{block.BlockServiceId, block.BlockId, block.Certificate})
+	resp, err := c.registryConn.Request(&msgs.EraseDecommissionedBlockReq{block.BlockServiceId, block.BlockId, block.Certificate})
 	if err != nil {
 		return [8]byte{}, err
 	}
@@ -1564,7 +1564,7 @@ func (c *Client) SetFetchBlockServices() {
 		c.fetchBlockServices = true
 	}()
 	if needToInitFetch {
-		c.refreshAddrs(c.shuckleConn.log)
+		c.refreshAddrs(c.registryConn.log)
 	}
 }
 

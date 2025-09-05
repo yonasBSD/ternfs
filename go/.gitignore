@@ -1,5 +1,5 @@
 integrationtest/integrationtest
-ternshuckle/ternshuckle
+ternweb/ternweb
 ternfuse/ternfuse
 restarter/restarter
 ternblocks/ternblocks
@@ -11,5 +11,5 @@ bincodegen/bincodegen
 crc32csum/crc32csum
 terngc/terngc
 badblocks/badblocks
-ternshuckleproxy/ternshuckleproxy
+ternregistryproxy/ternregistryproxy
 terns3/terns3

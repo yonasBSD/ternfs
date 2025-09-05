@@ -21,7 +21,7 @@ type createInode struct {
 
 func parallelDirsTest(
 	log *log.Logger,
-	shuckleAddress string,
+	registryAddress string,
 	counters *client.ClientCounters,
 ) {
 	numRootDirs := 10
@@ -33,7 +33,7 @@ func parallelDirsTest(
 		return fmt.Sprintf(fmt.Sprintf("%%0%dd-%%d", numThreadsDigits), tid, i)
 	}
 
-	client, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+	client, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}

@@ -320,7 +320,7 @@ type fileHistoryTestOpts struct {
 
 func fileHistoryTest(
 	log *log.Logger,
-	shuckleAddress string,
+	registryAddress string,
 	opts *fileHistoryTestOpts,
 	counters *client.ClientCounters,
 ) {
@@ -340,7 +340,7 @@ func fileHistoryTest(
 			seed := uint64(i)
 			go func() {
 				defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
-				c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+				c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 				if err != nil {
 					panic(err)
 				}

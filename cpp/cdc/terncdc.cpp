@@ -3,7 +3,7 @@
 #include <arpa/inet.h>
 
 #include "Msgs.hpp"
-#include "Shuckle.hpp"
+#include "Registry.hpp"
 #include "CDC.hpp"
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
@@ -15,10 +15,10 @@ void usage(const char* binary) {
     fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
     fprintf(stderr, " -verbose\n");
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
-    fprintf(stderr, " -shuckle host:port\n");
-    fprintf(stderr, "    	How to reach shuckle");
+    fprintf(stderr, " -registry host:port\n");
+    fprintf(stderr, "    	How to reach registry");
     fprintf(stderr, " -addr ipv4 ip:port\n");
-    fprintf(stderr, "    	Addresses we bind ourselves too and advertise to shuckle. At least one needs to be provided and at most 2\n");
+    fprintf(stderr, "    	Addresses we bind ourselves too and advertise to registry. At least one needs to be provided and at most 2\n");
     fprintf(stderr, " -log-file string\n");
     fprintf(stderr, "    	If not provided, stdout.\n");
     fprintf(stderr, " -shard-timeout-ms milliseconds\n");
@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
 
     CDCOptions options;
     std::vector<std::string> args;
-    std::string shuckleAddress;
+    std::string registryAddress;
     std::string influxDBOrigin;
     std::string influxDBOrg;
     std::string influxDBBucket;
@@ -138,8 +138,8 @@ int main(int argc, char** argv) {
             }
         } else if (arg == "-log-file") {
             options.logFile = getNextArg();
-        } else if (arg == "-shuckle") {
-            shuckleAddress = getNextArg();
+        } else if (arg == "-registry") {
+            registryAddress = getNextArg();
         } else if (arg == "-addr") {
             if (numAddressesFound == 2) {
                 dieWithUsage();
@@ -208,13 +208,13 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    if (shuckleAddress.empty()) {
-        fprintf(stderr, "Must provide -shuckle.");
+    if (registryAddress.empty()) {
+        fprintf(stderr, "Must provide -registry.");
         dieWithUsage();
     }
 
-    if (!parseShuckleAddress(shuckleAddress, options.shuckleHost, options.shucklePort)) {
-        fprintf(stderr, "Bad shuckle address '%s'.\n\n", shuckleAddress.c_str());
+    if (!parseRegistryAddress(registryAddress, options.registryHost, options.registryPort)) {
+        fprintf(stderr, "Bad registry address '%s'.\n\n", registryAddress.c_str());
         dieWithUsage();
     }
 

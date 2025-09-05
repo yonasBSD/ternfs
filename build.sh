@@ -23,14 +23,14 @@ binaries=(
     cpp/build/$build_variant/dbtools/terndbtools
     cpp/build/$build_variant/cdc/terncdc
     cpp/build/$build_variant/ktools/ternktools
-    go/ternshuckle/ternshuckle
+    go/ternweb/ternweb
     go/ternrun/ternrun
     go/ternblocks/ternblocks
     go/ternfuse/ternfuse
     go/terncli/terncli
     go/terngc/terngc
     go/terntests/terntests
-    go/ternshuckleproxy/ternshuckleproxy
+    go/ternregistryproxy/ternregistryproxy
 )
 
 for binary in "${binaries[@]}"; do

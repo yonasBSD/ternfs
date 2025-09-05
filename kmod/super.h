@@ -4,15 +4,15 @@
 #include <linux/inet.h>
 
 #include "net.h"
-#include "shuckle.h"
+#include "registry.h"
 
-extern int ternfs_shuckle_refresh_time_jiffies;
+extern int ternfs_registry_refresh_time_jiffies;
 extern unsigned int ternfs_readahead_pages;
 
 // We store addresses as atomics so that we can
 // easily refresh them.
 struct ternfs_fs_info {
-    struct ternfs_shuckle_addr shuckle_addr;
+    struct ternfs_registry_addr registry_addr;
 
     struct ternfs_metadata_socket sock;
 
@@ -26,7 +26,7 @@ struct ternfs_fs_info {
 
     u64 block_services_last_changed_time;
 
-    struct delayed_work shuckle_refresh_work;
+    struct delayed_work registry_refresh_work;
 
     kuid_t uid;
     kgid_t gid;

@@ -270,7 +270,7 @@ type BlockServiceOpts struct {
 	Location         msgs.Location
 	FutureCutoff     *time.Duration
 	LogLevel         log.LogLevel
-	ShuckleAddress   string
+	RegistryAddress   string
 	Profile          bool
 	Xmon             string
 	ReserverdStorage uint64
@@ -304,8 +304,8 @@ func (procs *ManagedProcesses) StartBlockService(ll *log.Logger, opts *BlockServ
 	if opts.LogLevel == log.TRACE {
 		args = append(args, "-trace")
 	}
-	if opts.ShuckleAddress != "" {
-		args = append(args, "-shuckle", opts.ShuckleAddress)
+	if opts.RegistryAddress != "" {
+		args = append(args, "-registry", opts.RegistryAddress)
 	}
 	if opts.Profile {
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
@@ -334,7 +334,7 @@ type FuseOpts struct {
 	Path                string
 	LogLevel            log.LogLevel
 	Wait                bool
-	ShuckleAddress      string
+	RegistryAddress      string
 	Profile             bool
 	InitialShardTimeout time.Duration
 	InitialCDCTimeout   time.Duration
@@ -346,7 +346,7 @@ func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string 
 	createDataDir(mountPoint)
 	args := []string{
 		"-log-file", path.Join(opts.Path, "log"),
-		"-shuckle", opts.ShuckleAddress,
+		"-registry", opts.RegistryAddress,
 	}
 	var signalChan chan os.Signal
 	if opts.Wait {
@@ -386,7 +386,7 @@ func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string 
 	return mountPoint
 }
 
-type ShuckleOpts struct {
+type RegistryOpts struct {
 	Exe       string
 	Dir       string
 	LogLevel  log.LogLevel
@@ -398,7 +398,7 @@ type ShuckleOpts struct {
 	Addr2     string
 }
 
-func (procs *ManagedProcesses) StartShuckle(ll *log.Logger, opts *ShuckleOpts) {
+func (procs *ManagedProcesses) StartRegistry(ll *log.Logger, opts *RegistryOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-http-port", fmt.Sprintf("%d", opts.HttpPort),
@@ -425,7 +425,7 @@ func (procs *ManagedProcesses) StartShuckle(ll *log.Logger, opts *ShuckleOpts) {
 		args = append(args, "-addr", opts.Addr2)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
-		Name:            "shuckle",
+		Name:            "registry",
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
@@ -434,23 +434,23 @@ func (procs *ManagedProcesses) StartShuckle(ll *log.Logger, opts *ShuckleOpts) {
 	})
 }
 
-type ShuckleProxyOpts struct {
+type RegistryProxyOpts struct {
 	Exe            string
 	Dir            string
 	LogLevel       log.LogLevel
 	Xmon           string
 	Addr1          string
 	Addr2          string
-	ShuckleAddress string
+	RegistryAddress string
 	Location       msgs.Location
 }
 
-func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShuckleProxyOpts) {
+func (procs *ManagedProcesses) StartRegistryProxy(ll *log.Logger, opts *RegistryProxyOpts) {
 	createDataDir(opts.Dir)
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-addr", opts.Addr1,
-		"-shuckle-address", opts.ShuckleAddress,
+		"-registry-address", opts.RegistryAddress,
 		"-location", fmt.Sprintf("%d", opts.Location),
 	}
 	if opts.LogLevel == log.DEBUG {
@@ -466,7 +466,7 @@ func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShucklePr
 		args = append(args, "-addr", opts.Addr2)
 	}
 	procs.Start(ll, &ManagedProcessArgs{
-		Name:            "shuckleproxy",
+		Name:            "registryproxy",
 		Exe:             opts.Exe,
 		Args:            args,
 		StdoutFile:      path.Join(opts.Dir, "stdout"),
@@ -476,30 +476,30 @@ func (procs *ManagedProcesses) StartShuckleProxy(ll *log.Logger, opts *ShucklePr
 }
 
 type GoExes struct {
-	ShuckleExe      string
+	RegistryExe      string
 	BlocksExe       string
 	FuseExe         string
-	ShuckleProxyExe string
+	RegistryProxyExe string
 }
 
 func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
-	args := []string{"ternshuckle", "ternblocks", "ternfuse"}
+	args := []string{"ternweb", "ternblocks", "ternfuse"}
 	if race {
 		args = append(args, "--race")
 	}
 	buildCmd := exec.Command("./build.py", args...)
 	buildCmd.Dir = goDir(repoDir)
-	ll.Info("building shuckle/blocks/fuse")
+	ll.Info("building registry/blocks/fuse")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		fmt.Printf("build output:\n")
 		os.Stdout.Write(out)
 		panic(fmt.Errorf("could not build shucke/blocks/fuse: %w", err))
 	}
 	return &GoExes{
-		ShuckleExe:      path.Join(goDir(repoDir), "ternshuckle", "ternshuckle"),
+		RegistryExe:      path.Join(goDir(repoDir), "ternweb", "ternweb"),
 		BlocksExe:       path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
 		FuseExe:         path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
-		ShuckleProxyExe: path.Join(goDir(repoDir), "ternshuckleproxy", "ternshuckleproxy"),
+		RegistryProxyExe: path.Join(goDir(repoDir), "ternregistryproxy", "ternregistryproxy"),
 	}
 }
 
@@ -511,7 +511,7 @@ type ShardOpts struct {
 	Valgrind                  bool
 	Perf                      bool
 	OutgoingPacketDrop        float64
-	ShuckleAddress            string
+	RegistryAddress            string
 	Addr1                     string
 	Addr2                     string
 	TransientDeadlineInterval *time.Duration
@@ -528,7 +528,7 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
-		"-shuckle", opts.ShuckleAddress,
+		"-registry", opts.RegistryAddress,
 		"-addr", opts.Addr1,
 	}
 	if opts.Addr2 != "" {
@@ -607,7 +607,7 @@ type CDCOpts struct {
 	LogLevel       log.LogLevel
 	Valgrind       bool
 	Perf           bool
-	ShuckleAddress string
+	RegistryAddress string
 	Addr1          string
 	Addr2          string
 	ShardTimeout   time.Duration
@@ -622,7 +622,7 @@ func (procs *ManagedProcesses) StartCDC(ll *log.Logger, repoDir string, opts *CD
 	createDataDir(opts.Dir)
 	args := []string{
 		"-log-file", path.Join(opts.Dir, "log"),
-		"-shuckle", opts.ShuckleAddress,
+		"-registry", opts.RegistryAddress,
 		"-addr", opts.Addr1,
 	}
 	if opts.Addr2 != "" {

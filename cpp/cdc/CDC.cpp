@@ -21,7 +21,7 @@
 #include "PeriodicLoop.hpp"
 #include "Protocol.hpp"
 #include "SharedRocksDB.hpp"
-#include "Shuckle.hpp"
+#include "Registry.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
 #include "UDPSocketPair.hpp"
@@ -834,8 +834,8 @@ private:
 
 struct CDCShardUpdater : PeriodicLoop {
     CDCShared& _shared;
-    std::string _shuckleHost;
-    uint16_t _shucklePort;
+    std::string _registryHost;
+    uint16_t _registryPort;
 
     // loop data
     std::array<ShardInfo, 256> _shards;
@@ -844,8 +844,8 @@ public:
     CDCShardUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
         PeriodicLoop(logger, xmon, "shard_updater", {1_sec, 1_mins}),
         _shared(shared),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
+        _registryHost(options.registryHost),
+        _registryPort(options.registryPort),
         _alert(10_sec)
     {
         _env.updateAlert(_alert, "Waiting to get shards");
@@ -855,10 +855,10 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "Fetching shards");
-        const auto [err, errStr] = fetchLocalShards(_shuckleHost, _shucklePort, 10_sec, _shards);
+        const auto [err, errStr] = fetchLocalShards(_registryHost, _registryPort, 10_sec, _shards);
         if (err == EINTR) { return false; }
         if (err) {
-            _env.updateAlert(_alert, "failed to reach shuckle at %s:%s to fetch shards, will retry: %s", _shuckleHost, _shucklePort, errStr);
+            _env.updateAlert(_alert, "failed to reach registry at %s:%s to fetch shards, will retry: %s", _registryHost, _registryPort, errStr);
             return false;
         }
         bool badShard = false;
@@ -870,7 +870,7 @@ public:
         }
         if (badShard) {
             TernTime successfulIterationAt = 0;
-            _env.updateAlert(_alert, "Shard info is still not present in shuckle, will keep trying");
+            _env.updateAlert(_alert, "Shard info is still not present in registry, will keep trying");
             return false;
         }
         {
@@ -880,7 +880,7 @@ public:
             }
         }
         _env.clearAlert(_alert);
-        LOG_INFO(_env, "successfully fetched all shards from shuckle, will wait one minute");
+        LOG_INFO(_env, "successfully fetched all shards from registry, will wait one minute");
         return true;
     }
 };
@@ -891,8 +891,8 @@ struct CDCRegisterer : PeriodicLoop {
     const uint8_t _location;
     const bool _noReplication;
     const bool _avoidBeingLeader;
-    const std::string _shuckleHost;
-    const uint16_t _shucklePort;
+    const std::string _registryHost;
+    const uint16_t _registryPort;
     XmonNCAlert _alert;
 public:
     CDCRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
@@ -902,21 +902,21 @@ public:
         _location(options.location),
         _noReplication(options.noReplication),
         _avoidBeingLeader(options.avoidBeingLeader),
-        _shuckleHost(options.shuckleHost),
-        _shucklePort(options.shucklePort),
+        _registryHost(options.registryHost),
+        _registryPort(options.registryPort),
         _alert(10_sec)
     {}
 
     virtual ~CDCRegisterer() = default;
 
     virtual bool periodicStep() override {
-        LOG_DEBUG(_env, "Registering ourselves (CDC %s, location %s,  %s) with shuckle", _replicaId, (int)_location, _shared.socks[CDC_SOCK].addr());
+        LOG_DEBUG(_env, "Registering ourselves (CDC %s, location %s,  %s) with registry", _replicaId, (int)_location, _shared.socks[CDC_SOCK].addr());
         {
             // TODO: report _shared.isleader instead of command line flag once leader election is enabled
-            const auto [err, errStr] = registerCDCReplica(_shuckleHost, _shucklePort, 10_sec, _replicaId, _location, !_avoidBeingLeader, _shared.socks[CDC_SOCK].addr());
+            const auto [err, errStr] = registerCDCReplica(_registryHost, _registryPort, 10_sec, _replicaId, _location, !_avoidBeingLeader, _shared.socks[CDC_SOCK].addr());
             if (err == EINTR) { return false; }
             if (err) {
-                _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
+                _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
                 return false;
             }
             _env.clearAlert(_alert);
@@ -924,15 +924,15 @@ public:
 
         {
             std::array<AddrsInfo, 5> replicas;
-            LOG_INFO(_env, "Fetching replicas for CDC from shuckle");
-            const auto [err, errStr] = fetchCDCReplicas(_shuckleHost, _shucklePort, 10_sec, replicas);
+            LOG_INFO(_env, "Fetching replicas for CDC from registry");
+            const auto [err, errStr] = fetchCDCReplicas(_registryHost, _registryPort, 10_sec, replicas);
             if (err == EINTR) { return false; }
             if (err) {
-                _env.updateAlert(_alert, "Failed getting CDC replicas from shuckle: %s", errStr);
+                _env.updateAlert(_alert, "Failed getting CDC replicas from registry: %s", errStr);
                 return false;
             }
             if (_shared.socks[CDC_SOCK].addr() != replicas[_replicaId.u8]) {
-                _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", replicas[_replicaId.u8], _shared.socks[CDC_SOCK].addr());
+                _env.updateAlert(_alert, "AddrsInfo in registry: %s , not matching local AddrsInfo: %s", replicas[_replicaId.u8], _shared.socks[CDC_SOCK].addr());
                 return false;
             }
             if (unlikely(!_shared.replicas)) {
@@ -943,7 +943,7 @@ public:
                     }
                 }
                 if (!_noReplication && emptyReplicas > 0 ) {
-                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
+                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
                     return false;
                 }
             }
@@ -1180,8 +1180,8 @@ void runCDC(CDCOptions& options) {
     LOG_INFO(env, "  logFile = '%s'", options.logFile);
     LOG_INFO(env, "  replicaId = %s", options.replicaId);
     LOG_INFO(env, "  port = %s", options.port);
-    LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
-    LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
+    LOG_INFO(env, "  registryHost = '%s'", options.registryHost);
+    LOG_INFO(env, "  registryPort = %s", options.registryPort);
     LOG_INFO(env, "  cdcAddrs = %s", options.cdcAddrs);
     LOG_INFO(env, "  syslog = %s", (int)options.syslog);
     LOG_INFO(env, "Using LogsDB with options:");

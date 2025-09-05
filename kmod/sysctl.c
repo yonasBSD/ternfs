@@ -121,7 +121,7 @@ static struct ctl_table ternfs_cb_sysctls[] = {
     TERNFS_CTL_INT_JIFFIES(dir_getattr_refresh_time),
     TERNFS_CTL_INT_JIFFIES(dir_dentry_refresh_time),
     TERNFS_CTL_INT_JIFFIES(file_getattr_refresh_time),
-    TERNFS_CTL_INT_JIFFIES(shuckle_refresh_time),
+    TERNFS_CTL_INT_JIFFIES(registry_refresh_time),
     TERNFS_CTL_INT_JIFFIES(initial_shard_timeout),
     TERNFS_CTL_INT_JIFFIES(max_shard_timeout),
     TERNFS_CTL_INT_JIFFIES(overall_shard_timeout),

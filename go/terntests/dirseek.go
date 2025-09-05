@@ -159,8 +159,8 @@ func dirSeek(fd C.int, off C.long, whence C.int) (C.long, error) {
 	return off, nil
 }
 
-func dirSeekTest(log *log.Logger, shuckleAddress string, mountPoint string) {
-	c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string) {
+	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}

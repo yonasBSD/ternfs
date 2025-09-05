@@ -126,7 +126,7 @@ type env struct {
 	stats          map[msgs.BlockServiceId]*blockServiceStats
 	counters       map[msgs.BlocksMessageKind]*timing.Timings
 	eraseLocks     map[msgs.BlockServiceId]*sync.Mutex
-	shuckleConn    *client.ShuckleConn
+	registryConn    *client.RegistryConn
 	failureDomain  string
 	hostname       string
 	pathPrefix     string
@@ -247,7 +247,7 @@ func initBlockServicesInfo(
 		}
 		closureBs := bs
 		go func() {
-			// only update if it isn't filled it in already from shuckle
+			// only update if it isn't filled it in already from registry
 			if closureBs.cachedInfo.Blocks == 0 {
 				if err := updateBlockServiceInfoCapacity(log, closureBs, reservedStorage); err != nil {
 					panic(err)
@@ -284,15 +284,15 @@ func registerPeriodically(
 			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
 		}
 		log.Trace("registering with %+v", req)
-		_, err := env.shuckleConn.Request(&req)
+		_, err := env.registryConn.Request(&req)
 		if err != nil {
-			log.RaiseNC(alert, "could not register block services with %+v: %v", env.shuckleConn.ShuckleAddress(), err)
+			log.RaiseNC(alert, "could not register block services with %+v: %v", env.registryConn.RegistryAddress(), err)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		log.ClearNC(alert)
 		waitFor := minimumRegisterInterval + time.Duration(mrand.Uint64()%uint64(variantRegisterInterval.Nanoseconds()))
-		log.Info("registered with %v (%v alive), waiting %v", env.shuckleConn.ShuckleAddress(), len(blockServices), waitFor)
+		log.Info("registered with %v (%v alive), waiting %v", env.registryConn.RegistryAddress(), len(blockServices), waitFor)
 		time.Sleep(waitFor)
 	}
 }
@@ -1204,7 +1204,7 @@ func raiseAlerts(log *log.Logger, env *env, blockServices map[msgs.BlockServiceI
 			if requests*uint64(env.ioAlertPercent) < ioErrors*100 {
 				log.RaiseNC(&bs.ioErrorsAlert, "block service %v had %v ioErrors from %v requests in the last 5 minutes which is over the %d%% threshold", bsId, ioErrors, requests, env.ioAlertPercent)
 				log.Info("decommissioning block service %v", bs.cachedInfo.Id)
-				env.shuckleConn.Request(&msgs.DecommissionBlockServiceReq{Id: bs.cachedInfo.Id})
+				env.registryConn.Request(&msgs.DecommissionBlockServiceReq{Id: bs.cachedInfo.Id})
 			} else {
 				log.ClearNC(&bs.ioErrorsAlert)
 			}
@@ -1338,12 +1338,12 @@ func main() {
 
 	futureCutoff := flag.Duration("future-cutoff", DEFAULT_FUTURE_CUTOFF, "")
 	var addresses flags.StringArrayFlags
-	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to, and that will be advertised to shuckle.")
+	flag.Var(&addresses, "addr", "Addresses (up to two) to bind to, and that will be advertised to registry.")
 	verbose := flag.Bool("verbose", false, "")
 	xmon := flag.String("xmon", "", "Xmon address (empty for no xmon)")
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "If empty, stdout")
-	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	registryAddress := flag.String("registry", "", "Registry address (host:port).")
 	hardwareEventAddress := flag.String("hardwareevent", "", "Server address (host:port) to send hardware events to OR empty for no event logging")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
@@ -1355,7 +1355,7 @@ func main() {
 	locationId := flag.Uint("location", 10000, "Location ID")
 	readWholeFile := flag.Bool("read-whole-file", false, "")
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
-	shuckleConnectionTimeout := flag.Duration("shuckle-connection-timeout", 10*time.Second, "")
+	registryConnectionTimeout := flag.Duration("registry-connection-timeout", 10*time.Second, "")
 
 	flag.Parse()
 	flagErrors := false
@@ -1368,8 +1368,8 @@ func main() {
 		flagErrors = true
 	}
 
-	if *shuckleAddress == "" {
-		fmt.Fprintf(os.Stderr, "You need to specify -shuckle.\n")
+	if *registryAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -registry.\n")
 		flagErrors = true
 	}
 
@@ -1510,10 +1510,10 @@ func main() {
 	l.Info("  addr = '%v'", addresses)
 	l.Info("  logLevel = %v", level)
 	l.Info("  logFile = '%v'", *logFile)
-	l.Info("  shuckleAddress = '%v'", *shuckleAddress)
+	l.Info("  registryAddress = '%v'", *registryAddress)
 	l.Info("  connectionTimeout = %v", *connectionTimeout)
 	l.Info("  reservedStorage = %v", *reservedStorage)
-	l.Info("  shuckleConnectionTimeout = %v", *shuckleConnectionTimeout)
+	l.Info("  registryConnectionTimeout = %v", *registryConnectionTimeout)
 
 	bufPool := bufpool.NewBufPool()
 	env := &env{
@@ -1524,7 +1524,7 @@ func main() {
 		failureDomain:  *failureDomainStr,
 		pathPrefix:     *pathPrefixStr,
 		ioAlertPercent: uint8(*ioAlertPercent),
-		shuckleConn:    client.MakeShuckleConn(l, nil, *shuckleAddress, 1),
+		registryConn:    client.MakeRegistryConn(l, nil, *registryAddress, 1),
 	}
 
 	mountsInfo, err := getMountsInfo(l, "/proc/self/mountinfo")
@@ -1569,24 +1569,24 @@ func main() {
 		panic(fmt.Errorf("duplicate block services"))
 	}
 
-	// Now ask shuckle for block services we _had_ before. We need to know this to honor
+	// Now ask registry for block services we _had_ before. We need to know this to honor
 	// erase block requests for old block services safely.
 	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
-		var shuckleBlockServices []msgs.BlockServiceDeprecatedInfo
+		var registryBlockServices []msgs.BlockServiceDeprecatedInfo
 		{
 			alert := l.NewNCAlert(0)
 			l.RaiseNC(alert, "fetching block services")
 
-			resp, err := env.shuckleConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
+			resp, err := env.registryConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
 			if err != nil {
-				panic(fmt.Errorf("could not request block services from shuckle: %v", err))
+				panic(fmt.Errorf("could not request block services from registry: %v", err))
 			}
 			l.ClearNC(alert)
-			shuckleBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
+			registryBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
 		}
-		for i := range shuckleBlockServices {
-			bs := &shuckleBlockServices[i]
+		for i := range registryBlockServices {
+			bs := &registryBlockServices[i]
 			ourBs, weHaveBs := blockServices[bs.Id]
 			sameFailureDomain := bs.FailureDomain.Name == failureDomain
 			if len(env.pathPrefix) > 0 {
@@ -1596,27 +1596,27 @@ func main() {
 				}
 			}
 			isDecommissioned := (bs.Flags & msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) != 0
-			// No disagreement on failure domain with shuckle (otherwise we could end up with
+			// No disagreement on failure domain with registry (otherwise we could end up with
 			// a split brain scenario where two eggsblocks processes assume control of two dead
 			// block services)
 			if weHaveBs && !sameFailureDomain {
-				panic(fmt.Errorf("we have block service %v, and we're failure domain %v, but shuckle thinks it should be failure domain %v. If you've moved this block service, change the failure domain on shuckle", bs.Id, failureDomain, bs.FailureDomain))
+				panic(fmt.Errorf("we have block service %v, and we're failure domain %v, but registry thinks it should be failure domain %v. If you've moved this block service, change the failure domain on registry", bs.Id, failureDomain, bs.FailureDomain))
 			}
 			// block services in the same failure domain, which we do not have, must be
 			// decommissioned
 			if !weHaveBs && sameFailureDomain {
 				if !isDecommissioned {
-					panic(fmt.Errorf("shuckle has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned", bs.Id, failureDomain))
+					panic(fmt.Errorf("registry has block service %v for our failure domain %v, but we don't have this block service, and it is not decommissioned. If the block service is dead, mark it as decommissioned", bs.Id, failureDomain))
 				}
 				deadBlockServices[bs.Id] = deadBlockService{}
 			}
 			// we can't have a decommissioned block service
 			if weHaveBs && isDecommissioned {
-				l.ErrorNoAlert("We have block service %v, which is decommissioned according to shuckle. We will treat it as if it doesn't exist.", bs.Id)
+				l.ErrorNoAlert("We have block service %v, which is decommissioned according to registry. We will treat it as if it doesn't exist.", bs.Id)
 				delete(blockServices, bs.Id)
 				deadBlockServices[bs.Id] = deadBlockService{}
 			}
-			// fill in information from shuckle, if it's recent enough
+			// fill in information from registry, if it's recent enough
 			if weHaveBs && time.Since(bs.LastSeen.Time()) < maximumRegisterInterval*2 {
 				// everything else is filled in by initBlockServicesInfo
 				ourBs.cachedInfo = msgs.RegisterBlockServiceInfo{

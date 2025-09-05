@@ -853,14 +853,14 @@ func findBlockServiceToPurge(log *log.Logger, client *client.Client) msgs.BlockS
 // returns how many blocks were corrupted
 func corruptFiles(
 	log *log.Logger,
-	shuckleAddress string,
+	registryAddress string,
 	c *client.Client,
 	opts *fsTestOpts,
 	rand *wyhash.Rand,
 ) uint64 {
 	blockServicesToDataDirs := make(map[msgs.BlockServiceId]string)
 	{
-		resp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.RegistryRequest(log, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -961,7 +961,7 @@ func fsTestInternal[Id comparable](
 	log *log.Logger,
 	c *client.Client,
 	state *fsTestState[Id],
-	shuckleAddress string,
+	registryAddress string,
 	opts *fsTestOpts,
 	counters *client.ClientCounters,
 	harness fsTestHarness[Id],
@@ -1030,7 +1030,7 @@ func fsTestInternal[Id comparable](
 	if opts.corruptFileProb > 0 {
 		// now flip bits in 10% of files, to test scrubbing
 		log.Info("corrupting %v%% of files", opts.corruptFileProb*100)
-		corruptedBlocks := corruptFiles(log, shuckleAddress, c, opts, rand)
+		corruptedBlocks := corruptFiles(log, registryAddress, c, opts, rand)
 		log.Info("corrupted %v blocks", corruptedBlocks)
 		// Now, scrub the corrupted blocks away. It would be nice to do this _after_
 		// we've checked the files, so that we also test recovery on the read side,
@@ -1084,7 +1084,7 @@ func fsTestInternal[Id comparable](
 		// Now, try to migrate away from one block service, to stimulate that code path
 		// in tests somewhere.
 		if opts.maxFileSize > 0 {
-			c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+			c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 			if err != nil {
 				panic(err)
 			}
@@ -1094,7 +1094,7 @@ func fsTestInternal[Id comparable](
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
 
-			migrator := cleanup.Migrator(shuckleAddress, log, c, 1, 0, 1, false, "")
+			migrator := cleanup.Migrator(registryAddress, log, c, 1, 0, 1, false, "")
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {
@@ -1146,7 +1146,7 @@ func fsTestInternal[Id comparable](
 			panic(err)
 		}
 		// check that we have no flash block
-		blockServicesResp, err := client.ShuckleRequest(log, nil, shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		blockServicesResp, err := client.RegistryRequest(log, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			panic(err)
 		}
@@ -1262,12 +1262,12 @@ func (apiHarness) isHarness()   {}
 
 func fsTest(
 	log *log.Logger,
-	shuckleAddress string,
+	registryAddress string,
 	opts *fsTestOpts,
 	counters *client.ClientCounters,
 	harnessType WhichHarness,
 ) {
-	c, err := client.NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}
@@ -1284,7 +1284,7 @@ func fsTest(
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(h.mountPoint),
 		}
-		fsTestInternal[string](log, c, &state, shuckleAddress, opts, counters, harness, h.mountPoint)
+		fsTestInternal[string](log, c, &state, registryAddress, opts, counters, harness, h.mountPoint)
 	case apiHarness:
 		harness := &apiFsTestHarness{
 			client:       c,
@@ -1295,7 +1295,7 @@ func fsTest(
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir(msgs.ROOT_DIR_INODE_ID),
 		}
-		fsTestInternal[msgs.InodeId](log, c, &state, shuckleAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
+		fsTestInternal[msgs.InodeId](log, c, &state, registryAddress, opts, counters, harness, msgs.ROOT_DIR_INODE_ID)
 	case s3Harness:
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -1325,7 +1325,7 @@ func fsTest(
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir("/"),
 		}
-		fsTestInternal[string](log, c, &state, shuckleAddress, opts, counters, harness, "/")
+		fsTestInternal[string](log, c, &state, registryAddress, opts, counters, harness, "/")
 	default:
 		panic(fmt.Errorf("bad harness %T", harnessType))
 	}

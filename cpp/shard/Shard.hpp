@@ -17,8 +17,8 @@ struct ShardOptions {
     uint16_t port;
     LogLevel logLevel = LogLevel::LOG_INFO;
     std::string logFile = ""; // if empty, stdout
-    std::string shuckleHost = "";
-    uint16_t shucklePort = 0;
+    std::string registryHost = "";
+    uint16_t registryPort = 0;
     // The second will be used if the port is non-null
     AddrsInfo shardAddrs;
     // If non-zero, packets will be dropped with this probability. Useful to test

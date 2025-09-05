@@ -24,30 +24,30 @@ import (
 )
 
 type state struct {
-	counters    map[msgs.ShuckleMessageKind]*timing.Timings
-	config      *shuckleProxyConfig
-	shuckleConn *client.ShuckleConn
+	counters    map[msgs.RegistryMessageKind]*timing.Timings
+	config      *registryProxyConfig
+	registryConn *client.RegistryConn
 }
 
-type shuckleProxyConfig struct {
+type registryProxyConfig struct {
 	addrs          msgs.AddrsInfo
 	location       msgs.Location
-	shuckleAddress string
+	registryAddress string
 	numHandlers    uint
 }
 
 func newState(
 	l *log.Logger,
-	conf *shuckleProxyConfig,
+	conf *registryProxyConfig,
 	idb *log.InfluxDB,
 ) *state {
 	st := &state{
 		config:      conf,
-		shuckleConn: client.MakeShuckleConn(l, nil, conf.shuckleAddress, conf.numHandlers),
+		registryConn: client.MakeRegistryConn(l, nil, conf.registryAddress, conf.numHandlers),
 	}
 
-	st.counters = make(map[msgs.ShuckleMessageKind]*timing.Timings)
-	for _, k := range msgs.AllShuckleMessageKind {
+	st.counters = make(map[msgs.RegistryMessageKind]*timing.Timings)
+	for _, k := range msgs.AllRegistryMessageKind {
 		st.counters[k] = timing.NewTimings(40, 10*time.Microsecond, 1.5)
 	}
 
@@ -75,7 +75,7 @@ func handleLocalShards(ll *log.Logger, s *state, _ *msgs.LocalShardsReq) (*msgs.
 	return &msgs.LocalShardsResp{respAtLocation.Shards}, nil
 }
 
-func handleLocalCdc(log *log.Logger, s *state, req *msgs.LocalCdcReq) (msgs.ShuckleResponse, error) {
+func handleLocalCdc(log *log.Logger, s *state, req *msgs.LocalCdcReq) (msgs.RegistryResponse, error) {
 	reqAtLocation := &msgs.CdcAtLocationReq{LocationId: s.config.location}
 	resp, err := handleProxyRequest(log, s, reqAtLocation)
 	if err != nil {
@@ -86,23 +86,23 @@ func handleLocalCdc(log *log.Logger, s *state, req *msgs.LocalCdcReq) (msgs.Shuc
 	return &msgs.LocalCdcResp{respAtLocation.Addrs, respAtLocation.LastSeen}, nil
 }
 
-func handleProxyRequest(log *log.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
-	return s.shuckleConn.Request(req)
+func handleProxyRequest(log *log.Logger, s *state, req msgs.RegistryRequest) (msgs.RegistryResponse, error) {
+	return s.registryConn.Request(req)
 }
 
-func handleShuckle(log *log.Logger, s *state) (msgs.ShuckleResponse, error) {
-	return &msgs.ShuckleResp{s.config.addrs}, nil
+func handleRegistry(log *log.Logger, s *state) (msgs.RegistryResponse, error) {
+	return &msgs.RegistryResp{s.config.addrs}, nil
 }
 
-func handleRequestParsed(log *log.Logger, s *state, req msgs.ShuckleRequest) (msgs.ShuckleResponse, error) {
+func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (msgs.RegistryResponse, error) {
 	t0 := time.Now()
 	defer func() {
-		s.counters[req.ShuckleRequestKind()].Add(time.Since(t0))
+		s.counters[req.RegistryRequestKind()].Add(time.Since(t0))
 	}()
 	log.Debug("handling request %T", req)
 	log.Trace("request body %+v", req)
 	var err error
-	var resp msgs.ShuckleResponse
+	var resp msgs.RegistryResponse
 	switch whichReq := req.(type) {
 	case *msgs.SetBlockServiceFlagsReq:
 		resp, err = handleProxyRequest(log, s, req)
@@ -128,8 +128,8 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.ShuckleRequest) (ms
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.InfoReq:
 		resp, err = handleProxyRequest(log, s, req)
-	case *msgs.ShuckleReq:
-		resp, err = handleShuckle(log, s)
+	case *msgs.RegistryReq:
+		resp, err = handleRegistry(log, s)
 	case *msgs.ShardBlockServicesDEPRECATEDReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.MoveShardLeaderReq:
@@ -185,17 +185,17 @@ func isBenignConnTermination(err error) bool {
 	return false
 }
 
-func writeShuckleResponse(log *log.Logger, w io.Writer, resp msgs.ShuckleResponse) error {
+func writeRegistryResponse(log *log.Logger, w io.Writer, resp msgs.RegistryResponse) error {
 	// serialize
 	bytes := bincode.Pack(resp)
 	// write out
-	if err := binary.Write(w, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, msgs.REGISTRY_RESP_PROTOCOL_VERSION); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.LittleEndian, uint32(1+len(bytes))); err != nil {
 		return err
 	}
-	if _, err := w.Write([]byte{uint8(resp.ShuckleResponseKind())}); err != nil {
+	if _, err := w.Write([]byte{uint8(resp.RegistryResponseKind())}); err != nil {
 		return err
 	}
 	if _, err := w.Write(bytes); err != nil {
@@ -204,10 +204,10 @@ func writeShuckleResponse(log *log.Logger, w io.Writer, resp msgs.ShuckleRespons
 	return nil
 }
 
-func writeShuckleResponseError(log *log.Logger, w io.Writer, err msgs.TernError) error {
-	log.Debug("writing shuckle error %v", err)
+func writeRegistryResponseError(log *log.Logger, w io.Writer, err msgs.TernError) error {
+	log.Debug("writing registry error %v", err)
 	buf := bytes.NewBuffer([]byte{})
-	if err := binary.Write(buf, binary.LittleEndian, msgs.SHUCKLE_RESP_PROTOCOL_VERSION); err != nil {
+	if err := binary.Write(buf, binary.LittleEndian, msgs.REGISTRY_RESP_PROTOCOL_VERSION); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.LittleEndian, uint32(1+2)); err != nil {
@@ -241,24 +241,24 @@ func handleError(
 
 	// attempt to say goodbye, ignore errors
 	if ternErr, isTernErr := err.(msgs.TernError); isTernErr {
-		writeShuckleResponseError(log, conn, ternErr)
+		writeRegistryResponseError(log, conn, ternErr)
 		return false
 	} else {
-		writeShuckleResponseError(log, conn, msgs.INTERNAL_ERROR)
+		writeRegistryResponseError(log, conn, msgs.INTERNAL_ERROR)
 		return true
 	}
 }
 
-func readShuckleRequest(
+func readRegistryRequest(
 	log *log.Logger,
 	r io.Reader,
-) (msgs.ShuckleRequest, error) {
+) (msgs.RegistryRequest, error) {
 	var protocol uint32
 	if err := binary.Read(r, binary.LittleEndian, &protocol); err != nil {
 		return nil, err
 	}
-	if protocol != msgs.SHUCKLE_REQ_PROTOCOL_VERSION {
-		return nil, fmt.Errorf("bad shuckle protocol, expected %08x, got %08x", msgs.SHUCKLE_REQ_PROTOCOL_VERSION, protocol)
+	if protocol != msgs.REGISTRY_REQ_PROTOCOL_VERSION {
+		return nil, fmt.Errorf("bad registry protocol, expected %08x, got %08x", msgs.REGISTRY_REQ_PROTOCOL_VERSION, protocol)
 	}
 	var len uint32
 	if err := binary.Read(r, binary.LittleEndian, &len); err != nil {
@@ -268,8 +268,8 @@ func readShuckleRequest(
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, fmt.Errorf("could not read response body: %w", err)
 	}
-	kind := msgs.ShuckleMessageKind(data[0])
-	var req msgs.ShuckleRequest
+	kind := msgs.RegistryMessageKind(data[0])
+	var req msgs.RegistryRequest
 	switch kind {
 	case msgs.LOCAL_SHARDS:
 		req = &msgs.LocalShardsReq{}
@@ -291,8 +291,8 @@ func readShuckleRequest(
 		req = &msgs.CdcReplicasDEPRECATEDReq{}
 	case msgs.INFO:
 		req = &msgs.InfoReq{}
-	case msgs.SHUCKLE:
-		req = &msgs.ShuckleReq{}
+	case msgs.REGISTRY:
+		req = &msgs.RegistryReq{}
 	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
 		req = &msgs.ShardBlockServicesDEPRECATEDReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
@@ -326,7 +326,7 @@ func readShuckleRequest(
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
 	default:
-		return nil, fmt.Errorf("bad shuckle request kind %v", kind)
+		return nil, fmt.Errorf("bad registry request kind %v", kind)
 	}
 	if err := bincode.Unpack(data[1:], req); err != nil {
 		return nil, err
@@ -339,9 +339,9 @@ func handleRequest(log *log.Logger, s *state, conn *net.TCPConn) {
 
 	for {
 		now := time.Now()
-		reqDeadline := now.Add(client.DefaultShuckleTimeout.RequestTimeout)
-		conn.SetReadDeadline(now.Add(client.DefaultShuckleTimeout.ReconnectTimeout.Overall))
-		req, err := readShuckleRequest(log, conn)
+		reqDeadline := now.Add(client.DefaultRegistryTimeout.RequestTimeout)
+		conn.SetReadDeadline(now.Add(client.DefaultRegistryTimeout.ReconnectTimeout.Overall))
+		req, err := readRegistryRequest(log, conn)
 		conn.SetReadDeadline(time.Time{})
 
 		if err != nil {
@@ -360,7 +360,7 @@ func handleRequest(log *log.Logger, s *state, conn *net.TCPConn) {
 		} else {
 			log.Debug("sending back response %T to %s", resp, conn.RemoteAddr())
 			conn.SetWriteDeadline(reqDeadline)
-			if err := writeShuckleResponse(log, conn, resp); err != nil {
+			if err := writeRegistryResponse(log, conn, resp); err != nil {
 				if handleError(log, conn, err) {
 					return
 				}
@@ -386,9 +386,9 @@ func sendMetrics(l *log.Logger, st *state, influxDB *log.InfluxDB) error {
 		l.Info("sending metrics")
 		metrics.Reset()
 		now := time.Now()
-		for _, req := range msgs.AllShuckleMessageKind {
+		for _, req := range msgs.AllRegistryMessageKind {
 			t := st.counters[req]
-			metrics.Measurement("eggsfs_shuckle_proxy_requests")
+			metrics.Measurement("eggsfs_registry_proxy_requests")
 			metrics.Tag("kind", req.String())
 			metrics.FieldU64("count", t.Count())
 			metrics.Timestamp(now)
@@ -418,9 +418,9 @@ func main() {
 	influxDBOrigin := flag.String("influx-db-origin", "", "Base URL to InfluxDB endpoint")
 	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
 	influxDBBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket")
-	shuckleAddress := flag.String("shuckle-address", "", "Shuckle address to connect to.")
-	location := flag.Uint("location", 0, "Location id for this shuckle proxy.")
-	numHandlers := flag.Uint("num-handlers", 100, "Number of shuckle connections to open.")
+	registryAddress := flag.String("registry-address", "", "Registry address to connect to.")
+	location := flag.Uint("location", 0, "Location id for this registry proxy.")
+	numHandlers := flag.Uint("num-handlers", 100, "Number of registry connections to open.")
 	maxConnections := flag.Uint("max-connections", 4000, "Maximum number of connections to accept.")
 	mtu := flag.Uint64("mtu", 0, "")
 
@@ -432,8 +432,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	if *shuckleAddress == "" {
-		fmt.Fprintf(os.Stderr, "no shuckle address provided\n")
+	if *registryAddress == "" {
+		fmt.Fprintf(os.Stderr, "no registry address provided\n")
 		os.Exit(2)
 	}
 
@@ -491,11 +491,11 @@ func main() {
 	if *trace {
 		level = log.TRACE
 	}
-	log := log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppInstance: "eggsshuckleproxy", AppType: "restech_eggsfs.critical"})
+	log := log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, XmonAddr: *xmon, AppInstance: "eggsregistryproxy", AppType: "restech_eggsfs.critical"})
 
-	log.Info("Running shuckle proxy with options:")
+	log.Info("Running registry proxy with options:")
 	log.Info("  addr = %v", addresses)
-	log.Info("	shuckle-address = %v", *shuckleAddress)
+	log.Info("	registry-address = %v", *registryAddress)
 	log.Info("  location = %d", *location)
 	log.Info("  logFile = '%v'", *logFile)
 	log.Info("  logLevel = %v", level)
@@ -528,11 +528,11 @@ func main() {
 		log.Info("running on %v,%v (bincode)", bincodeListener1.Addr(), bincodeListener2.Addr())
 	}
 
-	config := &shuckleProxyConfig{
+	config := &registryProxyConfig{
 		addrs:          msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
 		location:       msgs.Location(*location),
 		numHandlers:    *numHandlers,
-		shuckleAddress: *shuckleAddress,
+		registryAddress: *registryAddress,
 	}
 	state := newState(log, config, influxDB)
 

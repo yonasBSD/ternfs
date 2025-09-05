@@ -128,15 +128,15 @@ const char* ternfs_shard_kind_str(int kind);
 static const u8 __ternfs_cdc_kind_index_mappings[256] = {255, 0, 1, 2, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* ternfs_cdc_kind_str(int kind);
 
-#define TERNFS_SHUCKLE_LOCAL_SHARDS 0x3
-#define TERNFS_SHUCKLE_LOCAL_CDC 0x7
-#define TERNFS_SHUCKLE_INFO 0x8
-#define TERNFS_SHUCKLE_SHUCKLE 0xF
-#define TERNFS_SHUCKLE_LOCAL_CHANGED_BLOCK_SERVICES 0x22
-#define __print_ternfs_shuckle_kind(k) __print_symbolic(k, { 3, "LOCAL_SHARDS" }, { 7, "LOCAL_CDC" }, { 8, "INFO" }, { 15, "SHUCKLE" }, { 34, "LOCAL_CHANGED_BLOCK_SERVICES" })
-#define TERNFS_SHUCKLE_KIND_MAX 5
-static const u8 __ternfs_shuckle_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
-const char* ternfs_shuckle_kind_str(int kind);
+#define TERNFS_REGISTRY_LOCAL_SHARDS 0x3
+#define TERNFS_REGISTRY_LOCAL_CDC 0x7
+#define TERNFS_REGISTRY_INFO 0x8
+#define TERNFS_REGISTRY_REGISTRY 0xF
+#define TERNFS_REGISTRY_LOCAL_CHANGED_BLOCK_SERVICES 0x22
+#define __print_ternfs_registry_kind(k) __print_symbolic(k, { 3, "LOCAL_SHARDS" }, { 7, "LOCAL_CDC" }, { 8, "INFO" }, { 15, "REGISTRY" }, { 34, "LOCAL_CHANGED_BLOCK_SERVICES" })
+#define TERNFS_REGISTRY_KIND_MAX 5
+static const u8 __ternfs_registry_kind_index_mappings[256] = {255, 255, 255, 0, 255, 255, 255, 1, 2, 255, 255, 255, 255, 255, 255, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+const char* ternfs_registry_kind_str(int kind);
 
 #define TERNFS_BLOCKS_FETCH_BLOCK 0x2
 #define TERNFS_BLOCKS_WRITE_BLOCK 0x3
@@ -6384,51 +6384,51 @@ static inline void _ternfs_info_resp_put_blocks(struct ternfs_bincode_put_ctx* c
     { struct ternfs_info_resp_blocks* __dummy __attribute__((unused)) = &(prev); }\
     struct ternfs_info_resp_end* next __attribute__((unused)) = NULL
 
-#define TERNFS_SHUCKLE_REQ_SIZE 0
-struct ternfs_shuckle_req_start;
-#define ternfs_shuckle_req_get_start(ctx, start) struct ternfs_shuckle_req_start* start = NULL
+#define TERNFS_REGISTRY_REQ_SIZE 0
+struct ternfs_registry_req_start;
+#define ternfs_registry_req_get_start(ctx, start) struct ternfs_registry_req_start* start = NULL
 
-struct ternfs_shuckle_req_end;
-#define ternfs_shuckle_req_get_end(ctx, prev, next) \
-    { struct ternfs_shuckle_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct ternfs_shuckle_req_end* next = NULL
+struct ternfs_registry_req_end;
+#define ternfs_registry_req_get_end(ctx, prev, next) \
+    { struct ternfs_registry_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_registry_req_end* next = NULL
 
-static inline void ternfs_shuckle_req_get_finish(struct ternfs_bincode_get_ctx* ctx, struct ternfs_shuckle_req_end* end) {
+static inline void ternfs_registry_req_get_finish(struct ternfs_bincode_get_ctx* ctx, struct ternfs_registry_req_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define ternfs_shuckle_req_put_start(ctx, start) struct ternfs_shuckle_req_start* start = NULL
+#define ternfs_registry_req_put_start(ctx, start) struct ternfs_registry_req_start* start = NULL
 
-#define ternfs_shuckle_req_put_end(ctx, prev, next) \
-    { struct ternfs_shuckle_req_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct ternfs_shuckle_req_end* next __attribute__((unused)) = NULL
+#define ternfs_registry_req_put_end(ctx, prev, next) \
+    { struct ternfs_registry_req_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_registry_req_end* next __attribute__((unused)) = NULL
 
-#define TERNFS_SHUCKLE_RESP_SIZE 12
-struct ternfs_shuckle_resp_start;
-#define ternfs_shuckle_resp_get_start(ctx, start) struct ternfs_shuckle_resp_start* start = NULL
+#define TERNFS_REGISTRY_RESP_SIZE 12
+struct ternfs_registry_resp_start;
+#define ternfs_registry_resp_get_start(ctx, start) struct ternfs_registry_resp_start* start = NULL
 
-#define ternfs_shuckle_resp_get_addrs(ctx, prev, next) \
-    { struct ternfs_shuckle_resp_start** __dummy __attribute__((unused)) = &(prev); }; \
+#define ternfs_registry_resp_get_addrs(ctx, prev, next) \
+    { struct ternfs_registry_resp_start** __dummy __attribute__((unused)) = &(prev); }; \
     struct ternfs_addrs_info_start* next = NULL
 
-struct ternfs_shuckle_resp_end;
-#define ternfs_shuckle_resp_get_end(ctx, prev, next) \
+struct ternfs_registry_resp_end;
+#define ternfs_registry_resp_get_end(ctx, prev, next) \
     { struct ternfs_addrs_info_end** __dummy __attribute__((unused)) = &(prev); }\
-    struct ternfs_shuckle_resp_end* next = NULL
+    struct ternfs_registry_resp_end* next = NULL
 
-static inline void ternfs_shuckle_resp_get_finish(struct ternfs_bincode_get_ctx* ctx, struct ternfs_shuckle_resp_end* end) {
+static inline void ternfs_registry_resp_get_finish(struct ternfs_bincode_get_ctx* ctx, struct ternfs_registry_resp_end* end) {
     if (unlikely(ctx->buf != ctx->end)) {
         ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
     }
 }
 
-#define ternfs_shuckle_resp_put_start(ctx, start) struct ternfs_shuckle_resp_start* start = NULL
+#define ternfs_registry_resp_put_start(ctx, start) struct ternfs_registry_resp_start* start = NULL
 
-#define ternfs_shuckle_resp_put_end(ctx, prev, next) \
-    { struct ternfs_shuckle_resp_start** __dummy __attribute__((unused)) = &(prev); }\
-    struct ternfs_shuckle_resp_end* next __attribute__((unused)) = NULL
+#define ternfs_registry_resp_put_end(ctx, prev, next) \
+    { struct ternfs_registry_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_registry_resp_end* next __attribute__((unused)) = NULL
 
 #define TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE 8
 struct ternfs_local_changed_block_services_req_start;

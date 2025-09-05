@@ -73,8 +73,8 @@ func totalRequests[K comparable](cs map[K]*client.ReqCounters) uint64 {
 
 type RunTests struct {
 	overrides               *cfgOverrides
-	shuckleIp               string
-	shucklePort             uint16
+	registryIp               string
+	registryPort             uint16
 	mountPoint              string
 	fuseMountPoint          string
 	kmod                    bool
@@ -86,8 +86,8 @@ type RunTests struct {
 	kmsgFd *os.File
 }
 
-func (r *RunTests) shuckleAddress() string {
-	return fmt.Sprintf("%s:%d", r.shuckleIp, r.shucklePort)
+func (r *RunTests) registryAddress() string {
+	return fmt.Sprintf("%s:%d", r.registryIp, r.registryPort)
 }
 
 func (r *RunTests) print(format string, a ...any) error {
@@ -140,7 +140,7 @@ func (r *RunTests) test(
 
 	counters = client.NewClientCounters()
 	t0 = time.Now()
-	cleanupAfterTest(log, r.shuckleAddress(), counters, r.pauseBlockServiceKiller)
+	cleanupAfterTest(log, r.registryAddress(), counters, r.pauseBlockServiceKiller)
 	elapsed = time.Since(t0)
 	cumShardCounters = make(map[uint8]*client.ReqCounters)
 	for shid, c := range counters.Shard {
@@ -176,8 +176,8 @@ func setKmodDirRefreshTime(ms uint64) {
 	}
 }
 
-func mountKmod(shuckleAddr string, mountPoint string) {
-	dev := shuckleAddr
+func mountKmod(registryAddr string, mountPoint string) {
+	dev := registryAddr
 	out, err := exec.Command("sudo", "mount", "-t", "eggsfs", dev, mountPoint).CombinedOutput()
 	if err != nil {
 		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
@@ -250,7 +250,7 @@ func (r *RunTests) run(
 	log *log.Logger,
 ) {
 	defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
-	c, err := client.NewClient(log, nil, r.shuckleAddress(), msgs.AddrsInfo{})
+	c, err := client.NewClient(log, nil, r.registryAddress(), msgs.AddrsInfo{})
 	if err != nil {
 		panic(err)
 	}
@@ -288,7 +288,7 @@ func (r *RunTests) run(
 		"file history",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
 		func(counters *client.ClientCounters) {
-			fileHistoryTest(log, r.shuckleAddress(), &fileHistoryOpts, counters)
+			fileHistoryTest(log, r.registryAddress(), &fileHistoryOpts, counters)
 		},
 	)
 
@@ -321,7 +321,7 @@ func (r *RunTests) run(
 		"direct fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *client.ClientCounters) {
-			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, apiHarness{})
+			fsTest(log, r.registryAddress(), &fsTestOpts, counters, apiHarness{})
 		},
 	)
 
@@ -330,7 +330,7 @@ func (r *RunTests) run(
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *client.ClientCounters) {
-			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, posixHarness{r.mountPoint})
+			fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{r.mountPoint})
 		},
 	)
 
@@ -339,7 +339,7 @@ func (r *RunTests) run(
 		"s3 fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *client.ClientCounters) {
-			fsTest(log, r.shuckleAddress(), &fsTestOpts, counters, s3Harness{})
+			fsTest(log, r.registryAddress(), &fsTestOpts, counters, s3Harness{})
 		},
 	)
 
@@ -348,7 +348,7 @@ func (r *RunTests) run(
 		"parallel dirs",
 		"",
 		func(counters *client.ClientCounters) {
-			parallelDirsTest(log, r.shuckleAddress(), counters)
+			parallelDirsTest(log, r.registryAddress(), counters)
 		},
 	)
 
@@ -585,7 +585,7 @@ func (r *RunTests) run(
 		"dir seek",
 		"",
 		func(counters *client.ClientCounters) {
-			dirSeekTest(log, r.shuckleAddress(), r.mountPoint)
+			dirSeekTest(log, r.registryAddress(), r.mountPoint)
 		},
 	)
 
@@ -709,7 +709,7 @@ type blockServiceVictim struct {
 func (bsv *blockServiceVictim) start(
 	log *log.Logger,
 	blocksExe string,
-	shucklePort uint16,
+	registryPort uint16,
 	port1 uint16,
 	port2 uint16,
 	profile bool,
@@ -721,7 +721,7 @@ func (bsv *blockServiceVictim) start(
 		StorageClasses:   bsv.storageClasses,
 		FailureDomain:    bsv.failureDomain,
 		LogLevel:         log.Level(),
-		ShuckleAddress:   fmt.Sprintf("127.0.0.1:%d", shucklePort),
+		RegistryAddress:   fmt.Sprintf("127.0.0.1:%d", registryPort),
 		FutureCutoff:     &testBlockFutureCutoff,
 		Addr1:            fmt.Sprintf("127.0.0.1:%d", port1),
 		Addr2:            fmt.Sprintf("127.0.0.1:%d", port2),
@@ -736,7 +736,7 @@ func killBlockServices(
 	stopChan chan struct{},
 	pause *sync.Mutex,
 	blocksExe string,
-	shucklePort uint16,
+	registryPort uint16,
 	profile bool,
 	procs *managedprocess.ManagedProcesses,
 	bsProcs map[managedprocess.ManagedProcessId]blockServiceVictim,
@@ -802,7 +802,7 @@ func killBlockServices(
 				procId := victim.start(
 					log,
 					blocksExe,
-					shucklePort,
+					registryPort,
 					ports._1,
 					ports._2,
 					profile,
@@ -876,7 +876,7 @@ func main() {
 	dirRefreshTime := flag.Duration("dir-refresh-time", 0, "If set, it will set the kmod /proc/sys/fs/eggsfs/dir_refresh_time_ms")
 	mtu := flag.Uint64("mtu", 0, "If set, we'll use the given MTU for big requests.")
 	tmpDir := flag.String("tmp-dir", "", "")
-	shucklePortArg := flag.Uint("shuckle-port", 55555, "")
+	registryPortArg := flag.Uint("registry-port", 55555, "")
 	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
 	race := flag.Bool("race", false, "Go race detector")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
@@ -962,12 +962,12 @@ func main() {
 			DBToolsExe: path.Join(*binariesDir, "terndbtools"),
 		}
 		goExes = &managedprocess.GoExes{
-			ShuckleExe: path.Join(*binariesDir, "ternshuckle"),
+			RegistryExe: path.Join(*binariesDir, "ternweb"),
 			BlocksExe:  path.Join(*binariesDir, "ternblocks"),
 			FuseExe:    path.Join(*binariesDir, "ternfuse"),
 		}
 	} else {
-		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
+		fmt.Printf("building shard/cdc/blockservice/registry\n")
 		cppExes = managedprocess.BuildCppExes(l, *repoDir, *buildType)
 		goExes = managedprocess.BuildGoExes(l, *repoDir, *race)
 	}
@@ -1034,20 +1034,20 @@ func main() {
 		}()
 	}
 
-	shucklePort := uint16(*shucklePortArg)
-	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", shucklePort)
+	registryPort := uint16(*registryPortArg)
+	registryAddress := fmt.Sprintf("127.0.0.1:%v", registryPort)
 
-	// Start shuckle
-	shuckleOpts := &managedprocess.ShuckleOpts{
-		Exe:      goExes.ShuckleExe,
+	// Start registry
+	registryOpts := &managedprocess.RegistryOpts{
+		Exe:      goExes.RegistryExe,
 		LogLevel: level,
-		Dir:      path.Join(*dataDir, "shuckle"),
-		Addr1:    shuckleAddress,
+		Dir:      path.Join(*dataDir, "registry"),
+		Addr1:    registryAddress,
 	}
 	if *blockServiceKiller {
-		shuckleOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
+		registryOpts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
 	}
-	procs.StartShuckle(l, shuckleOpts)
+	procs.StartRegistry(l, registryOpts)
 
 	failureDomains := 14 + 4 // so that any 4 can fail and we can still do everything.
 	hddBlockServices := 10
@@ -1070,7 +1070,7 @@ func main() {
 			procId := bsv.start(
 				l,
 				goExes.BlocksExe,
-				shucklePort,
+				registryPort,
 				0, 0,
 				*profile,
 				procs,
@@ -1079,14 +1079,14 @@ func main() {
 		}
 	}
 
-	waitShuckleFor := 60 * time.Second
+	waitRegistryFor := 60 * time.Second
 	if *buildType == "valgrind" || *profile || *kmod { // kmod often runs in qemu, which is slower
-		waitShuckleFor = 60 * time.Second
+		waitRegistryFor = 60 * time.Second
 	}
 
 	// wait for block services first, so we know that shards will immediately have all of them
-	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	blockServices := client.WaitForBlockServices(l, fmt.Sprintf("127.0.0.1:%v", shucklePort), failureDomains*(hddBlockServices+flashBlockServices), true, waitShuckleFor)
+	fmt.Printf("waiting for block services for %v...\n", waitRegistryFor)
+	blockServices := client.WaitForBlockServices(l, fmt.Sprintf("127.0.0.1:%v", registryPort), failureDomains*(hddBlockServices+flashBlockServices), true, waitRegistryFor)
 	blockServicesPorts := make(map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16
@@ -1111,7 +1111,7 @@ func main() {
 			LogLevel:       level,
 			Valgrind:       *buildType == "valgrind",
 			Perf:           *profile,
-			ShuckleAddress: shuckleAddress,
+			RegistryAddress: registryAddress,
 			Addr1:          "127.0.0.1:0",
 			Addr2:          "127.0.0.1:0",
 		}
@@ -1145,7 +1145,7 @@ func main() {
 				Valgrind:                  *buildType == "valgrind",
 				Perf:                      *profile,
 				OutgoingPacketDrop:        *outgoingPacketDrop,
-				ShuckleAddress:            shuckleAddress,
+				RegistryAddress:            registryAddress,
 				Addr1:                     "127.0.0.1:0",
 				Addr2:                     "127.0.0.1:0",
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
@@ -1166,15 +1166,15 @@ func main() {
 	}
 
 	// now wait for shards/cdc
-	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	client.WaitForClient(l, fmt.Sprintf("127.0.0.1:%v", shucklePort), waitShuckleFor)
+	fmt.Printf("waiting for shards/cdc for %v...\n", waitRegistryFor)
+	client.WaitForClient(l, fmt.Sprintf("127.0.0.1:%v", registryPort), waitRegistryFor)
 
 	var stopBlockServiceKiller chan struct{}
 	var pauseBlockServiceKiller sync.Mutex
 	if *blockServiceKiller {
 		fmt.Printf("will kill block services\n")
 		stopBlockServiceKiller = make(chan struct{}, 1)
-		killBlockServices(l, terminateChan, stopBlockServiceKiller, &pauseBlockServiceKiller, goExes.BlocksExe, shucklePort, *profile, procs, blockServicesProcs, blockServicesPorts)
+		killBlockServices(l, terminateChan, stopBlockServiceKiller, &pauseBlockServiceKiller, goExes.BlocksExe, registryPort, *profile, procs, blockServicesProcs, blockServicesPorts)
 		// stop before trying to clean up data dir etc.
 		defer func() {
 			stopBlockServiceKiller <- struct{}{}
@@ -1187,7 +1187,7 @@ func main() {
 		Path:                path.Join(*dataDir, "fuse"),
 		LogLevel:            level,
 		Wait:                true,
-		ShuckleAddress:      shuckleAddress,
+		RegistryAddress:      registryAddress,
 		Profile:             *profile,
 		InitialShardTimeout: client.DefaultShardTimeout.Initial,
 		InitialCDCTimeout:   client.DefaultCDCTimeout.Initial,
@@ -1200,7 +1200,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		mountKmod(shuckleAddress, mountPoint)
+		mountKmod(registryAddress, mountPoint)
 		defer func() {
 			l.Info("about to unmount kmod mount")
 			out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput()
@@ -1219,7 +1219,7 @@ func main() {
 	/*
 		if *changeBlockPolicyEvery != time.Duration(0) {
 			fmt.Printf("will change block policy every %v\n", *dropFetchBlockSocketsEvery)
-			c, err := client.NewClient(log, nil, shuckleAddress)
+			c, err := client.NewClient(log, nil, registryAddress)
 			if err != nil {
 				panic(err)
 			}
@@ -1265,8 +1265,8 @@ func main() {
 	go func() {
 		r := RunTests{
 			overrides:               &overrides,
-			shuckleIp:               "127.0.0.1",
-			shucklePort:             shucklePort,
+			registryIp:               "127.0.0.1",
+			registryPort:             registryPort,
 			mountPoint:              mountPoint,
 			fuseMountPoint:          fuseMountPoint,
 			kmod:                    *kmod,

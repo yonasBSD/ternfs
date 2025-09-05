@@ -7,14 +7,14 @@ import (
 	"xtx/ternfs/msgs"
 )
 
-func WaitForBlockServices(ll *log.Logger, shuckleAddress string, expectedBlockServices int, waitCurrentServicesCalcuation bool, timeout time.Duration) []msgs.BlockServiceDeprecatedInfo {
+func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockServices int, waitCurrentServicesCalcuation bool, timeout time.Duration) []msgs.BlockServiceDeprecatedInfo {
 	var err error
 	for {
-		var resp msgs.ShuckleResponse
+		var resp msgs.RegistryResponse
 		var bss []msgs.BlockServiceDeprecatedInfo
-		resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err = RegistryRequest(ll, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
-			ll.Debug("got error while getting block services from shuckle, will keep waiting: %v", err)
+			ll.Debug("got error while getting block services from registry, will keep waiting: %v", err)
 			goto KeepChecking
 		}
 		bss = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
@@ -25,7 +25,7 @@ func WaitForBlockServices(ll *log.Logger, shuckleAddress string, expectedBlockSe
 		}
 
 		if waitCurrentServicesCalcuation {
-			resp, err = ShuckleRequest(ll, nil, shuckleAddress, &msgs.ShardBlockServicesDEPRECATEDReq{0})
+			resp, err = RegistryRequest(ll, nil, registryAddress, &msgs.ShardBlockServicesDEPRECATEDReq{0})
 			if err != nil || len(resp.(*msgs.ShardBlockServicesDEPRECATEDResp).BlockServices) == 0 {
 				ll.Debug("current block services not calculated, will keep waiting")
 				goto KeepChecking
@@ -37,10 +37,10 @@ func WaitForBlockServices(ll *log.Logger, shuckleAddress string, expectedBlockSe
 	}
 }
 
-func WaitForShuckle(ll *log.Logger, shuckleAddress string, timeout time.Duration) error {
+func WaitForRegistry(ll *log.Logger, registryAddress string, timeout time.Duration) error {
 	t0 := time.Now()
 	for {
-		_, err := ShuckleRequest(ll, nil, shuckleAddress, &msgs.InfoReq{})
+		_, err := RegistryRequest(ll, nil, registryAddress, &msgs.InfoReq{})
 		if err == nil {
 			return nil
 		}
@@ -52,7 +52,7 @@ func WaitForShuckle(ll *log.Logger, shuckleAddress string, timeout time.Duration
 }
 
 // getting a client implies having all shards and cdc.
-func WaitForClient(log *log.Logger, shuckleAddress string, timeout time.Duration) {
+func WaitForClient(log *log.Logger, registryAddress string, timeout time.Duration) {
 	t0 := time.Now()
 	var err error
 	var client *Client
@@ -61,9 +61,9 @@ func WaitForClient(log *log.Logger, shuckleAddress string, timeout time.Duration
 		if t.Sub(t0) > timeout {
 			panic(fmt.Errorf("giving up waiting for client, last error: %w", err))
 		}
-		client, err = NewClient(log, nil, shuckleAddress, msgs.AddrsInfo{})
+		client, err = NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
 		if err != nil {
-			log.Info("getting shuckle client failed, waiting: %v", err)
+			log.Info("getting registry client failed, waiting: %v", err)
 			time.Sleep(time.Second)
 			continue
 		}

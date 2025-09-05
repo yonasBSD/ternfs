@@ -15,7 +15,7 @@ def build_and_upload(build_type: str) -> None:
     test_binaries = [
         f"build/{build_type}/ternshard",
         f"build/{build_type}/terncdc",
-        f"build/{build_type}/ternshuckle",
+        f"build/{build_type}/ternweb",
         f"build/{build_type}/ternrun",
         f"build/{build_type}/ternblocks",
         f"build/{build_type}/ternfuse",

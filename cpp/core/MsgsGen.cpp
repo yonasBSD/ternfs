@@ -473,100 +473,100 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
     return out;
 }
 
-std::ostream& operator<<(std::ostream& out, ShuckleMessageKind kind) {
+std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     switch (kind) {
-    case ShuckleMessageKind::ERROR:
+    case RegistryMessageKind::ERROR:
         out << "ERROR";
         break;
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         out << "LOCAL_SHARDS";
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         out << "LOCAL_CDC";
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         out << "INFO";
         break;
-    case ShuckleMessageKind::SHUCKLE:
-        out << "SHUCKLE";
+    case RegistryMessageKind::REGISTRY:
+        out << "REGISTRY";
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         out << "LOCAL_CHANGED_BLOCK_SERVICES";
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         out << "CREATE_LOCATION";
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         out << "RENAME_LOCATION";
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         out << "LOCATIONS";
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         out << "REGISTER_SHARD";
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         out << "REGISTER_CDC";
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         out << "SET_BLOCK_SERVICE_FLAGS";
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         out << "REGISTER_BLOCK_SERVICES";
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         out << "CHANGED_BLOCK_SERVICES_AT_LOCATION";
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         out << "SHARDS_AT_LOCATION";
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         out << "CDC_AT_LOCATION";
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         out << "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED";
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         out << "CDC_REPLICAS_DE_PR_EC_AT_ED";
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         out << "ALL_SHARDS";
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         out << "DECOMMISSION_BLOCK_SERVICE";
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         out << "MOVE_SHARD_LEADER";
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         out << "CLEAR_SHARD_INFO";
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         out << "SHARD_BLOCK_SERVICES";
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         out << "ALL_CDC";
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << "ERASE_DECOMMISSIONED_BLOCK";
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         out << "ALL_BLOCK_SERVICES_DEPRECATED";
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         out << "MOVE_CDC_LEADER";
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         out << "CLEAR_CDC_INFO";
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         out << "UPDATE_BLOCK_SERVICE_PATH";
         break;
-    case ShuckleMessageKind::EMPTY:
+    case RegistryMessageKind::EMPTY:
         out << "EMPTY";
         break;
     default:
-        out << "ShuckleMessageKind(" << ((int)kind) << ")";
+        out << "RegistryMessageKind(" << ((int)kind) << ")";
         break;
     }
     return out;
@@ -4003,35 +4003,35 @@ std::ostream& operator<<(std::ostream& out, const InfoResp& x) {
     return out;
 }
 
-void ShuckleReq::pack(BincodeBuf& buf) const {
+void RegistryReq::pack(BincodeBuf& buf) const {
 }
-void ShuckleReq::unpack(BincodeBuf& buf) {
+void RegistryReq::unpack(BincodeBuf& buf) {
 }
-void ShuckleReq::clear() {
+void RegistryReq::clear() {
 }
-bool ShuckleReq::operator==(const ShuckleReq& rhs) const {
+bool RegistryReq::operator==(const RegistryReq& rhs) const {
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const ShuckleReq& x) {
-    out << "ShuckleReq(" << ")";
+std::ostream& operator<<(std::ostream& out, const RegistryReq& x) {
+    out << "RegistryReq(" << ")";
     return out;
 }
 
-void ShuckleResp::pack(BincodeBuf& buf) const {
+void RegistryResp::pack(BincodeBuf& buf) const {
     addrs.pack(buf);
 }
-void ShuckleResp::unpack(BincodeBuf& buf) {
+void RegistryResp::unpack(BincodeBuf& buf) {
     addrs.unpack(buf);
 }
-void ShuckleResp::clear() {
+void RegistryResp::clear() {
     addrs.clear();
 }
-bool ShuckleResp::operator==(const ShuckleResp& rhs) const {
+bool RegistryResp::operator==(const RegistryResp& rhs) const {
     if (addrs != rhs.addrs) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const ShuckleResp& x) {
-    out << "ShuckleResp(" << "Addrs=" << x.addrs << ")";
+std::ostream& operator<<(std::ostream& out, const RegistryResp& x) {
+    out << "RegistryResp(" << "Addrs=" << x.addrs << ")";
     return out;
 }
 
@@ -8343,1569 +8343,1569 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
     return out;
 }
 
-const LocalShardsReq& ShuckleReqContainer::getLocalShards() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCAL_SHARDS, "%s != %s", _kind, ShuckleMessageKind::LOCAL_SHARDS);
+const LocalShardsReq& RegistryReqContainer::getLocalShards() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_SHARDS, "%s != %s", _kind, RegistryMessageKind::LOCAL_SHARDS);
     return std::get<0>(_data);
 }
-LocalShardsReq& ShuckleReqContainer::setLocalShards() {
-    _kind = ShuckleMessageKind::LOCAL_SHARDS;
+LocalShardsReq& RegistryReqContainer::setLocalShards() {
+    _kind = RegistryMessageKind::LOCAL_SHARDS;
     auto& x = _data.emplace<0>();
     return x;
 }
-const LocalCdcReq& ShuckleReqContainer::getLocalCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCAL_CDC, "%s != %s", _kind, ShuckleMessageKind::LOCAL_CDC);
+const LocalCdcReq& RegistryReqContainer::getLocalCdc() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_CDC, "%s != %s", _kind, RegistryMessageKind::LOCAL_CDC);
     return std::get<1>(_data);
 }
-LocalCdcReq& ShuckleReqContainer::setLocalCdc() {
-    _kind = ShuckleMessageKind::LOCAL_CDC;
+LocalCdcReq& RegistryReqContainer::setLocalCdc() {
+    _kind = RegistryMessageKind::LOCAL_CDC;
     auto& x = _data.emplace<1>();
     return x;
 }
-const InfoReq& ShuckleReqContainer::getInfo() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::INFO, "%s != %s", _kind, ShuckleMessageKind::INFO);
+const InfoReq& RegistryReqContainer::getInfo() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::INFO, "%s != %s", _kind, RegistryMessageKind::INFO);
     return std::get<2>(_data);
 }
-InfoReq& ShuckleReqContainer::setInfo() {
-    _kind = ShuckleMessageKind::INFO;
+InfoReq& RegistryReqContainer::setInfo() {
+    _kind = RegistryMessageKind::INFO;
     auto& x = _data.emplace<2>();
     return x;
 }
-const ShuckleReq& ShuckleReqContainer::getShuckle() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHUCKLE, "%s != %s", _kind, ShuckleMessageKind::SHUCKLE);
+const RegistryReq& RegistryReqContainer::getRegistry() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTRY, "%s != %s", _kind, RegistryMessageKind::REGISTRY);
     return std::get<3>(_data);
 }
-ShuckleReq& ShuckleReqContainer::setShuckle() {
-    _kind = ShuckleMessageKind::SHUCKLE;
+RegistryReq& RegistryReqContainer::setRegistry() {
+    _kind = RegistryMessageKind::REGISTRY;
     auto& x = _data.emplace<3>();
     return x;
 }
-const LocalChangedBlockServicesReq& ShuckleReqContainer::getLocalChangedBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES);
+const LocalChangedBlockServicesReq& RegistryReqContainer::getLocalChangedBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES);
     return std::get<4>(_data);
 }
-LocalChangedBlockServicesReq& ShuckleReqContainer::setLocalChangedBlockServices() {
-    _kind = ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES;
+LocalChangedBlockServicesReq& RegistryReqContainer::setLocalChangedBlockServices() {
+    _kind = RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES;
     auto& x = _data.emplace<4>();
     return x;
 }
-const CreateLocationReq& ShuckleReqContainer::getCreateLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CREATE_LOCATION, "%s != %s", _kind, ShuckleMessageKind::CREATE_LOCATION);
+const CreateLocationReq& RegistryReqContainer::getCreateLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CREATE_LOCATION, "%s != %s", _kind, RegistryMessageKind::CREATE_LOCATION);
     return std::get<5>(_data);
 }
-CreateLocationReq& ShuckleReqContainer::setCreateLocation() {
-    _kind = ShuckleMessageKind::CREATE_LOCATION;
+CreateLocationReq& RegistryReqContainer::setCreateLocation() {
+    _kind = RegistryMessageKind::CREATE_LOCATION;
     auto& x = _data.emplace<5>();
     return x;
 }
-const RenameLocationReq& ShuckleReqContainer::getRenameLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::RENAME_LOCATION, "%s != %s", _kind, ShuckleMessageKind::RENAME_LOCATION);
+const RenameLocationReq& RegistryReqContainer::getRenameLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::RENAME_LOCATION, "%s != %s", _kind, RegistryMessageKind::RENAME_LOCATION);
     return std::get<6>(_data);
 }
-RenameLocationReq& ShuckleReqContainer::setRenameLocation() {
-    _kind = ShuckleMessageKind::RENAME_LOCATION;
+RenameLocationReq& RegistryReqContainer::setRenameLocation() {
+    _kind = RegistryMessageKind::RENAME_LOCATION;
     auto& x = _data.emplace<6>();
     return x;
 }
-const LocationsReq& ShuckleReqContainer::getLocations() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCATIONS, "%s != %s", _kind, ShuckleMessageKind::LOCATIONS);
+const LocationsReq& RegistryReqContainer::getLocations() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCATIONS, "%s != %s", _kind, RegistryMessageKind::LOCATIONS);
     return std::get<7>(_data);
 }
-LocationsReq& ShuckleReqContainer::setLocations() {
-    _kind = ShuckleMessageKind::LOCATIONS;
+LocationsReq& RegistryReqContainer::setLocations() {
+    _kind = RegistryMessageKind::LOCATIONS;
     auto& x = _data.emplace<7>();
     return x;
 }
-const RegisterShardReq& ShuckleReqContainer::getRegisterShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
+const RegisterShardReq& RegistryReqContainer::getRegisterShard() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTER_SHARD, "%s != %s", _kind, RegistryMessageKind::REGISTER_SHARD);
     return std::get<8>(_data);
 }
-RegisterShardReq& ShuckleReqContainer::setRegisterShard() {
-    _kind = ShuckleMessageKind::REGISTER_SHARD;
+RegisterShardReq& RegistryReqContainer::setRegisterShard() {
+    _kind = RegistryMessageKind::REGISTER_SHARD;
     auto& x = _data.emplace<8>();
     return x;
 }
-const RegisterCdcReq& ShuckleReqContainer::getRegisterCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
+const RegisterCdcReq& RegistryReqContainer::getRegisterCdc() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTER_CDC, "%s != %s", _kind, RegistryMessageKind::REGISTER_CDC);
     return std::get<9>(_data);
 }
-RegisterCdcReq& ShuckleReqContainer::setRegisterCdc() {
-    _kind = ShuckleMessageKind::REGISTER_CDC;
+RegisterCdcReq& RegistryReqContainer::setRegisterCdc() {
+    _kind = RegistryMessageKind::REGISTER_CDC;
     auto& x = _data.emplace<9>();
     return x;
 }
-const SetBlockServiceFlagsReq& ShuckleReqContainer::getSetBlockServiceFlags() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS);
+const SetBlockServiceFlagsReq& RegistryReqContainer::getSetBlockServiceFlags() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS, "%s != %s", _kind, RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS);
     return std::get<10>(_data);
 }
-SetBlockServiceFlagsReq& ShuckleReqContainer::setSetBlockServiceFlags() {
-    _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS;
+SetBlockServiceFlagsReq& RegistryReqContainer::setSetBlockServiceFlags() {
+    _kind = RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS;
     auto& x = _data.emplace<10>();
     return x;
 }
-const RegisterBlockServicesReq& ShuckleReqContainer::getRegisterBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
+const RegisterBlockServicesReq& RegistryReqContainer::getRegisterBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::REGISTER_BLOCK_SERVICES);
     return std::get<11>(_data);
 }
-RegisterBlockServicesReq& ShuckleReqContainer::setRegisterBlockServices() {
-    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
+RegisterBlockServicesReq& RegistryReqContainer::setRegisterBlockServices() {
+    _kind = RegistryMessageKind::REGISTER_BLOCK_SERVICES;
     auto& x = _data.emplace<11>();
     return x;
 }
-const ChangedBlockServicesAtLocationReq& ShuckleReqContainer::getChangedBlockServicesAtLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION, "%s != %s", _kind, ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION);
+const ChangedBlockServicesAtLocationReq& RegistryReqContainer::getChangedBlockServicesAtLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION);
     return std::get<12>(_data);
 }
-ChangedBlockServicesAtLocationReq& ShuckleReqContainer::setChangedBlockServicesAtLocation() {
-    _kind = ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION;
+ChangedBlockServicesAtLocationReq& RegistryReqContainer::setChangedBlockServicesAtLocation() {
+    _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION;
     auto& x = _data.emplace<12>();
     return x;
 }
-const ShardsAtLocationReq& ShuckleReqContainer::getShardsAtLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS_AT_LOCATION, "%s != %s", _kind, ShuckleMessageKind::SHARDS_AT_LOCATION);
+const ShardsAtLocationReq& RegistryReqContainer::getShardsAtLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARDS_AT_LOCATION, "%s != %s", _kind, RegistryMessageKind::SHARDS_AT_LOCATION);
     return std::get<13>(_data);
 }
-ShardsAtLocationReq& ShuckleReqContainer::setShardsAtLocation() {
-    _kind = ShuckleMessageKind::SHARDS_AT_LOCATION;
+ShardsAtLocationReq& RegistryReqContainer::setShardsAtLocation() {
+    _kind = RegistryMessageKind::SHARDS_AT_LOCATION;
     auto& x = _data.emplace<13>();
     return x;
 }
-const CdcAtLocationReq& ShuckleReqContainer::getCdcAtLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_AT_LOCATION, "%s != %s", _kind, ShuckleMessageKind::CDC_AT_LOCATION);
+const CdcAtLocationReq& RegistryReqContainer::getCdcAtLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CDC_AT_LOCATION, "%s != %s", _kind, RegistryMessageKind::CDC_AT_LOCATION);
     return std::get<14>(_data);
 }
-CdcAtLocationReq& ShuckleReqContainer::setCdcAtLocation() {
-    _kind = ShuckleMessageKind::CDC_AT_LOCATION;
+CdcAtLocationReq& RegistryReqContainer::setCdcAtLocation() {
+    _kind = RegistryMessageKind::CDC_AT_LOCATION;
     auto& x = _data.emplace<14>();
     return x;
 }
-const ShardBlockServicesDEPRECATEDReq& ShuckleReqContainer::getShardBlockServicesDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
+const ShardBlockServicesDEPRECATEDReq& RegistryReqContainer::getShardBlockServicesDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
     return std::get<15>(_data);
 }
-ShardBlockServicesDEPRECATEDReq& ShuckleReqContainer::setShardBlockServicesDEPRECATED() {
-    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
+ShardBlockServicesDEPRECATEDReq& RegistryReqContainer::setShardBlockServicesDEPRECATED() {
+    _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<15>();
     return x;
 }
-const CdcReplicasDEPRECATEDReq& ShuckleReqContainer::getCdcReplicasDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED);
+const CdcReplicasDEPRECATEDReq& RegistryReqContainer::getCdcReplicasDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED);
     return std::get<16>(_data);
 }
-CdcReplicasDEPRECATEDReq& ShuckleReqContainer::setCdcReplicasDEPRECATED() {
-    _kind = ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED;
+CdcReplicasDEPRECATEDReq& RegistryReqContainer::setCdcReplicasDEPRECATED() {
+    _kind = RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<16>();
     return x;
 }
-const AllShardsReq& ShuckleReqContainer::getAllShards() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_SHARDS, "%s != %s", _kind, ShuckleMessageKind::ALL_SHARDS);
+const AllShardsReq& RegistryReqContainer::getAllShards() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_SHARDS, "%s != %s", _kind, RegistryMessageKind::ALL_SHARDS);
     return std::get<17>(_data);
 }
-AllShardsReq& ShuckleReqContainer::setAllShards() {
-    _kind = ShuckleMessageKind::ALL_SHARDS;
+AllShardsReq& RegistryReqContainer::setAllShards() {
+    _kind = RegistryMessageKind::ALL_SHARDS;
     auto& x = _data.emplace<17>();
     return x;
 }
-const DecommissionBlockServiceReq& ShuckleReqContainer::getDecommissionBlockService() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE, "%s != %s", _kind, ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE);
+const DecommissionBlockServiceReq& RegistryReqContainer::getDecommissionBlockService() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE, "%s != %s", _kind, RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE);
     return std::get<18>(_data);
 }
-DecommissionBlockServiceReq& ShuckleReqContainer::setDecommissionBlockService() {
-    _kind = ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE;
+DecommissionBlockServiceReq& RegistryReqContainer::setDecommissionBlockService() {
+    _kind = RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE;
     auto& x = _data.emplace<18>();
     return x;
 }
-const MoveShardLeaderReq& ShuckleReqContainer::getMoveShardLeader() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, ShuckleMessageKind::MOVE_SHARD_LEADER);
+const MoveShardLeaderReq& RegistryReqContainer::getMoveShardLeader() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_SHARD_LEADER);
     return std::get<19>(_data);
 }
-MoveShardLeaderReq& ShuckleReqContainer::setMoveShardLeader() {
-    _kind = ShuckleMessageKind::MOVE_SHARD_LEADER;
+MoveShardLeaderReq& RegistryReqContainer::setMoveShardLeader() {
+    _kind = RegistryMessageKind::MOVE_SHARD_LEADER;
     auto& x = _data.emplace<19>();
     return x;
 }
-const ClearShardInfoReq& ShuckleReqContainer::getClearShardInfo() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_SHARD_INFO);
+const ClearShardInfoReq& RegistryReqContainer::getClearShardInfo() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_SHARD_INFO);
     return std::get<20>(_data);
 }
-ClearShardInfoReq& ShuckleReqContainer::setClearShardInfo() {
-    _kind = ShuckleMessageKind::CLEAR_SHARD_INFO;
+ClearShardInfoReq& RegistryReqContainer::setClearShardInfo() {
+    _kind = RegistryMessageKind::CLEAR_SHARD_INFO;
     auto& x = _data.emplace<20>();
     return x;
 }
-const ShardBlockServicesReq& ShuckleReqContainer::getShardBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
+const ShardBlockServicesReq& RegistryReqContainer::getShardBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES);
     return std::get<21>(_data);
 }
-ShardBlockServicesReq& ShuckleReqContainer::setShardBlockServices() {
-    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
+ShardBlockServicesReq& RegistryReqContainer::setShardBlockServices() {
+    _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES;
     auto& x = _data.emplace<21>();
     return x;
 }
-const AllCdcReq& ShuckleReqContainer::getAllCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_CDC, "%s != %s", _kind, ShuckleMessageKind::ALL_CDC);
+const AllCdcReq& RegistryReqContainer::getAllCdc() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_CDC, "%s != %s", _kind, RegistryMessageKind::ALL_CDC);
     return std::get<22>(_data);
 }
-AllCdcReq& ShuckleReqContainer::setAllCdc() {
-    _kind = ShuckleMessageKind::ALL_CDC;
+AllCdcReq& RegistryReqContainer::setAllCdc() {
+    _kind = RegistryMessageKind::ALL_CDC;
     auto& x = _data.emplace<22>();
     return x;
 }
-const EraseDecommissionedBlockReq& ShuckleReqContainer::getEraseDecommissionedBlock() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK);
+const EraseDecommissionedBlockReq& RegistryReqContainer::getEraseDecommissionedBlock() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK);
     return std::get<23>(_data);
 }
-EraseDecommissionedBlockReq& ShuckleReqContainer::setEraseDecommissionedBlock() {
-    _kind = ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK;
+EraseDecommissionedBlockReq& RegistryReqContainer::setEraseDecommissionedBlock() {
+    _kind = RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK;
     auto& x = _data.emplace<23>();
     return x;
 }
-const AllBlockServicesDeprecatedReq& ShuckleReqContainer::getAllBlockServicesDeprecated() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
+const AllBlockServicesDeprecatedReq& RegistryReqContainer::getAllBlockServicesDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
     return std::get<24>(_data);
 }
-AllBlockServicesDeprecatedReq& ShuckleReqContainer::setAllBlockServicesDeprecated() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
+AllBlockServicesDeprecatedReq& RegistryReqContainer::setAllBlockServicesDeprecated() {
+    _kind = RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
     auto& x = _data.emplace<24>();
     return x;
 }
-const MoveCdcLeaderReq& ShuckleReqContainer::getMoveCdcLeader() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::MOVE_CDC_LEADER, "%s != %s", _kind, ShuckleMessageKind::MOVE_CDC_LEADER);
+const MoveCdcLeaderReq& RegistryReqContainer::getMoveCdcLeader() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_CDC_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_CDC_LEADER);
     return std::get<25>(_data);
 }
-MoveCdcLeaderReq& ShuckleReqContainer::setMoveCdcLeader() {
-    _kind = ShuckleMessageKind::MOVE_CDC_LEADER;
+MoveCdcLeaderReq& RegistryReqContainer::setMoveCdcLeader() {
+    _kind = RegistryMessageKind::MOVE_CDC_LEADER;
     auto& x = _data.emplace<25>();
     return x;
 }
-const ClearCdcInfoReq& ShuckleReqContainer::getClearCdcInfo() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_CDC_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_CDC_INFO);
+const ClearCdcInfoReq& RegistryReqContainer::getClearCdcInfo() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_CDC_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_CDC_INFO);
     return std::get<26>(_data);
 }
-ClearCdcInfoReq& ShuckleReqContainer::setClearCdcInfo() {
-    _kind = ShuckleMessageKind::CLEAR_CDC_INFO;
+ClearCdcInfoReq& RegistryReqContainer::setClearCdcInfo() {
+    _kind = RegistryMessageKind::CLEAR_CDC_INFO;
     auto& x = _data.emplace<26>();
     return x;
 }
-const UpdateBlockServicePathReq& ShuckleReqContainer::getUpdateBlockServicePath() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH);
+const UpdateBlockServicePathReq& RegistryReqContainer::getUpdateBlockServicePath() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH);
     return std::get<27>(_data);
 }
-UpdateBlockServicePathReq& ShuckleReqContainer::setUpdateBlockServicePath() {
-    _kind = ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH;
+UpdateBlockServicePathReq& RegistryReqContainer::setUpdateBlockServicePath() {
+    _kind = RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH;
     auto& x = _data.emplace<27>();
     return x;
 }
-ShuckleReqContainer::ShuckleReqContainer() {
+RegistryReqContainer::RegistryReqContainer() {
     clear();
 }
 
-ShuckleReqContainer::ShuckleReqContainer(const ShuckleReqContainer& other) {
+RegistryReqContainer::RegistryReqContainer(const RegistryReqContainer& other) {
     *this = other;
 }
 
-ShuckleReqContainer::ShuckleReqContainer(ShuckleReqContainer&& other) {
+RegistryReqContainer::RegistryReqContainer(RegistryReqContainer&& other) {
     _data = std::move(other._data);
     _kind = other._kind;
-    other._kind = ShuckleMessageKind::EMPTY;
+    other._kind = RegistryMessageKind::EMPTY;
 }
 
-void ShuckleReqContainer::operator=(const ShuckleReqContainer& other) {
-    if (other.kind() == ShuckleMessageKind::EMPTY) { clear(); return; }
+void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
+    if (other.kind() == RegistryMessageKind::EMPTY) { clear(); return; }
     switch (other.kind()) {
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         setLocalShards() = other.getLocalShards();
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         setLocalCdc() = other.getLocalCdc();
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         setInfo() = other.getInfo();
         break;
-    case ShuckleMessageKind::SHUCKLE:
-        setShuckle() = other.getShuckle();
+    case RegistryMessageKind::REGISTRY:
+        setRegistry() = other.getRegistry();
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         setLocalChangedBlockServices() = other.getLocalChangedBlockServices();
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         setCreateLocation() = other.getCreateLocation();
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         setRenameLocation() = other.getRenameLocation();
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         setLocations() = other.getLocations();
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         setRegisterShard() = other.getRegisterShard();
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         setRegisterCdc() = other.getRegisterCdc();
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         setSetBlockServiceFlags() = other.getSetBlockServiceFlags();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         setRegisterBlockServices() = other.getRegisterBlockServices();
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         setChangedBlockServicesAtLocation() = other.getChangedBlockServicesAtLocation();
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         setShardsAtLocation() = other.getShardsAtLocation();
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         setCdcAtLocation() = other.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         setShardBlockServicesDEPRECATED() = other.getShardBlockServicesDEPRECATED();
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         setCdcReplicasDEPRECATED() = other.getCdcReplicasDEPRECATED();
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         setAllShards() = other.getAllShards();
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         setDecommissionBlockService() = other.getDecommissionBlockService();
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         setMoveShardLeader() = other.getMoveShardLeader();
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         setClearShardInfo() = other.getClearShardInfo();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         setShardBlockServices() = other.getShardBlockServices();
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         setAllBlockServicesDeprecated() = other.getAllBlockServicesDeprecated();
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         setMoveCdcLeader() = other.getMoveCdcLeader();
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         setClearCdcInfo() = other.getClearCdcInfo();
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         setUpdateBlockServicePath() = other.getUpdateBlockServicePath();
         break;
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", other.kind());
     }
 }
 
-void ShuckleReqContainer::operator=(ShuckleReqContainer&& other) {
+void RegistryReqContainer::operator=(RegistryReqContainer&& other) {
     _data = std::move(other._data);
     _kind = other._kind;
-    other._kind = ShuckleMessageKind::EMPTY;
+    other._kind = RegistryMessageKind::EMPTY;
 }
 
-size_t ShuckleReqContainer::packedSize() const {
+size_t RegistryReqContainer::packedSize() const {
     switch (_kind) {
-    case ShuckleMessageKind::LOCAL_SHARDS:
-        return sizeof(ShuckleMessageKind) + std::get<0>(_data).packedSize();
-    case ShuckleMessageKind::LOCAL_CDC:
-        return sizeof(ShuckleMessageKind) + std::get<1>(_data).packedSize();
-    case ShuckleMessageKind::INFO:
-        return sizeof(ShuckleMessageKind) + std::get<2>(_data).packedSize();
-    case ShuckleMessageKind::SHUCKLE:
-        return sizeof(ShuckleMessageKind) + std::get<3>(_data).packedSize();
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
-        return sizeof(ShuckleMessageKind) + std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::CREATE_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<5>(_data).packedSize();
-    case ShuckleMessageKind::RENAME_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<6>(_data).packedSize();
-    case ShuckleMessageKind::LOCATIONS:
-        return sizeof(ShuckleMessageKind) + std::get<7>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD:
-        return sizeof(ShuckleMessageKind) + std::get<8>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC:
-        return sizeof(ShuckleMessageKind) + std::get<9>(_data).packedSize();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
-        return sizeof(ShuckleMessageKind) + std::get<10>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        return sizeof(ShuckleMessageKind) + std::get<11>(_data).packedSize();
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<12>(_data).packedSize();
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<13>(_data).packedSize();
-    case ShuckleMessageKind::CDC_AT_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<14>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return sizeof(ShuckleMessageKind) + std::get<15>(_data).packedSize();
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        return sizeof(ShuckleMessageKind) + std::get<16>(_data).packedSize();
-    case ShuckleMessageKind::ALL_SHARDS:
-        return sizeof(ShuckleMessageKind) + std::get<17>(_data).packedSize();
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
-        return sizeof(ShuckleMessageKind) + std::get<18>(_data).packedSize();
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
-        return sizeof(ShuckleMessageKind) + std::get<19>(_data).packedSize();
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
-        return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
-    case ShuckleMessageKind::ALL_CDC:
-        return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
-        return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        return sizeof(ShuckleMessageKind) + std::get<24>(_data).packedSize();
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
-        return sizeof(ShuckleMessageKind) + std::get<25>(_data).packedSize();
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
-        return sizeof(ShuckleMessageKind) + std::get<26>(_data).packedSize();
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
-        return sizeof(ShuckleMessageKind) + std::get<27>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_SHARDS:
+        return sizeof(RegistryMessageKind) + std::get<0>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_CDC:
+        return sizeof(RegistryMessageKind) + std::get<1>(_data).packedSize();
+    case RegistryMessageKind::INFO:
+        return sizeof(RegistryMessageKind) + std::get<2>(_data).packedSize();
+    case RegistryMessageKind::REGISTRY:
+        return sizeof(RegistryMessageKind) + std::get<3>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<4>(_data).packedSize();
+    case RegistryMessageKind::CREATE_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<5>(_data).packedSize();
+    case RegistryMessageKind::RENAME_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<6>(_data).packedSize();
+    case RegistryMessageKind::LOCATIONS:
+        return sizeof(RegistryMessageKind) + std::get<7>(_data).packedSize();
+    case RegistryMessageKind::REGISTER_SHARD:
+        return sizeof(RegistryMessageKind) + std::get<8>(_data).packedSize();
+    case RegistryMessageKind::REGISTER_CDC:
+        return sizeof(RegistryMessageKind) + std::get<9>(_data).packedSize();
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
+        return sizeof(RegistryMessageKind) + std::get<10>(_data).packedSize();
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<11>(_data).packedSize();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<12>(_data).packedSize();
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<13>(_data).packedSize();
+    case RegistryMessageKind::CDC_AT_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<14>(_data).packedSize();
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        return sizeof(RegistryMessageKind) + std::get<15>(_data).packedSize();
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+        return sizeof(RegistryMessageKind) + std::get<16>(_data).packedSize();
+    case RegistryMessageKind::ALL_SHARDS:
+        return sizeof(RegistryMessageKind) + std::get<17>(_data).packedSize();
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
+        return sizeof(RegistryMessageKind) + std::get<18>(_data).packedSize();
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
+        return sizeof(RegistryMessageKind) + std::get<19>(_data).packedSize();
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
+        return sizeof(RegistryMessageKind) + std::get<20>(_data).packedSize();
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<21>(_data).packedSize();
+    case RegistryMessageKind::ALL_CDC:
+        return sizeof(RegistryMessageKind) + std::get<22>(_data).packedSize();
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+        return sizeof(RegistryMessageKind) + std::get<23>(_data).packedSize();
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        return sizeof(RegistryMessageKind) + std::get<24>(_data).packedSize();
+    case RegistryMessageKind::MOVE_CDC_LEADER:
+        return sizeof(RegistryMessageKind) + std::get<25>(_data).packedSize();
+    case RegistryMessageKind::CLEAR_CDC_INFO:
+        return sizeof(RegistryMessageKind) + std::get<26>(_data).packedSize();
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        return sizeof(RegistryMessageKind) + std::get<27>(_data).packedSize();
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-void ShuckleReqContainer::pack(BincodeBuf& buf) const {
-    buf.packScalar<ShuckleMessageKind>(_kind);
+void RegistryReqContainer::pack(BincodeBuf& buf) const {
+    buf.packScalar<RegistryMessageKind>(_kind);
     switch (_kind) {
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         std::get<0>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         std::get<1>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         std::get<2>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHUCKLE:
+    case RegistryMessageKind::REGISTRY:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         std::get<6>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         std::get<7>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         std::get<8>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         std::get<9>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<10>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<11>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         std::get<12>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         std::get<13>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         std::get<14>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         std::get<15>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         std::get<16>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         std::get<17>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         std::get<18>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         std::get<19>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         std::get<20>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         std::get<21>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         std::get<22>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<23>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         std::get<24>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         std::get<25>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         std::get<26>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         std::get<27>(_data).pack(buf);
         break;
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-void ShuckleReqContainer::unpack(BincodeBuf& buf) {
-    _kind = buf.unpackScalar<ShuckleMessageKind>();
+void RegistryReqContainer::unpack(BincodeBuf& buf) {
+    _kind = buf.unpackScalar<RegistryMessageKind>();
     switch (_kind) {
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         _data.emplace<0>().unpack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         _data.emplace<1>().unpack(buf);
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         _data.emplace<2>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHUCKLE:
+    case RegistryMessageKind::REGISTRY:
         _data.emplace<3>().unpack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         _data.emplace<4>().unpack(buf);
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         _data.emplace<5>().unpack(buf);
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         _data.emplace<6>().unpack(buf);
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         _data.emplace<7>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         _data.emplace<8>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         _data.emplace<9>().unpack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         _data.emplace<10>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         _data.emplace<11>().unpack(buf);
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         _data.emplace<12>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         _data.emplace<13>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         _data.emplace<14>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         _data.emplace<15>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         _data.emplace<16>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         _data.emplace<25>().unpack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         _data.emplace<26>().unpack(buf);
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         _data.emplace<27>().unpack(buf);
         break;
     default:
-        throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-bool ShuckleReqContainer::operator==(const ShuckleReqContainer& other) const {
+bool RegistryReqContainer::operator==(const RegistryReqContainer& other) const {
     if (_kind != other.kind()) { return false; }
-    if (_kind == ShuckleMessageKind::EMPTY) { return true; }
+    if (_kind == RegistryMessageKind::EMPTY) { return true; }
     switch (_kind) {
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         return getLocalShards() == other.getLocalShards();
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         return getLocalCdc() == other.getLocalCdc();
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         return getInfo() == other.getInfo();
-    case ShuckleMessageKind::SHUCKLE:
-        return getShuckle() == other.getShuckle();
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTRY:
+        return getRegistry() == other.getRegistry();
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         return getLocalChangedBlockServices() == other.getLocalChangedBlockServices();
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         return getCreateLocation() == other.getCreateLocation();
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         return getRenameLocation() == other.getRenameLocation();
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         return getLocations() == other.getLocations();
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         return getRegisterShard() == other.getRegisterShard();
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         return getRegisterCdc() == other.getRegisterCdc();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         return getSetBlockServiceFlags() == other.getSetBlockServiceFlags();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         return getRegisterBlockServices() == other.getRegisterBlockServices();
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         return getChangedBlockServicesAtLocation() == other.getChangedBlockServicesAtLocation();
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         return getShardsAtLocation() == other.getShardsAtLocation();
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         return getCdcAtLocation() == other.getCdcAtLocation();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         return getShardBlockServicesDEPRECATED() == other.getShardBlockServicesDEPRECATED();
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         return getCdcReplicasDEPRECATED() == other.getCdcReplicasDEPRECATED();
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         return getAllShards() == other.getAllShards();
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         return getDecommissionBlockService() == other.getDecommissionBlockService();
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         return getMoveShardLeader() == other.getMoveShardLeader();
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         return getClearShardInfo() == other.getClearShardInfo();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         return getShardBlockServices() == other.getShardBlockServices();
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         return getAllBlockServicesDeprecated() == other.getAllBlockServicesDeprecated();
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         return getMoveCdcLeader() == other.getMoveCdcLeader();
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         return getClearCdcInfo() == other.getClearCdcInfo();
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         return getUpdateBlockServicePath() == other.getUpdateBlockServicePath();
     default:
-        throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-std::ostream& operator<<(std::ostream& out, const ShuckleReqContainer& x) {
+std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
     switch (x.kind()) {
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         out << x.getLocalShards();
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         out << x.getLocalCdc();
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         out << x.getInfo();
         break;
-    case ShuckleMessageKind::SHUCKLE:
-        out << x.getShuckle();
+    case RegistryMessageKind::REGISTRY:
+        out << x.getRegistry();
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         out << x.getLocalChangedBlockServices();
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         out << x.getCreateLocation();
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         out << x.getRenameLocation();
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         out << x.getLocations();
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         out << x.getRegisterCdc();
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         out << x.getSetBlockServiceFlags();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         out << x.getChangedBlockServicesAtLocation();
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         out << x.getShardsAtLocation();
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         out << x.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         out << x.getShardBlockServicesDEPRECATED();
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         out << x.getCdcReplicasDEPRECATED();
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         out << x.getAllShards();
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         out << x.getDecommissionBlockService();
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         out << x.getMoveShardLeader();
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         out << x.getClearShardInfo();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         out << x.getShardBlockServices();
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         out << x.getAllCdc();
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         out << x.getAllBlockServicesDeprecated();
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         out << x.getMoveCdcLeader();
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         out << x.getClearCdcInfo();
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         out << x.getUpdateBlockServicePath();
         break;
-    case ShuckleMessageKind::EMPTY:
+    case RegistryMessageKind::EMPTY:
         out << "EMPTY";
         break;
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", x.kind());
     }
     return out;
 }
 
-const TernError& ShuckleRespContainer::getError() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ERROR, "%s != %s", _kind, ShuckleMessageKind::ERROR);
+const TernError& RegistryRespContainer::getError() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ERROR, "%s != %s", _kind, RegistryMessageKind::ERROR);
     return std::get<0>(_data);
 }
-TernError& ShuckleRespContainer::setError() {
-    _kind = ShuckleMessageKind::ERROR;
+TernError& RegistryRespContainer::setError() {
+    _kind = RegistryMessageKind::ERROR;
     auto& x = _data.emplace<0>();
     return x;
 }
-const LocalShardsResp& ShuckleRespContainer::getLocalShards() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCAL_SHARDS, "%s != %s", _kind, ShuckleMessageKind::LOCAL_SHARDS);
+const LocalShardsResp& RegistryRespContainer::getLocalShards() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_SHARDS, "%s != %s", _kind, RegistryMessageKind::LOCAL_SHARDS);
     return std::get<1>(_data);
 }
-LocalShardsResp& ShuckleRespContainer::setLocalShards() {
-    _kind = ShuckleMessageKind::LOCAL_SHARDS;
+LocalShardsResp& RegistryRespContainer::setLocalShards() {
+    _kind = RegistryMessageKind::LOCAL_SHARDS;
     auto& x = _data.emplace<1>();
     return x;
 }
-const LocalCdcResp& ShuckleRespContainer::getLocalCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCAL_CDC, "%s != %s", _kind, ShuckleMessageKind::LOCAL_CDC);
+const LocalCdcResp& RegistryRespContainer::getLocalCdc() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_CDC, "%s != %s", _kind, RegistryMessageKind::LOCAL_CDC);
     return std::get<2>(_data);
 }
-LocalCdcResp& ShuckleRespContainer::setLocalCdc() {
-    _kind = ShuckleMessageKind::LOCAL_CDC;
+LocalCdcResp& RegistryRespContainer::setLocalCdc() {
+    _kind = RegistryMessageKind::LOCAL_CDC;
     auto& x = _data.emplace<2>();
     return x;
 }
-const InfoResp& ShuckleRespContainer::getInfo() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::INFO, "%s != %s", _kind, ShuckleMessageKind::INFO);
+const InfoResp& RegistryRespContainer::getInfo() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::INFO, "%s != %s", _kind, RegistryMessageKind::INFO);
     return std::get<3>(_data);
 }
-InfoResp& ShuckleRespContainer::setInfo() {
-    _kind = ShuckleMessageKind::INFO;
+InfoResp& RegistryRespContainer::setInfo() {
+    _kind = RegistryMessageKind::INFO;
     auto& x = _data.emplace<3>();
     return x;
 }
-const ShuckleResp& ShuckleRespContainer::getShuckle() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHUCKLE, "%s != %s", _kind, ShuckleMessageKind::SHUCKLE);
+const RegistryResp& RegistryRespContainer::getRegistry() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTRY, "%s != %s", _kind, RegistryMessageKind::REGISTRY);
     return std::get<4>(_data);
 }
-ShuckleResp& ShuckleRespContainer::setShuckle() {
-    _kind = ShuckleMessageKind::SHUCKLE;
+RegistryResp& RegistryRespContainer::setRegistry() {
+    _kind = RegistryMessageKind::REGISTRY;
     auto& x = _data.emplace<4>();
     return x;
 }
-const LocalChangedBlockServicesResp& ShuckleRespContainer::getLocalChangedBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES);
+const LocalChangedBlockServicesResp& RegistryRespContainer::getLocalChangedBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES);
     return std::get<5>(_data);
 }
-LocalChangedBlockServicesResp& ShuckleRespContainer::setLocalChangedBlockServices() {
-    _kind = ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES;
+LocalChangedBlockServicesResp& RegistryRespContainer::setLocalChangedBlockServices() {
+    _kind = RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES;
     auto& x = _data.emplace<5>();
     return x;
 }
-const CreateLocationResp& ShuckleRespContainer::getCreateLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CREATE_LOCATION, "%s != %s", _kind, ShuckleMessageKind::CREATE_LOCATION);
+const CreateLocationResp& RegistryRespContainer::getCreateLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CREATE_LOCATION, "%s != %s", _kind, RegistryMessageKind::CREATE_LOCATION);
     return std::get<6>(_data);
 }
-CreateLocationResp& ShuckleRespContainer::setCreateLocation() {
-    _kind = ShuckleMessageKind::CREATE_LOCATION;
+CreateLocationResp& RegistryRespContainer::setCreateLocation() {
+    _kind = RegistryMessageKind::CREATE_LOCATION;
     auto& x = _data.emplace<6>();
     return x;
 }
-const RenameLocationResp& ShuckleRespContainer::getRenameLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::RENAME_LOCATION, "%s != %s", _kind, ShuckleMessageKind::RENAME_LOCATION);
+const RenameLocationResp& RegistryRespContainer::getRenameLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::RENAME_LOCATION, "%s != %s", _kind, RegistryMessageKind::RENAME_LOCATION);
     return std::get<7>(_data);
 }
-RenameLocationResp& ShuckleRespContainer::setRenameLocation() {
-    _kind = ShuckleMessageKind::RENAME_LOCATION;
+RenameLocationResp& RegistryRespContainer::setRenameLocation() {
+    _kind = RegistryMessageKind::RENAME_LOCATION;
     auto& x = _data.emplace<7>();
     return x;
 }
-const LocationsResp& ShuckleRespContainer::getLocations() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::LOCATIONS, "%s != %s", _kind, ShuckleMessageKind::LOCATIONS);
+const LocationsResp& RegistryRespContainer::getLocations() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCATIONS, "%s != %s", _kind, RegistryMessageKind::LOCATIONS);
     return std::get<8>(_data);
 }
-LocationsResp& ShuckleRespContainer::setLocations() {
-    _kind = ShuckleMessageKind::LOCATIONS;
+LocationsResp& RegistryRespContainer::setLocations() {
+    _kind = RegistryMessageKind::LOCATIONS;
     auto& x = _data.emplace<8>();
     return x;
 }
-const RegisterShardResp& ShuckleRespContainer::getRegisterShard() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_SHARD, "%s != %s", _kind, ShuckleMessageKind::REGISTER_SHARD);
+const RegisterShardResp& RegistryRespContainer::getRegisterShard() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTER_SHARD, "%s != %s", _kind, RegistryMessageKind::REGISTER_SHARD);
     return std::get<9>(_data);
 }
-RegisterShardResp& ShuckleRespContainer::setRegisterShard() {
-    _kind = ShuckleMessageKind::REGISTER_SHARD;
+RegisterShardResp& RegistryRespContainer::setRegisterShard() {
+    _kind = RegistryMessageKind::REGISTER_SHARD;
     auto& x = _data.emplace<9>();
     return x;
 }
-const RegisterCdcResp& ShuckleRespContainer::getRegisterCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_CDC, "%s != %s", _kind, ShuckleMessageKind::REGISTER_CDC);
+const RegisterCdcResp& RegistryRespContainer::getRegisterCdc() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTER_CDC, "%s != %s", _kind, RegistryMessageKind::REGISTER_CDC);
     return std::get<10>(_data);
 }
-RegisterCdcResp& ShuckleRespContainer::setRegisterCdc() {
-    _kind = ShuckleMessageKind::REGISTER_CDC;
+RegisterCdcResp& RegistryRespContainer::setRegisterCdc() {
+    _kind = RegistryMessageKind::REGISTER_CDC;
     auto& x = _data.emplace<10>();
     return x;
 }
-const SetBlockServiceFlagsResp& ShuckleRespContainer::getSetBlockServiceFlags() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS, "%s != %s", _kind, ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS);
+const SetBlockServiceFlagsResp& RegistryRespContainer::getSetBlockServiceFlags() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS, "%s != %s", _kind, RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS);
     return std::get<11>(_data);
 }
-SetBlockServiceFlagsResp& ShuckleRespContainer::setSetBlockServiceFlags() {
-    _kind = ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS;
+SetBlockServiceFlagsResp& RegistryRespContainer::setSetBlockServiceFlags() {
+    _kind = RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS;
     auto& x = _data.emplace<11>();
     return x;
 }
-const RegisterBlockServicesResp& ShuckleRespContainer::getRegisterBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::REGISTER_BLOCK_SERVICES);
+const RegisterBlockServicesResp& RegistryRespContainer::getRegisterBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::REGISTER_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::REGISTER_BLOCK_SERVICES);
     return std::get<12>(_data);
 }
-RegisterBlockServicesResp& ShuckleRespContainer::setRegisterBlockServices() {
-    _kind = ShuckleMessageKind::REGISTER_BLOCK_SERVICES;
+RegisterBlockServicesResp& RegistryRespContainer::setRegisterBlockServices() {
+    _kind = RegistryMessageKind::REGISTER_BLOCK_SERVICES;
     auto& x = _data.emplace<12>();
     return x;
 }
-const ChangedBlockServicesAtLocationResp& ShuckleRespContainer::getChangedBlockServicesAtLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION, "%s != %s", _kind, ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION);
+const ChangedBlockServicesAtLocationResp& RegistryRespContainer::getChangedBlockServicesAtLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION);
     return std::get<13>(_data);
 }
-ChangedBlockServicesAtLocationResp& ShuckleRespContainer::setChangedBlockServicesAtLocation() {
-    _kind = ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION;
+ChangedBlockServicesAtLocationResp& RegistryRespContainer::setChangedBlockServicesAtLocation() {
+    _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION;
     auto& x = _data.emplace<13>();
     return x;
 }
-const ShardsAtLocationResp& ShuckleRespContainer::getShardsAtLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARDS_AT_LOCATION, "%s != %s", _kind, ShuckleMessageKind::SHARDS_AT_LOCATION);
+const ShardsAtLocationResp& RegistryRespContainer::getShardsAtLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARDS_AT_LOCATION, "%s != %s", _kind, RegistryMessageKind::SHARDS_AT_LOCATION);
     return std::get<14>(_data);
 }
-ShardsAtLocationResp& ShuckleRespContainer::setShardsAtLocation() {
-    _kind = ShuckleMessageKind::SHARDS_AT_LOCATION;
+ShardsAtLocationResp& RegistryRespContainer::setShardsAtLocation() {
+    _kind = RegistryMessageKind::SHARDS_AT_LOCATION;
     auto& x = _data.emplace<14>();
     return x;
 }
-const CdcAtLocationResp& ShuckleRespContainer::getCdcAtLocation() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_AT_LOCATION, "%s != %s", _kind, ShuckleMessageKind::CDC_AT_LOCATION);
+const CdcAtLocationResp& RegistryRespContainer::getCdcAtLocation() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CDC_AT_LOCATION, "%s != %s", _kind, RegistryMessageKind::CDC_AT_LOCATION);
     return std::get<15>(_data);
 }
-CdcAtLocationResp& ShuckleRespContainer::setCdcAtLocation() {
-    _kind = ShuckleMessageKind::CDC_AT_LOCATION;
+CdcAtLocationResp& RegistryRespContainer::setCdcAtLocation() {
+    _kind = RegistryMessageKind::CDC_AT_LOCATION;
     auto& x = _data.emplace<15>();
     return x;
 }
-const ShardBlockServicesDEPRECATEDResp& ShuckleRespContainer::getShardBlockServicesDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
+const ShardBlockServicesDEPRECATEDResp& RegistryRespContainer::getShardBlockServicesDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
     return std::get<16>(_data);
 }
-ShardBlockServicesDEPRECATEDResp& ShuckleRespContainer::setShardBlockServicesDEPRECATED() {
-    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
+ShardBlockServicesDEPRECATEDResp& RegistryRespContainer::setShardBlockServicesDEPRECATED() {
+    _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<16>();
     return x;
 }
-const CdcReplicasDEPRECATEDResp& ShuckleRespContainer::getCdcReplicasDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED);
+const CdcReplicasDEPRECATEDResp& RegistryRespContainer::getCdcReplicasDEPRECATED() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED);
     return std::get<17>(_data);
 }
-CdcReplicasDEPRECATEDResp& ShuckleRespContainer::setCdcReplicasDEPRECATED() {
-    _kind = ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED;
+CdcReplicasDEPRECATEDResp& RegistryRespContainer::setCdcReplicasDEPRECATED() {
+    _kind = RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED;
     auto& x = _data.emplace<17>();
     return x;
 }
-const AllShardsResp& ShuckleRespContainer::getAllShards() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_SHARDS, "%s != %s", _kind, ShuckleMessageKind::ALL_SHARDS);
+const AllShardsResp& RegistryRespContainer::getAllShards() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_SHARDS, "%s != %s", _kind, RegistryMessageKind::ALL_SHARDS);
     return std::get<18>(_data);
 }
-AllShardsResp& ShuckleRespContainer::setAllShards() {
-    _kind = ShuckleMessageKind::ALL_SHARDS;
+AllShardsResp& RegistryRespContainer::setAllShards() {
+    _kind = RegistryMessageKind::ALL_SHARDS;
     auto& x = _data.emplace<18>();
     return x;
 }
-const DecommissionBlockServiceResp& ShuckleRespContainer::getDecommissionBlockService() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE, "%s != %s", _kind, ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE);
+const DecommissionBlockServiceResp& RegistryRespContainer::getDecommissionBlockService() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE, "%s != %s", _kind, RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE);
     return std::get<19>(_data);
 }
-DecommissionBlockServiceResp& ShuckleRespContainer::setDecommissionBlockService() {
-    _kind = ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE;
+DecommissionBlockServiceResp& RegistryRespContainer::setDecommissionBlockService() {
+    _kind = RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE;
     auto& x = _data.emplace<19>();
     return x;
 }
-const MoveShardLeaderResp& ShuckleRespContainer::getMoveShardLeader() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, ShuckleMessageKind::MOVE_SHARD_LEADER);
+const MoveShardLeaderResp& RegistryRespContainer::getMoveShardLeader() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_SHARD_LEADER);
     return std::get<20>(_data);
 }
-MoveShardLeaderResp& ShuckleRespContainer::setMoveShardLeader() {
-    _kind = ShuckleMessageKind::MOVE_SHARD_LEADER;
+MoveShardLeaderResp& RegistryRespContainer::setMoveShardLeader() {
+    _kind = RegistryMessageKind::MOVE_SHARD_LEADER;
     auto& x = _data.emplace<20>();
     return x;
 }
-const ClearShardInfoResp& ShuckleRespContainer::getClearShardInfo() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_SHARD_INFO);
+const ClearShardInfoResp& RegistryRespContainer::getClearShardInfo() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_SHARD_INFO);
     return std::get<21>(_data);
 }
-ClearShardInfoResp& ShuckleRespContainer::setClearShardInfo() {
-    _kind = ShuckleMessageKind::CLEAR_SHARD_INFO;
+ClearShardInfoResp& RegistryRespContainer::setClearShardInfo() {
+    _kind = RegistryMessageKind::CLEAR_SHARD_INFO;
     auto& x = _data.emplace<21>();
     return x;
 }
-const ShardBlockServicesResp& ShuckleRespContainer::getShardBlockServices() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, ShuckleMessageKind::SHARD_BLOCK_SERVICES);
+const ShardBlockServicesResp& RegistryRespContainer::getShardBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES);
     return std::get<22>(_data);
 }
-ShardBlockServicesResp& ShuckleRespContainer::setShardBlockServices() {
-    _kind = ShuckleMessageKind::SHARD_BLOCK_SERVICES;
+ShardBlockServicesResp& RegistryRespContainer::setShardBlockServices() {
+    _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES;
     auto& x = _data.emplace<22>();
     return x;
 }
-const AllCdcResp& ShuckleRespContainer::getAllCdc() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_CDC, "%s != %s", _kind, ShuckleMessageKind::ALL_CDC);
+const AllCdcResp& RegistryRespContainer::getAllCdc() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_CDC, "%s != %s", _kind, RegistryMessageKind::ALL_CDC);
     return std::get<23>(_data);
 }
-AllCdcResp& ShuckleRespContainer::setAllCdc() {
-    _kind = ShuckleMessageKind::ALL_CDC;
+AllCdcResp& RegistryRespContainer::setAllCdc() {
+    _kind = RegistryMessageKind::ALL_CDC;
     auto& x = _data.emplace<23>();
     return x;
 }
-const EraseDecommissionedBlockResp& ShuckleRespContainer::getEraseDecommissionedBlock() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK);
+const EraseDecommissionedBlockResp& RegistryRespContainer::getEraseDecommissionedBlock() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK);
     return std::get<24>(_data);
 }
-EraseDecommissionedBlockResp& ShuckleRespContainer::setEraseDecommissionedBlock() {
-    _kind = ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK;
+EraseDecommissionedBlockResp& RegistryRespContainer::setEraseDecommissionedBlock() {
+    _kind = RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK;
     auto& x = _data.emplace<24>();
     return x;
 }
-const AllBlockServicesDeprecatedResp& ShuckleRespContainer::getAllBlockServicesDeprecated() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
+const AllBlockServicesDeprecatedResp& RegistryRespContainer::getAllBlockServicesDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
     return std::get<25>(_data);
 }
-AllBlockServicesDeprecatedResp& ShuckleRespContainer::setAllBlockServicesDeprecated() {
-    _kind = ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
+AllBlockServicesDeprecatedResp& RegistryRespContainer::setAllBlockServicesDeprecated() {
+    _kind = RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
     auto& x = _data.emplace<25>();
     return x;
 }
-const MoveCdcLeaderResp& ShuckleRespContainer::getMoveCdcLeader() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::MOVE_CDC_LEADER, "%s != %s", _kind, ShuckleMessageKind::MOVE_CDC_LEADER);
+const MoveCdcLeaderResp& RegistryRespContainer::getMoveCdcLeader() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_CDC_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_CDC_LEADER);
     return std::get<26>(_data);
 }
-MoveCdcLeaderResp& ShuckleRespContainer::setMoveCdcLeader() {
-    _kind = ShuckleMessageKind::MOVE_CDC_LEADER;
+MoveCdcLeaderResp& RegistryRespContainer::setMoveCdcLeader() {
+    _kind = RegistryMessageKind::MOVE_CDC_LEADER;
     auto& x = _data.emplace<26>();
     return x;
 }
-const ClearCdcInfoResp& ShuckleRespContainer::getClearCdcInfo() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::CLEAR_CDC_INFO, "%s != %s", _kind, ShuckleMessageKind::CLEAR_CDC_INFO);
+const ClearCdcInfoResp& RegistryRespContainer::getClearCdcInfo() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_CDC_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_CDC_INFO);
     return std::get<27>(_data);
 }
-ClearCdcInfoResp& ShuckleRespContainer::setClearCdcInfo() {
-    _kind = ShuckleMessageKind::CLEAR_CDC_INFO;
+ClearCdcInfoResp& RegistryRespContainer::setClearCdcInfo() {
+    _kind = RegistryMessageKind::CLEAR_CDC_INFO;
     auto& x = _data.emplace<27>();
     return x;
 }
-const UpdateBlockServicePathResp& ShuckleRespContainer::getUpdateBlockServicePath() const {
-    ALWAYS_ASSERT(_kind == ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH);
+const UpdateBlockServicePathResp& RegistryRespContainer::getUpdateBlockServicePath() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH);
     return std::get<28>(_data);
 }
-UpdateBlockServicePathResp& ShuckleRespContainer::setUpdateBlockServicePath() {
-    _kind = ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH;
+UpdateBlockServicePathResp& RegistryRespContainer::setUpdateBlockServicePath() {
+    _kind = RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH;
     auto& x = _data.emplace<28>();
     return x;
 }
-ShuckleRespContainer::ShuckleRespContainer() {
+RegistryRespContainer::RegistryRespContainer() {
     clear();
 }
 
-ShuckleRespContainer::ShuckleRespContainer(const ShuckleRespContainer& other) {
+RegistryRespContainer::RegistryRespContainer(const RegistryRespContainer& other) {
     *this = other;
 }
 
-ShuckleRespContainer::ShuckleRespContainer(ShuckleRespContainer&& other) {
+RegistryRespContainer::RegistryRespContainer(RegistryRespContainer&& other) {
     _data = std::move(other._data);
     _kind = other._kind;
-    other._kind = ShuckleMessageKind::EMPTY;
+    other._kind = RegistryMessageKind::EMPTY;
 }
 
-void ShuckleRespContainer::operator=(const ShuckleRespContainer& other) {
-    if (other.kind() == ShuckleMessageKind::EMPTY) { clear(); return; }
+void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
+    if (other.kind() == RegistryMessageKind::EMPTY) { clear(); return; }
     switch (other.kind()) {
-    case ShuckleMessageKind::ERROR:
+    case RegistryMessageKind::ERROR:
         setError() = other.getError();
         break;
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         setLocalShards() = other.getLocalShards();
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         setLocalCdc() = other.getLocalCdc();
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         setInfo() = other.getInfo();
         break;
-    case ShuckleMessageKind::SHUCKLE:
-        setShuckle() = other.getShuckle();
+    case RegistryMessageKind::REGISTRY:
+        setRegistry() = other.getRegistry();
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         setLocalChangedBlockServices() = other.getLocalChangedBlockServices();
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         setCreateLocation() = other.getCreateLocation();
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         setRenameLocation() = other.getRenameLocation();
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         setLocations() = other.getLocations();
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         setRegisterShard() = other.getRegisterShard();
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         setRegisterCdc() = other.getRegisterCdc();
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         setSetBlockServiceFlags() = other.getSetBlockServiceFlags();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         setRegisterBlockServices() = other.getRegisterBlockServices();
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         setChangedBlockServicesAtLocation() = other.getChangedBlockServicesAtLocation();
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         setShardsAtLocation() = other.getShardsAtLocation();
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         setCdcAtLocation() = other.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         setShardBlockServicesDEPRECATED() = other.getShardBlockServicesDEPRECATED();
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         setCdcReplicasDEPRECATED() = other.getCdcReplicasDEPRECATED();
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         setAllShards() = other.getAllShards();
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         setDecommissionBlockService() = other.getDecommissionBlockService();
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         setMoveShardLeader() = other.getMoveShardLeader();
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         setClearShardInfo() = other.getClearShardInfo();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         setShardBlockServices() = other.getShardBlockServices();
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         setAllBlockServicesDeprecated() = other.getAllBlockServicesDeprecated();
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         setMoveCdcLeader() = other.getMoveCdcLeader();
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         setClearCdcInfo() = other.getClearCdcInfo();
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         setUpdateBlockServicePath() = other.getUpdateBlockServicePath();
         break;
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", other.kind());
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", other.kind());
     }
 }
 
-void ShuckleRespContainer::operator=(ShuckleRespContainer&& other) {
+void RegistryRespContainer::operator=(RegistryRespContainer&& other) {
     _data = std::move(other._data);
     _kind = other._kind;
-    other._kind = ShuckleMessageKind::EMPTY;
+    other._kind = RegistryMessageKind::EMPTY;
 }
 
-size_t ShuckleRespContainer::packedSize() const {
+size_t RegistryRespContainer::packedSize() const {
     switch (_kind) {
-    case ShuckleMessageKind::ERROR:
-        return sizeof(ShuckleMessageKind) + sizeof(TernError);
-    case ShuckleMessageKind::LOCAL_SHARDS:
-        return sizeof(ShuckleMessageKind) + std::get<1>(_data).packedSize();
-    case ShuckleMessageKind::LOCAL_CDC:
-        return sizeof(ShuckleMessageKind) + std::get<2>(_data).packedSize();
-    case ShuckleMessageKind::INFO:
-        return sizeof(ShuckleMessageKind) + std::get<3>(_data).packedSize();
-    case ShuckleMessageKind::SHUCKLE:
-        return sizeof(ShuckleMessageKind) + std::get<4>(_data).packedSize();
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
-        return sizeof(ShuckleMessageKind) + std::get<5>(_data).packedSize();
-    case ShuckleMessageKind::CREATE_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<6>(_data).packedSize();
-    case ShuckleMessageKind::RENAME_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<7>(_data).packedSize();
-    case ShuckleMessageKind::LOCATIONS:
-        return sizeof(ShuckleMessageKind) + std::get<8>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_SHARD:
-        return sizeof(ShuckleMessageKind) + std::get<9>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_CDC:
-        return sizeof(ShuckleMessageKind) + std::get<10>(_data).packedSize();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
-        return sizeof(ShuckleMessageKind) + std::get<11>(_data).packedSize();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
-        return sizeof(ShuckleMessageKind) + std::get<12>(_data).packedSize();
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<13>(_data).packedSize();
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<14>(_data).packedSize();
-    case ShuckleMessageKind::CDC_AT_LOCATION:
-        return sizeof(ShuckleMessageKind) + std::get<15>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return sizeof(ShuckleMessageKind) + std::get<16>(_data).packedSize();
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        return sizeof(ShuckleMessageKind) + std::get<17>(_data).packedSize();
-    case ShuckleMessageKind::ALL_SHARDS:
-        return sizeof(ShuckleMessageKind) + std::get<18>(_data).packedSize();
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
-        return sizeof(ShuckleMessageKind) + std::get<19>(_data).packedSize();
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
-        return sizeof(ShuckleMessageKind) + std::get<20>(_data).packedSize();
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
-        return sizeof(ShuckleMessageKind) + std::get<21>(_data).packedSize();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
-        return sizeof(ShuckleMessageKind) + std::get<22>(_data).packedSize();
-    case ShuckleMessageKind::ALL_CDC:
-        return sizeof(ShuckleMessageKind) + std::get<23>(_data).packedSize();
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
-        return sizeof(ShuckleMessageKind) + std::get<24>(_data).packedSize();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        return sizeof(ShuckleMessageKind) + std::get<25>(_data).packedSize();
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
-        return sizeof(ShuckleMessageKind) + std::get<26>(_data).packedSize();
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
-        return sizeof(ShuckleMessageKind) + std::get<27>(_data).packedSize();
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
-        return sizeof(ShuckleMessageKind) + std::get<28>(_data).packedSize();
+    case RegistryMessageKind::ERROR:
+        return sizeof(RegistryMessageKind) + sizeof(TernError);
+    case RegistryMessageKind::LOCAL_SHARDS:
+        return sizeof(RegistryMessageKind) + std::get<1>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_CDC:
+        return sizeof(RegistryMessageKind) + std::get<2>(_data).packedSize();
+    case RegistryMessageKind::INFO:
+        return sizeof(RegistryMessageKind) + std::get<3>(_data).packedSize();
+    case RegistryMessageKind::REGISTRY:
+        return sizeof(RegistryMessageKind) + std::get<4>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<5>(_data).packedSize();
+    case RegistryMessageKind::CREATE_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<6>(_data).packedSize();
+    case RegistryMessageKind::RENAME_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<7>(_data).packedSize();
+    case RegistryMessageKind::LOCATIONS:
+        return sizeof(RegistryMessageKind) + std::get<8>(_data).packedSize();
+    case RegistryMessageKind::REGISTER_SHARD:
+        return sizeof(RegistryMessageKind) + std::get<9>(_data).packedSize();
+    case RegistryMessageKind::REGISTER_CDC:
+        return sizeof(RegistryMessageKind) + std::get<10>(_data).packedSize();
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
+        return sizeof(RegistryMessageKind) + std::get<11>(_data).packedSize();
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<12>(_data).packedSize();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<13>(_data).packedSize();
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<14>(_data).packedSize();
+    case RegistryMessageKind::CDC_AT_LOCATION:
+        return sizeof(RegistryMessageKind) + std::get<15>(_data).packedSize();
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+        return sizeof(RegistryMessageKind) + std::get<16>(_data).packedSize();
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+        return sizeof(RegistryMessageKind) + std::get<17>(_data).packedSize();
+    case RegistryMessageKind::ALL_SHARDS:
+        return sizeof(RegistryMessageKind) + std::get<18>(_data).packedSize();
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
+        return sizeof(RegistryMessageKind) + std::get<19>(_data).packedSize();
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
+        return sizeof(RegistryMessageKind) + std::get<20>(_data).packedSize();
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
+        return sizeof(RegistryMessageKind) + std::get<21>(_data).packedSize();
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<22>(_data).packedSize();
+    case RegistryMessageKind::ALL_CDC:
+        return sizeof(RegistryMessageKind) + std::get<23>(_data).packedSize();
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+        return sizeof(RegistryMessageKind) + std::get<24>(_data).packedSize();
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+        return sizeof(RegistryMessageKind) + std::get<25>(_data).packedSize();
+    case RegistryMessageKind::MOVE_CDC_LEADER:
+        return sizeof(RegistryMessageKind) + std::get<26>(_data).packedSize();
+    case RegistryMessageKind::CLEAR_CDC_INFO:
+        return sizeof(RegistryMessageKind) + std::get<27>(_data).packedSize();
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+        return sizeof(RegistryMessageKind) + std::get<28>(_data).packedSize();
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-void ShuckleRespContainer::pack(BincodeBuf& buf) const {
-    buf.packScalar<ShuckleMessageKind>(_kind);
+void RegistryRespContainer::pack(BincodeBuf& buf) const {
+    buf.packScalar<RegistryMessageKind>(_kind);
     switch (_kind) {
-    case ShuckleMessageKind::ERROR:
+    case RegistryMessageKind::ERROR:
         buf.packScalar<TernError>(std::get<0>(_data));
         break;
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         std::get<1>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         std::get<2>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         std::get<3>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHUCKLE:
+    case RegistryMessageKind::REGISTRY:
         std::get<4>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         std::get<5>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         std::get<6>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         std::get<7>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         std::get<8>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         std::get<9>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         std::get<10>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         std::get<11>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         std::get<12>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         std::get<13>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         std::get<14>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         std::get<15>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         std::get<16>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         std::get<17>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         std::get<18>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         std::get<19>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         std::get<20>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         std::get<21>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         std::get<22>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         std::get<23>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<24>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         std::get<25>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         std::get<26>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         std::get<27>(_data).pack(buf);
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         std::get<28>(_data).pack(buf);
         break;
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-void ShuckleRespContainer::unpack(BincodeBuf& buf) {
-    _kind = buf.unpackScalar<ShuckleMessageKind>();
+void RegistryRespContainer::unpack(BincodeBuf& buf) {
+    _kind = buf.unpackScalar<RegistryMessageKind>();
     switch (_kind) {
-    case ShuckleMessageKind::ERROR:
+    case RegistryMessageKind::ERROR:
         _data.emplace<0>(buf.unpackScalar<TernError>());
         break;
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         _data.emplace<1>().unpack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         _data.emplace<2>().unpack(buf);
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         _data.emplace<3>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHUCKLE:
+    case RegistryMessageKind::REGISTRY:
         _data.emplace<4>().unpack(buf);
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         _data.emplace<5>().unpack(buf);
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         _data.emplace<6>().unpack(buf);
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         _data.emplace<7>().unpack(buf);
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         _data.emplace<8>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         _data.emplace<9>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         _data.emplace<10>().unpack(buf);
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         _data.emplace<11>().unpack(buf);
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         _data.emplace<12>().unpack(buf);
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         _data.emplace<13>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         _data.emplace<14>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         _data.emplace<15>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         _data.emplace<16>().unpack(buf);
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         _data.emplace<17>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         _data.emplace<18>().unpack(buf);
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         _data.emplace<19>().unpack(buf);
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<20>().unpack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<21>().unpack(buf);
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<22>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         _data.emplace<23>().unpack(buf);
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<24>().unpack(buf);
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         _data.emplace<25>().unpack(buf);
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         _data.emplace<26>().unpack(buf);
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         _data.emplace<27>().unpack(buf);
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         _data.emplace<28>().unpack(buf);
         break;
     default:
-        throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-bool ShuckleRespContainer::operator==(const ShuckleRespContainer& other) const {
+bool RegistryRespContainer::operator==(const RegistryRespContainer& other) const {
     if (_kind != other.kind()) { return false; }
-    if (_kind == ShuckleMessageKind::EMPTY) { return true; }
+    if (_kind == RegistryMessageKind::EMPTY) { return true; }
     switch (_kind) {
-    case ShuckleMessageKind::ERROR:
+    case RegistryMessageKind::ERROR:
         return getError() == other.getError();
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         return getLocalShards() == other.getLocalShards();
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         return getLocalCdc() == other.getLocalCdc();
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         return getInfo() == other.getInfo();
-    case ShuckleMessageKind::SHUCKLE:
-        return getShuckle() == other.getShuckle();
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTRY:
+        return getRegistry() == other.getRegistry();
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         return getLocalChangedBlockServices() == other.getLocalChangedBlockServices();
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         return getCreateLocation() == other.getCreateLocation();
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         return getRenameLocation() == other.getRenameLocation();
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         return getLocations() == other.getLocations();
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         return getRegisterShard() == other.getRegisterShard();
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         return getRegisterCdc() == other.getRegisterCdc();
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         return getSetBlockServiceFlags() == other.getSetBlockServiceFlags();
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         return getRegisterBlockServices() == other.getRegisterBlockServices();
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         return getChangedBlockServicesAtLocation() == other.getChangedBlockServicesAtLocation();
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         return getShardsAtLocation() == other.getShardsAtLocation();
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         return getCdcAtLocation() == other.getCdcAtLocation();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         return getShardBlockServicesDEPRECATED() == other.getShardBlockServicesDEPRECATED();
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         return getCdcReplicasDEPRECATED() == other.getCdcReplicasDEPRECATED();
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         return getAllShards() == other.getAllShards();
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         return getDecommissionBlockService() == other.getDecommissionBlockService();
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         return getMoveShardLeader() == other.getMoveShardLeader();
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         return getClearShardInfo() == other.getClearShardInfo();
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         return getShardBlockServices() == other.getShardBlockServices();
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         return getAllBlockServicesDeprecated() == other.getAllBlockServicesDeprecated();
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         return getMoveCdcLeader() == other.getMoveCdcLeader();
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         return getClearCdcInfo() == other.getClearCdcInfo();
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         return getUpdateBlockServicePath() == other.getUpdateBlockServicePath();
     default:
-        throw BINCODE_EXCEPTION("bad ShuckleMessageKind kind %s", _kind);
+        throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
 }
 
-std::ostream& operator<<(std::ostream& out, const ShuckleRespContainer& x) {
+std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
     switch (x.kind()) {
-    case ShuckleMessageKind::ERROR:
+    case RegistryMessageKind::ERROR:
         out << x.getError();
         break;
-    case ShuckleMessageKind::LOCAL_SHARDS:
+    case RegistryMessageKind::LOCAL_SHARDS:
         out << x.getLocalShards();
         break;
-    case ShuckleMessageKind::LOCAL_CDC:
+    case RegistryMessageKind::LOCAL_CDC:
         out << x.getLocalCdc();
         break;
-    case ShuckleMessageKind::INFO:
+    case RegistryMessageKind::INFO:
         out << x.getInfo();
         break;
-    case ShuckleMessageKind::SHUCKLE:
-        out << x.getShuckle();
+    case RegistryMessageKind::REGISTRY:
+        out << x.getRegistry();
         break;
-    case ShuckleMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES:
         out << x.getLocalChangedBlockServices();
         break;
-    case ShuckleMessageKind::CREATE_LOCATION:
+    case RegistryMessageKind::CREATE_LOCATION:
         out << x.getCreateLocation();
         break;
-    case ShuckleMessageKind::RENAME_LOCATION:
+    case RegistryMessageKind::RENAME_LOCATION:
         out << x.getRenameLocation();
         break;
-    case ShuckleMessageKind::LOCATIONS:
+    case RegistryMessageKind::LOCATIONS:
         out << x.getLocations();
         break;
-    case ShuckleMessageKind::REGISTER_SHARD:
+    case RegistryMessageKind::REGISTER_SHARD:
         out << x.getRegisterShard();
         break;
-    case ShuckleMessageKind::REGISTER_CDC:
+    case RegistryMessageKind::REGISTER_CDC:
         out << x.getRegisterCdc();
         break;
-    case ShuckleMessageKind::SET_BLOCK_SERVICE_FLAGS:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS:
         out << x.getSetBlockServiceFlags();
         break;
-    case ShuckleMessageKind::REGISTER_BLOCK_SERVICES:
+    case RegistryMessageKind::REGISTER_BLOCK_SERVICES:
         out << x.getRegisterBlockServices();
         break;
-    case ShuckleMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
         out << x.getChangedBlockServicesAtLocation();
         break;
-    case ShuckleMessageKind::SHARDS_AT_LOCATION:
+    case RegistryMessageKind::SHARDS_AT_LOCATION:
         out << x.getShardsAtLocation();
         break;
-    case ShuckleMessageKind::CDC_AT_LOCATION:
+    case RegistryMessageKind::CDC_AT_LOCATION:
         out << x.getCdcAtLocation();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
         out << x.getShardBlockServicesDEPRECATED();
         break;
-    case ShuckleMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
         out << x.getCdcReplicasDEPRECATED();
         break;
-    case ShuckleMessageKind::ALL_SHARDS:
+    case RegistryMessageKind::ALL_SHARDS:
         out << x.getAllShards();
         break;
-    case ShuckleMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         out << x.getDecommissionBlockService();
         break;
-    case ShuckleMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         out << x.getMoveShardLeader();
         break;
-    case ShuckleMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         out << x.getClearShardInfo();
         break;
-    case ShuckleMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         out << x.getShardBlockServices();
         break;
-    case ShuckleMessageKind::ALL_CDC:
+    case RegistryMessageKind::ALL_CDC:
         out << x.getAllCdc();
         break;
-    case ShuckleMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
         break;
-    case ShuckleMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
         out << x.getAllBlockServicesDeprecated();
         break;
-    case ShuckleMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         out << x.getMoveCdcLeader();
         break;
-    case ShuckleMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         out << x.getClearCdcInfo();
         break;
-    case ShuckleMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         out << x.getUpdateBlockServicePath();
         break;
-    case ShuckleMessageKind::EMPTY:
+    case RegistryMessageKind::EMPTY:
         out << "EMPTY";
         break;
     default:
-        throw TERN_EXCEPTION("bad ShuckleMessageKind kind %s", x.kind());
+        throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", x.kind());
     }
     return out;
 }

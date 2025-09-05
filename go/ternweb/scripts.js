@@ -1,11 +1,11 @@
 import * as p from '/static/preact-10.18.1.module.js';
 import { useEffect, useState, useCallback } from '/static/preact-hooks-10.18.1.module.js';
 
-// API to shuckle itself
+// API to registry itself
 // --------------------------------------------------------------------
 
-async function shuckleReq(reqKind, req) {
-    const response = await fetch(`/api/shuckle/${reqKind}`, {
+async function registryReq(reqKind, req) {
+    const response = await fetch(`/api/registry/${reqKind}`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -347,12 +347,12 @@ export function renderIndex() {
         const [blockServices, setBlockServices] = useState(null);
         const [locations, setLocations] = useState(null);
         useEffect(async () => {
-            const resp = await shuckleReq('ALL_BLOCK_SERVICES_DEPRECATED', {});
+            const resp = await registryReq('ALL_BLOCK_SERVICES_DEPRECATED', {});
             setBlockServices(resp);
         }, []);
 
         useEffect(async () => {
-            const resp = await shuckleReq('LOCATIONS', {});
+            const resp = await registryReq('LOCATIONS', {});
             var locationsMap = new Map();
             for (const location of resp.Locations) {
                 locationsMap.set(location.Id, location.Name);
@@ -422,12 +422,12 @@ export function renderIndex() {
         const [shards, setShards] = useState(null);
         const [locations, setLocations] = useState(null);
         useEffect(async () => {
-            const resp = await shuckleReq('ALL_SHARDS', {});
+            const resp = await registryReq('ALL_SHARDS', {});
             setShards(resp);
         }, []);
 
         useEffect(async () => {
-            const resp = await shuckleReq('LOCATIONS', {});
+            const resp = await registryReq('LOCATIONS', {});
             var locationsMap = new Map();
             for (const location of resp.Locations) {
                 locationsMap.set(location.Id, location.Name);
@@ -471,12 +471,12 @@ export function renderIndex() {
         const [locations, setLocations] = useState(null);
 
         useEffect(async () => {
-            const resp = await shuckleReq('ALL_CDC', {});
+            const resp = await registryReq('ALL_CDC', {});
             setCdcReplicas(resp);
         }, []);
 
         useEffect(async () => {
-            const resp = await shuckleReq('LOCATIONS', {});
+            const resp = await registryReq('LOCATIONS', {});
             var locationsMap = new Map();
             for (const location of resp.Locations) {
                 locationsMap.set(location.Id, location.Name);

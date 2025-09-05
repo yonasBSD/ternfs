@@ -4,7 +4,7 @@
 
 When you delete a file with `rm` on TernFS, the file contents do not get deleted -- a "snapshot" will still be present. You can witness these snapshot in the web UI by enabling "Show snapshot edges" in the "Browse" view.
 
-Snapshotted files survive until they expire. The expiry time is determined by the `SNAPSHOT` policy of the directory they live in. Again, the snapshot policy is viewable when browsing a directory on shuckle. The root directory in Iceland has:
+Snapshotted files survive until they expire. The expiry time is determined by the `SNAPSHOT` policy of the directory they live in. Again, the snapshot policy is viewable when browsing a directory on TernWeb. The root directory in Iceland has:
 
 ```
 {DeleteAfterTime:ActiveDeleteAfterTime(720h0m0s) DeleteAfterVersions:InactiveDeleteAfterVersions()}

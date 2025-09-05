@@ -18,7 +18,7 @@ ternfs-client-objs += \
 	sysctl.o \
 	sysfs.o \
 	trace.o \
-	shuckle.o \
+	registry.o \
 	block.o \
 	file.o \
 	rs.o \

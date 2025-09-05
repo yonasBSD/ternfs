@@ -28,7 +28,7 @@
 #include "ShardDB.hpp"
 #include "ShardKey.hpp"
 #include "SharedRocksDB.hpp"
-#include "Shuckle.hpp"
+#include "Registry.hpp"
 #include "SPSC.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
@@ -259,7 +259,7 @@ struct ShardShared {
     std::atomic<double> pulledWriteRequests; // how many requests we got from write queue
     std::atomic<double> pulledReadRequests; // how many requests we got from read queue
 
-    // we should get up to date information from shuckle before we start serving any requests
+    // we should get up to date information from registry before we start serving any requests
     // this is populated by ShardRegisterer
     std::atomic<bool> isInitiated;
     std::atomic<bool> isBlockServiceCacheInitiated;
@@ -1721,8 +1721,8 @@ private:
     const ShardReplicaId _shrid;
     const uint8_t _location;
     const bool _noReplication;
-    const std::string _shuckleHost;
-    const uint16_t _shucklePort;
+    const std::string _registryHost;
+    const uint16_t _registryPort;
     XmonNCAlert _alert;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
@@ -1731,8 +1731,8 @@ public:
         _shrid(_shared.options.shrid),
         _location(_shared.options.location),
         _noReplication(_shared.options.noReplication),
-        _shuckleHost(_shared.options.shuckleHost),
-        _shucklePort(_shared.options.shucklePort)
+        _registryHost(_shared.options.registryHost),
+        _registryPort(_shared.options.registryPort)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -1743,23 +1743,23 @@ public:
 
     virtual bool periodicStep() {
         {
-            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with shuckle", _shrid, (int)_location, _shared.sock().addr());
+            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with registry", _shrid, (int)_location, _shared.sock().addr());
             // ToDO: once leader election is fully enabled report or leader status instead of value of flag passed on startup
-            const auto [err, errStr] = registerShard(_shuckleHost, _shucklePort, 10_sec, _shrid, _location, !_shared.options.avoidBeingLeader, _shared.sock().addr());
+            const auto [err, errStr] = registerShard(_registryHost, _registryPort, 10_sec, _shrid, _location, !_shared.options.avoidBeingLeader, _shared.sock().addr());
             if (err == EINTR) { return false; }
             if (err) {
-                _env.updateAlert(_alert, "Couldn't register ourselves with shuckle: %s", errStr);
+                _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
                 return false;
             }
         }
 
         {
             std::vector<FullShardInfo> allReplicas;
-            LOG_INFO(_env, "Fetching replicas for shardId %s from shuckle", _shrid.shardId());
-            const auto [err, errStr] = fetchShardReplicas(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), allReplicas);
+            LOG_INFO(_env, "Fetching replicas for shardId %s from registry", _shrid.shardId());
+            const auto [err, errStr] = fetchShardReplicas(_registryHost, _registryPort, 10_sec, _shrid.shardId(), allReplicas);
             if (err == EINTR) { return false; }
             if (err) {
-                _env.updateAlert(_alert, "Failed getting shard replicas from shuckle: %s", errStr);
+                _env.updateAlert(_alert, "Failed getting shard replicas from registry: %s", errStr);
                 return false;
             }
 
@@ -1778,7 +1778,7 @@ public:
                 }
             }
             if (_shared.sock().addr() != localReplicas[_shrid.replicaId().u8]) {
-                _env.updateAlert(_alert, "AddrsInfo in shuckle: %s , not matching local AddrsInfo: %s", localReplicas[_shrid.replicaId().u8], _shared.sock().addr());
+                _env.updateAlert(_alert, "AddrsInfo in registry: %s , not matching local AddrsInfo: %s", localReplicas[_shrid.replicaId().u8], _shared.sock().addr());
                 return false;
             }
             if (unlikely(!_shared.replicas)) {
@@ -1789,7 +1789,7 @@ public:
                     }
                 }
                 if (emptyReplicas > 0 && !_noReplication) {
-                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from shuckle");
+                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
                     return false;
                 }
             }
@@ -1823,8 +1823,8 @@ struct ShardBlockServiceUpdater : PeriodicLoop {
 private:
     ShardShared& _shared;
     ShardReplicaId _shrid;
-    std::string _shuckleHost;
-    uint16_t _shucklePort;
+    std::string _registryHost;
+    uint16_t _registryPort;
     XmonNCAlert _alert;
     std::vector<BlockServiceDeprecatedInfo> _blockServices;
     std::vector<BlockServiceInfoShort> _currentBlockServices;
@@ -1834,8 +1834,8 @@ public:
         PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.options.isLeader() ? 30_sec : 2_mins}),
         _shared(shared),
         _shrid(_shared.options.shrid),
-        _shuckleHost(_shared.options.shuckleHost),
-        _shucklePort(_shared.options.shucklePort),
+        _registryHost(_shared.options.registryHost),
+        _registryPort(_shared.options.registryPort),
         _updatedOnce(false)
     {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
@@ -1849,11 +1849,11 @@ public:
             _currentBlockServices.clear();
         }
 
-        LOG_INFO(_env, "about to fetch block services from %s:%s", _shuckleHost, _shucklePort);
-        const auto [err, errStr] = fetchBlockServices(_shuckleHost, _shucklePort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
+        LOG_INFO(_env, "about to fetch block services from %s:%s", _registryHost, _registryPort);
+        const auto [err, errStr] = fetchBlockServices(_registryHost, _registryPort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
         if (err == EINTR) { return false; }
         if (err) {
-            _env.updateAlert(_alert, "could not reach shuckle: %s", errStr);
+            _env.updateAlert(_alert, "could not reach registry: %s", errStr);
             return false;
         }
         if (_blockServices.empty()) {
@@ -2139,8 +2139,8 @@ void runShard(ShardOptions& options) {
         LOG_INFO(env, "Running shard %s at location %s, with options:", options.shrid, (int)options.location);
         LOG_INFO(env, "  level = %s", options.logLevel);
         LOG_INFO(env, "  logFile = '%s'", options.logFile);
-        LOG_INFO(env, "  shuckleHost = '%s'", options.shuckleHost);
-        LOG_INFO(env, "  shucklePort = %s", options.shucklePort);
+        LOG_INFO(env, "  registryHost = '%s'", options.registryHost);
+        LOG_INFO(env, "  registryPort = %s", options.registryPort);
         LOG_INFO(env, "  ownAddres = %s", options.shardAddrs);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  syslog = %s", (int)options.syslog);

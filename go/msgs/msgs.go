@@ -66,11 +66,11 @@ const CDC_RESP_PROTOCOL_VERSION uint32 = 0x1434443
 
 // >>> format(struct.unpack('<I', b'SHU\0')[0], 'x')
 // '554853'
-const SHUCKLE_REQ_PROTOCOL_VERSION uint32 = 0x554853
+const REGISTRY_REQ_PROTOCOL_VERSION uint32 = 0x554853
 
 // >>> format(struct.unpack('<I', b'SHU\1')[0], 'x')
 // '1554853'
-const SHUCKLE_RESP_PROTOCOL_VERSION uint32 = 0x1554853
+const REGISTRY_RESP_PROTOCOL_VERSION uint32 = 0x1554853
 
 // >>> format(struct.unpack('<I', b'BLO\0')[0], 'x')
 // '4f4c42'
@@ -553,7 +553,7 @@ type ShardMessageKind uint8
 
 type CDCMessageKind uint8
 
-type ShuckleMessageKind uint8
+type RegistryMessageKind uint8
 
 type BlocksMessageKind uint8
 
@@ -798,7 +798,7 @@ type AddSpanInitiateReq struct {
 	StorageClass StorageClass
 	// A single element of these matches if all the nonzero elements in it match.
 	// This is useful when the kernel knows it cannot communicate with a certain block
-	// service (because it noticed that it is broken before shuckle/shard did, or
+	// service (because it noticed that it is broken before registry/shard did, or
 	// because of some transient network problem, or...).
 	Blacklist []BlacklistEntry
 	Parity    parity.Parity
@@ -2005,18 +2005,18 @@ type RemoveZeroBlockServiceFilesEntry struct {
 }
 
 // --------------------------------------------------------------------
-// shuckle requests/responses
+// registry requests/responses
 
-type ShuckleRequest interface {
+type RegistryRequest interface {
 	bincode.Packable
 	bincode.Unpackable
-	ShuckleRequestKind() ShuckleMessageKind
+	RegistryRequestKind() RegistryMessageKind
 }
 
-type ShuckleResponse interface {
+type RegistryResponse interface {
 	bincode.Packable
 	bincode.Unpackable
-	ShuckleResponseKind() ShuckleMessageKind
+	RegistryResponseKind() RegistryMessageKind
 }
 
 type InfoReq struct{}
@@ -2029,13 +2029,13 @@ type InfoResp struct {
 	Blocks            uint64
 }
 
-type ShuckleReq struct{}
+type RegistryReq struct{}
 
 type AddrsInfo struct {
 	Addr1 IpPort
 	Addr2 IpPort
 }
-type ShuckleResp struct {
+type RegistryResp struct {
 	Addrs AddrsInfo
 }
 
@@ -2125,7 +2125,7 @@ type RegisterShardReq struct {
 
 type RegisterShardResp struct{}
 
-// Depending on which shuckle is asked it always returns local shards
+// Depending on which registry is asked it always returns local shards
 type LocalShardsReq struct{}
 
 type ShardInfo struct {

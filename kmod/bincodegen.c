@@ -129,12 +129,12 @@ const char* ternfs_cdc_kind_str(int kind) {
     }
 }
 
-const char* ternfs_shuckle_kind_str(int kind) {
+const char* ternfs_registry_kind_str(int kind) {
     switch (kind) {
     case 3: return "LOCAL_SHARDS";
     case 7: return "LOCAL_CDC";
     case 8: return "INFO";
-    case 15: return "SHUCKLE";
+    case 15: return "REGISTRY";
     case 34: return "LOCAL_CHANGED_BLOCK_SERVICES";
     default: return "UNKNOWN";
     }

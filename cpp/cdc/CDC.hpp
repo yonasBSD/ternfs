@@ -12,9 +12,9 @@
 struct CDCOptions {
     LogLevel logLevel = LogLevel::LOG_INFO;
     std::string logFile = ""; // if empty, stdout
-    uint16_t port = 0; // chosen randomly and recorded in shuckle
-    std::string shuckleHost = "";
-    uint16_t shucklePort = 0;
+    uint16_t port = 0; // chosen randomly and recorded in registry
+    std::string registryHost = "";
+    uint16_t registryPort = 0;
     // The second will be used if the ip is non-null
     AddrsInfo cdcAddrs = {};
     AddrsInfo cdcToShardAddress = {};

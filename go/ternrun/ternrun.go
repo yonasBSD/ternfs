@@ -31,16 +31,16 @@ func main() {
 	hddBlockServices := flag.Uint("hdd-block-services", 2, "Number of HDD block services per failure domain.")
 	flashBlockServices := flag.Uint("flash-block-services", 2, "Number of HDD block services per failure domain.")
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
-	shuckleBincodePort := flag.Uint("shuckle-bincode-port", 10001, "")
-	shuckleHttpPort := flag.Uint("shuckle-http-port", 10000, "")
+	registryBincodePort := flag.Uint("registry-bincode-port", 10001, "")
+	registryHttpPort := flag.Uint("registry-http-port", 10000, "")
 	startingPort := flag.Uint("start-port", 10003, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	xmon := flag.String("xmon", "", "")
-	shuckleScriptsJs := flag.String("shuckle-scripts-js", "", "")
+	registryScriptsJs := flag.String("registry-scripts-js", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
-	multiLocation := flag.Bool("multi-location", false, "Run 2 sets of shards/shuckle/cdc/storages to simulate multi data centre setup")
+	multiLocation := flag.Bool("multi-location", false, "Run 2 sets of shards/registry/cdc/storages to simulate multi data centre setup")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -50,12 +50,12 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	if *shuckleBincodePort == 0 {
-		fmt.Fprintf(os.Stderr, "-shuckle-bincode-port can't be automatically picked.\n")
+	if *registryBincodePort == 0 {
+		fmt.Fprintf(os.Stderr, "-registry-bincode-port can't be automatically picked.\n")
 		os.Exit(2)
 	}
-	validPort(*shuckleBincodePort)
-	validPort(*shuckleHttpPort)
+	validPort(*registryBincodePort)
+	validPort(*registryHttpPort)
 	validPort(*startingPort)
 
 	if *repoDir == "" {
@@ -107,13 +107,13 @@ func main() {
 			CDCExe:   path.Join(*binariesDir, "terncdc"),
 		}
 		goExes = &managedprocess.GoExes{
-			ShuckleExe:      path.Join(*binariesDir, "ternshuckle"),
+			RegistryExe:      path.Join(*binariesDir, "ternweb"),
 			BlocksExe:       path.Join(*binariesDir, "ternblocks"),
 			FuseExe:         path.Join(*binariesDir, "ternfuse"),
-			ShuckleProxyExe: path.Join(*binariesDir, "ternshuckleproxy"),
+			RegistryProxyExe: path.Join(*binariesDir, "ternregistryproxy"),
 		}
 	} else {
-		fmt.Printf("building shard/cdc/blockservice/shuckle\n")
+		fmt.Printf("building shard/cdc/blockservice/registry\n")
 		cppExes = managedprocess.BuildCppExes(l, *repoDir, *buildType)
 		goExes = managedprocess.BuildGoExes(l, *repoDir, false)
 	}
@@ -125,44 +125,44 @@ func main() {
 
 	fmt.Printf("starting components\n")
 
-	// Start shuckle
-	shuckleAddress := fmt.Sprintf("127.0.0.1:%v", *shuckleBincodePort)
-	procs.StartShuckle(l, &managedprocess.ShuckleOpts{
-		Exe:       goExes.ShuckleExe,
-		HttpPort:  uint16(*shuckleHttpPort),
+	// Start registry
+	registryAddress := fmt.Sprintf("127.0.0.1:%v", *registryBincodePort)
+	procs.StartRegistry(l, &managedprocess.RegistryOpts{
+		Exe:       goExes.RegistryExe,
+		HttpPort:  uint16(*registryHttpPort),
 		LogLevel:  level,
-		Dir:       path.Join(*dataDir, "shuckle"),
+		Dir:       path.Join(*dataDir, "registry"),
 		Xmon:      *xmon,
-		ScriptsJs: *shuckleScriptsJs,
-		Addr1:     shuckleAddress,
+		ScriptsJs: *registryScriptsJs,
+		Addr1:     registryAddress,
 	})
 
-	shuckleProxyPort := *shuckleBincodePort + 1
-	shuckleProxyAddress := fmt.Sprintf("127.0.0.1:%v", shuckleProxyPort)
+	registryProxyPort := *registryBincodePort + 1
+	registryProxyAddress := fmt.Sprintf("127.0.0.1:%v", registryProxyPort)
 
 	numLocations := 1
 	if *multiLocation {
-		// Waiting for shuckle
-		err := client.WaitForShuckle(l, shuckleAddress, 10*time.Second)
+		// Waiting for registry
+		err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
 		if err != nil {
-			panic(fmt.Errorf("failed to connect to shuckle %v", err))
+			panic(fmt.Errorf("failed to connect to registry %v", err))
 		}
-		_, err = client.ShuckleRequest(l, nil, shuckleAddress, &msgs.CreateLocationReq{1, "location1"})
+		_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.CreateLocationReq{1, "location1"})
 		if err != nil {
 			// it's possible location already exits, try renaming it
-			_, err = client.ShuckleRequest(l, nil, shuckleAddress, &msgs.RenameLocationReq{1, "location1"})
+			_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.RenameLocationReq{1, "location1"})
 			if err != nil {
 				panic(fmt.Errorf("failed to create location %v", err))
 			}
 		}
-		procs.StartShuckleProxy(
-			l, &managedprocess.ShuckleProxyOpts{
-				Exe:            goExes.ShuckleProxyExe,
+		procs.StartRegistryProxy(
+			l, &managedprocess.RegistryProxyOpts{
+				Exe:            goExes.RegistryProxyExe,
 				LogLevel:       level,
-				Dir:            path.Join(*dataDir, "shuckleproxy"),
+				Dir:            path.Join(*dataDir, "registryproxy"),
 				Xmon:           *xmon,
-				Addr1:          shuckleProxyAddress,
-				ShuckleAddress: shuckleAddress,
+				Addr1:          registryProxyAddress,
+				RegistryAddress: registryAddress,
 				Location:       1,
 			},
 		)
@@ -183,9 +183,9 @@ func main() {
 		}
 	}
 	for loc := uint(0); loc < uint(numLocations); loc++ {
-		shuckleAddressToUse := shuckleAddress
+		registryAddressToUse := registryAddress
 		if loc == 1 {
-			shuckleAddressToUse = shuckleProxyAddress
+			registryAddressToUse = registryProxyAddress
 		}
 
 		for i := uint(0); i < *failureDomains; i++ {
@@ -200,7 +200,7 @@ func main() {
 				FailureDomain:    fmt.Sprintf("%d_%d", i, loc),
 				Location:         msgs.Location(loc),
 				LogLevel:         level,
-				ShuckleAddress:   shuckleAddressToUse,
+				RegistryAddress:   registryAddressToUse,
 				Profile:          *profile,
 				Xmon:             *xmon,
 				ReserverdStorage: 10 << 30, // 10GB
@@ -215,12 +215,12 @@ func main() {
 		}
 	}
 
-	waitShuckleFor := 10 * time.Second
+	waitRegistryFor := 10 * time.Second
 	if *buildType == "valgrind" || *profile {
-		waitShuckleFor = 60 * time.Second
+		waitRegistryFor = 60 * time.Second
 	}
-	fmt.Printf("waiting for block services for %v...\n", waitShuckleFor)
-	client.WaitForBlockServices(l, shuckleAddress, int(*failureDomains**hddBlockServices**flashBlockServices*uint(numLocations)), true, waitShuckleFor)
+	fmt.Printf("waiting for block services for %v...\n", waitRegistryFor)
+	client.WaitForBlockServices(l, registryAddress, int(*failureDomains**hddBlockServices**flashBlockServices*uint(numLocations)), true, waitRegistryFor)
 
 	// Start CDC
 	{
@@ -235,7 +235,7 @@ func main() {
 				Dir:            dir,
 				LogLevel:       level,
 				Valgrind:       *buildType == "valgrind",
-				ShuckleAddress: shuckleAddress,
+				RegistryAddress: registryAddress,
 				Perf:           *profile,
 				Xmon:           *xmon,
 			}
@@ -257,9 +257,9 @@ func main() {
 
 	// Start shards
 	for loc := 0; loc < numLocations; loc++ {
-		shuckleAddressToUse := shuckleAddress
+		registryAddressToUse := registryAddress
 		if loc == 1 {
-			shuckleAddressToUse = shuckleProxyAddress
+			registryAddressToUse = registryProxyAddress
 		}
 		for i := 0; i < 256; i++ {
 			for r := uint8(0); r < uint8(replicaCount); r++ {
@@ -274,7 +274,7 @@ func main() {
 					Dir:            path.Join(*dataDir, dirName),
 					LogLevel:       level,
 					Valgrind:       *buildType == "valgrind",
-					ShuckleAddress: shuckleAddressToUse,
+					RegistryAddress: registryAddressToUse,
 					Perf:           *profile,
 					Xmon:           *xmon,
 					Location:       msgs.Location(loc),
@@ -297,15 +297,15 @@ func main() {
 		}
 	}
 
-	fmt.Printf("waiting for shards/cdc for %v...\n", waitShuckleFor)
-	client.WaitForClient(l, shuckleAddress, waitShuckleFor)
+	fmt.Printf("waiting for shards/cdc for %v...\n", waitRegistryFor)
+	client.WaitForClient(l, registryAddress, waitRegistryFor)
 
 	if !*noFuse {
 		for loc := 0; loc < numLocations; loc++ {
-			shuckleAddressToUse := shuckleAddress
+			registryAddressToUse := registryAddress
 			fuseDir := "fuse"
 			if loc == 1 {
-				shuckleAddressToUse = shuckleProxyAddress
+				registryAddressToUse = registryProxyAddress
 				fuseDir = "fuse1"
 			}
 			fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
@@ -313,7 +313,7 @@ func main() {
 				Path:           path.Join(*dataDir, fuseDir),
 				LogLevel:       level,
 				Wait:           true,
-				ShuckleAddress: shuckleAddressToUse,
+				RegistryAddress: registryAddressToUse,
 				Profile:        *profile,
 			})
 

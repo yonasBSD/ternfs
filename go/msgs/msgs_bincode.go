@@ -793,7 +793,7 @@ func MkCDCMessage(k string) (CDCRequest, CDCResponse, error) {
 	}
 }
 
-func (k ShuckleMessageKind) String() string {
+func (k RegistryMessageKind) String() string {
 	switch k {
 	case 3:
 		return "LOCAL_SHARDS"
@@ -802,7 +802,7 @@ func (k ShuckleMessageKind) String() string {
 	case 8:
 		return "INFO"
 	case 15:
-		return "SHUCKLE"
+		return "REGISTRY"
 	case 34:
 		return "LOCAL_CHANGED_BLOCK_SERVICES"
 	case 1:
@@ -852,46 +852,46 @@ func (k ShuckleMessageKind) String() string {
 	case 37:
 		return "UPDATE_BLOCK_SERVICE_PATH"
 	default:
-		return fmt.Sprintf("ShuckleMessageKind(%d)", k)
+		return fmt.Sprintf("RegistryMessageKind(%d)", k)
 	}
 }
 
 const (
-	LOCAL_SHARDS                        ShuckleMessageKind = 0x3
-	LOCAL_CDC                           ShuckleMessageKind = 0x7
-	INFO                                ShuckleMessageKind = 0x8
-	SHUCKLE                             ShuckleMessageKind = 0xF
-	LOCAL_CHANGED_BLOCK_SERVICES        ShuckleMessageKind = 0x22
-	CREATE_LOCATION                     ShuckleMessageKind = 0x1
-	RENAME_LOCATION                     ShuckleMessageKind = 0x2
-	LOCATIONS                           ShuckleMessageKind = 0x5
-	REGISTER_SHARD                      ShuckleMessageKind = 0x4
-	REGISTER_CDC                        ShuckleMessageKind = 0x6
-	SET_BLOCK_SERVICE_FLAGS             ShuckleMessageKind = 0x9
-	REGISTER_BLOCK_SERVICES             ShuckleMessageKind = 0xA
-	CHANGED_BLOCK_SERVICES_AT_LOCATION  ShuckleMessageKind = 0xB
-	SHARDS_AT_LOCATION                  ShuckleMessageKind = 0xC
-	CDC_AT_LOCATION                     ShuckleMessageKind = 0xD
-	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED ShuckleMessageKind = 0x11
-	CDC_REPLICAS_DE_PR_EC_AT_ED         ShuckleMessageKind = 0x13
-	ALL_SHARDS                          ShuckleMessageKind = 0x14
-	DECOMMISSION_BLOCK_SERVICE          ShuckleMessageKind = 0x15
-	MOVE_SHARD_LEADER                   ShuckleMessageKind = 0x16
-	CLEAR_SHARD_INFO                    ShuckleMessageKind = 0x17
-	SHARD_BLOCK_SERVICES                ShuckleMessageKind = 0x18
-	ALL_CDC                             ShuckleMessageKind = 0x19
-	ERASE_DECOMMISSIONED_BLOCK          ShuckleMessageKind = 0x20
-	ALL_BLOCK_SERVICES_DEPRECATED       ShuckleMessageKind = 0x21
-	MOVE_CDC_LEADER                     ShuckleMessageKind = 0x23
-	CLEAR_CDC_INFO                      ShuckleMessageKind = 0x24
-	UPDATE_BLOCK_SERVICE_PATH           ShuckleMessageKind = 0x25
+	LOCAL_SHARDS                        RegistryMessageKind = 0x3
+	LOCAL_CDC                           RegistryMessageKind = 0x7
+	INFO                                RegistryMessageKind = 0x8
+	REGISTRY                            RegistryMessageKind = 0xF
+	LOCAL_CHANGED_BLOCK_SERVICES        RegistryMessageKind = 0x22
+	CREATE_LOCATION                     RegistryMessageKind = 0x1
+	RENAME_LOCATION                     RegistryMessageKind = 0x2
+	LOCATIONS                           RegistryMessageKind = 0x5
+	REGISTER_SHARD                      RegistryMessageKind = 0x4
+	REGISTER_CDC                        RegistryMessageKind = 0x6
+	SET_BLOCK_SERVICE_FLAGS             RegistryMessageKind = 0x9
+	REGISTER_BLOCK_SERVICES             RegistryMessageKind = 0xA
+	CHANGED_BLOCK_SERVICES_AT_LOCATION  RegistryMessageKind = 0xB
+	SHARDS_AT_LOCATION                  RegistryMessageKind = 0xC
+	CDC_AT_LOCATION                     RegistryMessageKind = 0xD
+	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED RegistryMessageKind = 0x11
+	CDC_REPLICAS_DE_PR_EC_AT_ED         RegistryMessageKind = 0x13
+	ALL_SHARDS                          RegistryMessageKind = 0x14
+	DECOMMISSION_BLOCK_SERVICE          RegistryMessageKind = 0x15
+	MOVE_SHARD_LEADER                   RegistryMessageKind = 0x16
+	CLEAR_SHARD_INFO                    RegistryMessageKind = 0x17
+	SHARD_BLOCK_SERVICES                RegistryMessageKind = 0x18
+	ALL_CDC                             RegistryMessageKind = 0x19
+	ERASE_DECOMMISSIONED_BLOCK          RegistryMessageKind = 0x20
+	ALL_BLOCK_SERVICES_DEPRECATED       RegistryMessageKind = 0x21
+	MOVE_CDC_LEADER                     RegistryMessageKind = 0x23
+	CLEAR_CDC_INFO                      RegistryMessageKind = 0x24
+	UPDATE_BLOCK_SERVICE_PATH           RegistryMessageKind = 0x25
 )
 
-var AllShuckleMessageKind = [...]ShuckleMessageKind{
+var AllRegistryMessageKind = [...]RegistryMessageKind{
 	LOCAL_SHARDS,
 	LOCAL_CDC,
 	INFO,
-	SHUCKLE,
+	REGISTRY,
 	LOCAL_CHANGED_BLOCK_SERVICES,
 	CREATE_LOCATION,
 	RENAME_LOCATION,
@@ -918,9 +918,9 @@ var AllShuckleMessageKind = [...]ShuckleMessageKind{
 	UPDATE_BLOCK_SERVICE_PATH,
 }
 
-const MaxShuckleMessageKind ShuckleMessageKind = 37
+const MaxRegistryMessageKind RegistryMessageKind = 37
 
-func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
+func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 	switch {
 	case k == "LOCAL_SHARDS":
 		return &LocalShardsReq{}, &LocalShardsResp{}, nil
@@ -928,8 +928,8 @@ func MkShuckleMessage(k string) (ShuckleRequest, ShuckleResponse, error) {
 		return &LocalCdcReq{}, &LocalCdcResp{}, nil
 	case k == "INFO":
 		return &InfoReq{}, &InfoResp{}, nil
-	case k == "SHUCKLE":
-		return &ShuckleReq{}, &ShuckleResp{}, nil
+	case k == "REGISTRY":
+		return &RegistryReq{}, &RegistryResp{}, nil
 	case k == "LOCAL_CHANGED_BLOCK_SERVICES":
 		return &LocalChangedBlockServicesReq{}, &LocalChangedBlockServicesResp{}, nil
 	case k == "CREATE_LOCATION":
@@ -5018,7 +5018,7 @@ func (v *AddrsInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocalShardsReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *LocalShardsReq) RegistryRequestKind() RegistryMessageKind {
 	return LOCAL_SHARDS
 }
 
@@ -5030,7 +5030,7 @@ func (v *LocalShardsReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocalShardsResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *LocalShardsResp) RegistryResponseKind() RegistryMessageKind {
 	return LOCAL_SHARDS
 }
 
@@ -5061,7 +5061,7 @@ func (v *LocalShardsResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocalCdcReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *LocalCdcReq) RegistryRequestKind() RegistryMessageKind {
 	return LOCAL_CDC
 }
 
@@ -5073,7 +5073,7 @@ func (v *LocalCdcReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocalCdcResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *LocalCdcResp) RegistryResponseKind() RegistryMessageKind {
 	return LOCAL_CDC
 }
 
@@ -5097,7 +5097,7 @@ func (v *LocalCdcResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *InfoReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *InfoReq) RegistryRequestKind() RegistryMessageKind {
 	return INFO
 }
 
@@ -5109,7 +5109,7 @@ func (v *InfoReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *InfoResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *InfoResp) RegistryResponseKind() RegistryMessageKind {
 	return INFO
 }
 
@@ -5151,37 +5151,37 @@ func (v *InfoResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShuckleReq) ShuckleRequestKind() ShuckleMessageKind {
-	return SHUCKLE
+func (v *RegistryReq) RegistryRequestKind() RegistryMessageKind {
+	return REGISTRY
 }
 
-func (v *ShuckleReq) Pack(w io.Writer) error {
+func (v *RegistryReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *ShuckleReq) Unpack(r io.Reader) error {
+func (v *RegistryReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShuckleResp) ShuckleResponseKind() ShuckleMessageKind {
-	return SHUCKLE
+func (v *RegistryResp) RegistryResponseKind() RegistryMessageKind {
+	return REGISTRY
 }
 
-func (v *ShuckleResp) Pack(w io.Writer) error {
+func (v *RegistryResp) Pack(w io.Writer) error {
 	if err := v.Addrs.Pack(w); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *ShuckleResp) Unpack(r io.Reader) error {
+func (v *RegistryResp) Unpack(r io.Reader) error {
 	if err := v.Addrs.Unpack(r); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *LocalChangedBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *LocalChangedBlockServicesReq) RegistryRequestKind() RegistryMessageKind {
 	return LOCAL_CHANGED_BLOCK_SERVICES
 }
 
@@ -5199,7 +5199,7 @@ func (v *LocalChangedBlockServicesReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocalChangedBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *LocalChangedBlockServicesResp) RegistryResponseKind() RegistryMessageKind {
 	return LOCAL_CHANGED_BLOCK_SERVICES
 }
 
@@ -5236,7 +5236,7 @@ func (v *LocalChangedBlockServicesResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *CreateLocationReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *CreateLocationReq) RegistryRequestKind() RegistryMessageKind {
 	return CREATE_LOCATION
 }
 
@@ -5260,7 +5260,7 @@ func (v *CreateLocationReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *CreateLocationResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *CreateLocationResp) RegistryResponseKind() RegistryMessageKind {
 	return CREATE_LOCATION
 }
 
@@ -5272,7 +5272,7 @@ func (v *CreateLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RenameLocationReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *RenameLocationReq) RegistryRequestKind() RegistryMessageKind {
 	return RENAME_LOCATION
 }
 
@@ -5296,7 +5296,7 @@ func (v *RenameLocationReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RenameLocationResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *RenameLocationResp) RegistryResponseKind() RegistryMessageKind {
 	return RENAME_LOCATION
 }
 
@@ -5308,7 +5308,7 @@ func (v *RenameLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocationsReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *LocationsReq) RegistryRequestKind() RegistryMessageKind {
 	return LOCATIONS
 }
 
@@ -5320,7 +5320,7 @@ func (v *LocationsReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocationsResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *LocationsResp) RegistryResponseKind() RegistryMessageKind {
 	return LOCATIONS
 }
 
@@ -5351,7 +5351,7 @@ func (v *LocationsResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterShardReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *RegisterShardReq) RegistryRequestKind() RegistryMessageKind {
 	return REGISTER_SHARD
 }
 
@@ -5387,7 +5387,7 @@ func (v *RegisterShardReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterShardResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *RegisterShardResp) RegistryResponseKind() RegistryMessageKind {
 	return REGISTER_SHARD
 }
 
@@ -5399,7 +5399,7 @@ func (v *RegisterShardResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterCdcReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *RegisterCdcReq) RegistryRequestKind() RegistryMessageKind {
 	return REGISTER_CDC
 }
 
@@ -5435,7 +5435,7 @@ func (v *RegisterCdcReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterCdcResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *RegisterCdcResp) RegistryResponseKind() RegistryMessageKind {
 	return REGISTER_CDC
 }
 
@@ -5447,7 +5447,7 @@ func (v *RegisterCdcResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *SetBlockServiceFlagsReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *SetBlockServiceFlagsReq) RegistryRequestKind() RegistryMessageKind {
 	return SET_BLOCK_SERVICE_FLAGS
 }
 
@@ -5477,7 +5477,7 @@ func (v *SetBlockServiceFlagsReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *SetBlockServiceFlagsResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *SetBlockServiceFlagsResp) RegistryResponseKind() RegistryMessageKind {
 	return SET_BLOCK_SERVICE_FLAGS
 }
 
@@ -5489,7 +5489,7 @@ func (v *SetBlockServiceFlagsResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *RegisterBlockServicesReq) RegistryRequestKind() RegistryMessageKind {
 	return REGISTER_BLOCK_SERVICES
 }
 
@@ -5520,7 +5520,7 @@ func (v *RegisterBlockServicesReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *RegisterBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *RegisterBlockServicesResp) RegistryResponseKind() RegistryMessageKind {
 	return REGISTER_BLOCK_SERVICES
 }
 
@@ -5532,7 +5532,7 @@ func (v *RegisterBlockServicesResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ChangedBlockServicesAtLocationReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *ChangedBlockServicesAtLocationReq) RegistryRequestKind() RegistryMessageKind {
 	return CHANGED_BLOCK_SERVICES_AT_LOCATION
 }
 
@@ -5556,7 +5556,7 @@ func (v *ChangedBlockServicesAtLocationReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ChangedBlockServicesAtLocationResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *ChangedBlockServicesAtLocationResp) RegistryResponseKind() RegistryMessageKind {
 	return CHANGED_BLOCK_SERVICES_AT_LOCATION
 }
 
@@ -5593,7 +5593,7 @@ func (v *ChangedBlockServicesAtLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardsAtLocationReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *ShardsAtLocationReq) RegistryRequestKind() RegistryMessageKind {
 	return SHARDS_AT_LOCATION
 }
 
@@ -5611,7 +5611,7 @@ func (v *ShardsAtLocationReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardsAtLocationResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *ShardsAtLocationResp) RegistryResponseKind() RegistryMessageKind {
 	return SHARDS_AT_LOCATION
 }
 
@@ -5642,7 +5642,7 @@ func (v *ShardsAtLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *CdcAtLocationReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *CdcAtLocationReq) RegistryRequestKind() RegistryMessageKind {
 	return CDC_AT_LOCATION
 }
 
@@ -5660,7 +5660,7 @@ func (v *CdcAtLocationReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *CdcAtLocationResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *CdcAtLocationResp) RegistryResponseKind() RegistryMessageKind {
 	return CDC_AT_LOCATION
 }
 
@@ -5684,7 +5684,7 @@ func (v *CdcAtLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardBlockServicesDEPRECATEDReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *ShardBlockServicesDEPRECATEDReq) RegistryRequestKind() RegistryMessageKind {
 	return SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED
 }
 
@@ -5702,7 +5702,7 @@ func (v *ShardBlockServicesDEPRECATEDReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardBlockServicesDEPRECATEDResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *ShardBlockServicesDEPRECATEDResp) RegistryResponseKind() RegistryMessageKind {
 	return SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED
 }
 
@@ -5733,7 +5733,7 @@ func (v *ShardBlockServicesDEPRECATEDResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *CdcReplicasDEPRECATEDReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *CdcReplicasDEPRECATEDReq) RegistryRequestKind() RegistryMessageKind {
 	return CDC_REPLICAS_DE_PR_EC_AT_ED
 }
 
@@ -5745,7 +5745,7 @@ func (v *CdcReplicasDEPRECATEDReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *CdcReplicasDEPRECATEDResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *CdcReplicasDEPRECATEDResp) RegistryResponseKind() RegistryMessageKind {
 	return CDC_REPLICAS_DE_PR_EC_AT_ED
 }
 
@@ -5776,7 +5776,7 @@ func (v *CdcReplicasDEPRECATEDResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllShardsReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *AllShardsReq) RegistryRequestKind() RegistryMessageKind {
 	return ALL_SHARDS
 }
 
@@ -5788,7 +5788,7 @@ func (v *AllShardsReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllShardsResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *AllShardsResp) RegistryResponseKind() RegistryMessageKind {
 	return ALL_SHARDS
 }
 
@@ -5819,7 +5819,7 @@ func (v *AllShardsResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *DecommissionBlockServiceReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *DecommissionBlockServiceReq) RegistryRequestKind() RegistryMessageKind {
 	return DECOMMISSION_BLOCK_SERVICE
 }
 
@@ -5837,7 +5837,7 @@ func (v *DecommissionBlockServiceReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *DecommissionBlockServiceResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *DecommissionBlockServiceResp) RegistryResponseKind() RegistryMessageKind {
 	return DECOMMISSION_BLOCK_SERVICE
 }
 
@@ -5849,7 +5849,7 @@ func (v *DecommissionBlockServiceResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *MoveShardLeaderReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *MoveShardLeaderReq) RegistryRequestKind() RegistryMessageKind {
 	return MOVE_SHARD_LEADER
 }
 
@@ -5873,7 +5873,7 @@ func (v *MoveShardLeaderReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *MoveShardLeaderResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *MoveShardLeaderResp) RegistryResponseKind() RegistryMessageKind {
 	return MOVE_SHARD_LEADER
 }
 
@@ -5885,7 +5885,7 @@ func (v *MoveShardLeaderResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ClearShardInfoReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *ClearShardInfoReq) RegistryRequestKind() RegistryMessageKind {
 	return CLEAR_SHARD_INFO
 }
 
@@ -5909,7 +5909,7 @@ func (v *ClearShardInfoReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ClearShardInfoResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *ClearShardInfoResp) RegistryResponseKind() RegistryMessageKind {
 	return CLEAR_SHARD_INFO
 }
 
@@ -5921,7 +5921,7 @@ func (v *ClearShardInfoResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardBlockServicesReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *ShardBlockServicesReq) RegistryRequestKind() RegistryMessageKind {
 	return SHARD_BLOCK_SERVICES
 }
 
@@ -5939,7 +5939,7 @@ func (v *ShardBlockServicesReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ShardBlockServicesResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *ShardBlockServicesResp) RegistryResponseKind() RegistryMessageKind {
 	return SHARD_BLOCK_SERVICES
 }
 
@@ -5970,7 +5970,7 @@ func (v *ShardBlockServicesResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllCdcReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *AllCdcReq) RegistryRequestKind() RegistryMessageKind {
 	return ALL_CDC
 }
 
@@ -5982,7 +5982,7 @@ func (v *AllCdcReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllCdcResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *AllCdcResp) RegistryResponseKind() RegistryMessageKind {
 	return ALL_CDC
 }
 
@@ -6013,7 +6013,7 @@ func (v *AllCdcResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *EraseDecommissionedBlockReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *EraseDecommissionedBlockReq) RegistryRequestKind() RegistryMessageKind {
 	return ERASE_DECOMMISSIONED_BLOCK
 }
 
@@ -6043,7 +6043,7 @@ func (v *EraseDecommissionedBlockReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *EraseDecommissionedBlockResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *EraseDecommissionedBlockResp) RegistryResponseKind() RegistryMessageKind {
 	return ERASE_DECOMMISSIONED_BLOCK
 }
 
@@ -6061,7 +6061,7 @@ func (v *EraseDecommissionedBlockResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllBlockServicesDeprecatedReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *AllBlockServicesDeprecatedReq) RegistryRequestKind() RegistryMessageKind {
 	return ALL_BLOCK_SERVICES_DEPRECATED
 }
 
@@ -6073,7 +6073,7 @@ func (v *AllBlockServicesDeprecatedReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllBlockServicesDeprecatedResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *AllBlockServicesDeprecatedResp) RegistryResponseKind() RegistryMessageKind {
 	return ALL_BLOCK_SERVICES_DEPRECATED
 }
 
@@ -6104,7 +6104,7 @@ func (v *AllBlockServicesDeprecatedResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *MoveCdcLeaderReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *MoveCdcLeaderReq) RegistryRequestKind() RegistryMessageKind {
 	return MOVE_CDC_LEADER
 }
 
@@ -6128,7 +6128,7 @@ func (v *MoveCdcLeaderReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *MoveCdcLeaderResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *MoveCdcLeaderResp) RegistryResponseKind() RegistryMessageKind {
 	return MOVE_CDC_LEADER
 }
 
@@ -6140,7 +6140,7 @@ func (v *MoveCdcLeaderResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ClearCdcInfoReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *ClearCdcInfoReq) RegistryRequestKind() RegistryMessageKind {
 	return CLEAR_CDC_INFO
 }
 
@@ -6164,7 +6164,7 @@ func (v *ClearCdcInfoReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *ClearCdcInfoResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *ClearCdcInfoResp) RegistryResponseKind() RegistryMessageKind {
 	return CLEAR_CDC_INFO
 }
 
@@ -6176,7 +6176,7 @@ func (v *ClearCdcInfoResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *UpdateBlockServicePathReq) ShuckleRequestKind() ShuckleMessageKind {
+func (v *UpdateBlockServicePathReq) RegistryRequestKind() RegistryMessageKind {
 	return UPDATE_BLOCK_SERVICE_PATH
 }
 
@@ -6200,7 +6200,7 @@ func (v *UpdateBlockServicePathReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *UpdateBlockServicePathResp) ShuckleResponseKind() ShuckleMessageKind {
+func (v *UpdateBlockServicePathResp) RegistryResponseKind() RegistryMessageKind {
 	return UPDATE_BLOCK_SERVICE_PATH
 }
 

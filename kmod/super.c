@@ -15,68 +15,68 @@
 #include "metadata.h"
 #include "dentry.h"
 #include "net.h"
-#include "shuckle.h"
+#include "registry.h"
 #include "bincode.h"
 #include "sysfs.h"
 #include "err.h"
 #include "rs.h"
 
 #define MSECS_TO_JIFFIES(_ms) ((_ms * HZ) / 1000)
-int ternfs_shuckle_refresh_time_jiffies = MSECS_TO_JIFFIES(60000);
+int ternfs_registry_refresh_time_jiffies = MSECS_TO_JIFFIES(60000);
 unsigned int ternfs_readahead_pages = 10000;
 
 static void ternfs_free_fs_info(struct ternfs_fs_info* info) {
     ternfs_debug("info=%p", info);
-    cancel_delayed_work_sync(&info->shuckle_refresh_work);
+    cancel_delayed_work_sync(&info->registry_refresh_work);
     ternfs_net_shard_free_socket(&info->sock);
-    put_net(info->shuckle_addr.net);
-    kfree(info->shuckle_addr.addr);
+    put_net(info->registry_addr.net);
+    kfree(info->registry_addr.addr);
     kfree(info);
 }
 
 static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
     int err;
 
-    struct socket* shuckle_sock;
-    err = ternfs_create_shuckle_socket(&info->shuckle_addr, &shuckle_sock);
+    struct socket* registry_sock;
+    err = ternfs_create_registry_socket(&info->registry_addr, &registry_sock);
     if (err < 0) { return err; }
 
     struct kvec iov;
     struct msghdr msg = {NULL};
     {
         static_assert(TERNFS_LOCAL_SHARDS_REQ_SIZE == 0);
-        char shuckle_req[TERNFS_SHUCKLE_REQ_HEADER_SIZE];
-        ternfs_write_shuckle_req_header(shuckle_req, TERNFS_LOCAL_SHARDS_REQ_SIZE, TERNFS_SHUCKLE_LOCAL_SHARDS);
+        char registry_req[TERNFS_REGISTRY_REQ_HEADER_SIZE];
+        ternfs_write_registry_req_header(registry_req, TERNFS_LOCAL_SHARDS_REQ_SIZE, TERNFS_REGISTRY_LOCAL_SHARDS);
         int written_so_far;
-        for (written_so_far = 0; written_so_far < sizeof(shuckle_req);) {
-            iov.iov_base = shuckle_req + written_so_far;
-            iov.iov_len = sizeof(shuckle_req) - written_so_far;
-            int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+        for (written_so_far = 0; written_so_far < sizeof(registry_req);) {
+            iov.iov_base = registry_req + written_so_far;
+            iov.iov_len = sizeof(registry_req) - written_so_far;
+            int written = kernel_sendmsg(registry_sock, &msg, &iov, 1, iov.iov_len);
             if (written < 0) { err = written; goto out_sock; }
             written_so_far += written;
         }
 
-        char shards_resp_header[TERNFS_SHUCKLE_RESP_HEADER_SIZE + 2]; // + 2 = list len
+        char shards_resp_header[TERNFS_REGISTRY_RESP_HEADER_SIZE + 2]; // + 2 = list len
         int read_so_far;
         for (read_so_far = 0; read_so_far < sizeof(shards_resp_header);) {
             iov.iov_base = shards_resp_header + read_so_far;
             iov.iov_len = sizeof(shards_resp_header) - read_so_far;
-            int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+            int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
             if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
-        u32 shuckle_resp_len;
-        u8 shuckle_resp_kind;
-        err = ternfs_read_shuckle_resp_header(shards_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+        u32 registry_resp_len;
+        u8 registry_resp_kind;
+        err = ternfs_read_registry_resp_header(shards_resp_header, &registry_resp_len, &registry_resp_kind);
         if (err < 0) { goto out_sock; }
         u16 shard_info_len = get_unaligned_le16(shards_resp_header + sizeof(shards_resp_header) - 2);
         if (shard_info_len != 256) {
             ternfs_info("expected 256 shard infos, got %d", shard_info_len);
             err = -EIO; goto out_sock;
         }
-        if (shuckle_resp_len != 2 + TERNFS_SHARD_INFO_SIZE*256) {
-            ternfs_info("expected size of %d, got %d", 2 + TERNFS_SHARD_INFO_SIZE*256, shuckle_resp_len);
+        if (registry_resp_len != 2 + TERNFS_SHARD_INFO_SIZE*256) {
+            ternfs_info("expected size of %d, got %d", 2 + TERNFS_SHARD_INFO_SIZE*256, registry_resp_len);
             err = -EIO; goto out_sock;
         }
 
@@ -86,7 +86,7 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
             for (read_so_far = 0; read_so_far < TERNFS_SHARD_INFO_SIZE;) {
                 iov.iov_base = shard_info_resp + read_so_far;
                 iov.iov_len = sizeof(shard_info_resp) - read_so_far;
-                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
                 if (read == 0) { err = -ECONNRESET; goto out_sock; }
                 if (read < 0) { err = read; goto out_sock; }
                 read_so_far += read;
@@ -118,33 +118,33 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
     }
     {
         static_assert(TERNFS_LOCAL_CDC_REQ_SIZE == 0);
-        char cdc_req[TERNFS_SHUCKLE_REQ_HEADER_SIZE];
-        ternfs_write_shuckle_req_header(cdc_req, TERNFS_LOCAL_CDC_REQ_SIZE, TERNFS_SHUCKLE_LOCAL_CDC);
+        char cdc_req[TERNFS_REGISTRY_REQ_HEADER_SIZE];
+        ternfs_write_registry_req_header(cdc_req, TERNFS_LOCAL_CDC_REQ_SIZE, TERNFS_REGISTRY_LOCAL_CDC);
         int written_so_far;
         for (written_so_far = 0; written_so_far < sizeof(cdc_req);) {
             iov.iov_base = cdc_req + written_so_far;
             iov.iov_len = sizeof(cdc_req) - written_so_far;
-            int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+            int written = kernel_sendmsg(registry_sock, &msg, &iov, 1, iov.iov_len);
             if (written < 0) { err = written; goto out_sock; }
             written_so_far += written;
         }
 
-        char cdc_resp_header[TERNFS_SHUCKLE_RESP_HEADER_SIZE];
+        char cdc_resp_header[TERNFS_REGISTRY_RESP_HEADER_SIZE];
         int read_so_far;
         for (read_so_far = 0; read_so_far < sizeof(cdc_resp_header);) {
             iov.iov_base = cdc_resp_header + read_so_far;
             iov.iov_len = sizeof(cdc_resp_header) - read_so_far;
-            int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+            int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
             if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
-        u32 shuckle_resp_len;
-        u8 shuckle_resp_kind;
-        err = ternfs_read_shuckle_resp_header(cdc_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+        u32 registry_resp_len;
+        u8 registry_resp_kind;
+        err = ternfs_read_registry_resp_header(cdc_resp_header, &registry_resp_len, &registry_resp_kind);
         if (err < 0) { goto out_sock; }
-        if (shuckle_resp_len != TERNFS_LOCAL_CDC_RESP_SIZE) {
-            ternfs_debug("expected size of %d, got %d", TERNFS_LOCAL_CDC_RESP_SIZE, shuckle_resp_len);
+        if (registry_resp_len != TERNFS_LOCAL_CDC_RESP_SIZE) {
+            ternfs_debug("expected size of %d, got %d", TERNFS_LOCAL_CDC_RESP_SIZE, registry_resp_len);
             err = -EINVAL; goto out_sock;
         }
         {
@@ -152,7 +152,7 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
             for (read_so_far = 0; read_so_far < sizeof(cdc_resp);) {
                 iov.iov_base = (char*)&cdc_resp + read_so_far;
                 iov.iov_len = sizeof(cdc_resp) - read_so_far;
-                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
                 if (read == 0) { err = -ECONNRESET; goto out_sock; }
                 if (read < 0) { err = read; goto out_sock; }
                 read_so_far += read;
@@ -185,47 +185,47 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
 
     {
         {
-            char changed_block_services_req[TERNFS_SHUCKLE_REQ_HEADER_SIZE + TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE];
+            char changed_block_services_req[TERNFS_REGISTRY_REQ_HEADER_SIZE + TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE];
             struct ternfs_bincode_put_ctx ctx = {
-                .start = changed_block_services_req + TERNFS_SHUCKLE_REQ_HEADER_SIZE,
-                .cursor = changed_block_services_req + TERNFS_SHUCKLE_REQ_HEADER_SIZE,
+                .start = changed_block_services_req + TERNFS_REGISTRY_REQ_HEADER_SIZE,
+                .cursor = changed_block_services_req + TERNFS_REGISTRY_REQ_HEADER_SIZE,
                 .end = changed_block_services_req + sizeof(changed_block_services_req),
             };
             ternfs_local_changed_block_services_req_put_start(&ctx, start);
             ternfs_local_changed_block_services_req_put_changed_since(&ctx, start, changed_since, info->block_services_last_changed_time);
             ternfs_local_changed_block_services_req_put_end(&ctx, changed_since, end);
-            ternfs_write_shuckle_req_header(changed_block_services_req, TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE, TERNFS_SHUCKLE_LOCAL_CHANGED_BLOCK_SERVICES);
+            ternfs_write_registry_req_header(changed_block_services_req, TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE, TERNFS_REGISTRY_LOCAL_CHANGED_BLOCK_SERVICES);
             int written_so_far;
             for (written_so_far = 0; written_so_far < sizeof(changed_block_services_req);) {
                 iov.iov_base = changed_block_services_req + written_so_far;
                 iov.iov_len = sizeof(changed_block_services_req) - written_so_far;
-                int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+                int written = kernel_sendmsg(registry_sock, &msg, &iov, 1, iov.iov_len);
                 if (written < 0) { err = written; goto out_sock; }
                 written_so_far += written;
             }
         }
-        u32 shuckle_resp_len;
-        u8 shuckle_resp_kind;
+        u32 registry_resp_len;
+        u8 registry_resp_kind;
         {
-            char block_services_resp_header[TERNFS_SHUCKLE_RESP_HEADER_SIZE];
+            char block_services_resp_header[TERNFS_REGISTRY_RESP_HEADER_SIZE];
             int read_so_far;
             for (read_so_far = 0; read_so_far < sizeof(block_services_resp_header);) {
                 iov.iov_base = block_services_resp_header + read_so_far;
                 iov.iov_len = sizeof(block_services_resp_header) - read_so_far;
-                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
                 if (read == 0) { err = -ECONNRESET; goto out_sock; }
                 if (read < 0) { err = read; goto out_sock; }
                 read_so_far += read;
             }
-            err = ternfs_read_shuckle_resp_header(block_services_resp_header, &shuckle_resp_len, &shuckle_resp_kind);
+            err = ternfs_read_registry_resp_header(block_services_resp_header, &registry_resp_len, &registry_resp_kind);
             if (err < 0) { goto out_sock; }
         }
         u64 last_changed;
         u16 block_services_len;
         {
             char last_changed_and_len[sizeof(last_changed) + sizeof(block_services_len)];
-            if (shuckle_resp_len < sizeof(last_changed_and_len)) {
-                ternfs_debug("expected size of at least %ld for BlockServicesWithFlagChangeResp, got %d", sizeof(last_changed_and_len), shuckle_resp_len);
+            if (registry_resp_len < sizeof(last_changed_and_len)) {
+                ternfs_debug("expected size of at least %ld for BlockServicesWithFlagChangeResp, got %d", sizeof(last_changed_and_len), registry_resp_len);
                 err = -EINVAL;
                 goto out_sock;
             }
@@ -233,19 +233,19 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
             for (read_so_far = 0; read_so_far < sizeof(last_changed_and_len);) {
                 iov.iov_base = last_changed_and_len + read_so_far;
                 iov.iov_len = sizeof(last_changed_and_len) - read_so_far;
-                int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
                 if (read == 0) { err = -ECONNRESET; goto out_sock; }
                 if (read < 0) { err = read; goto out_sock; }
                 read_so_far += read;
             }
             last_changed = get_unaligned_le64(last_changed_and_len);
             block_services_len = get_unaligned_le16(last_changed_and_len + sizeof(last_changed));
-            shuckle_resp_len -= sizeof(last_changed_and_len);
+            registry_resp_len -= sizeof(last_changed_and_len);
         }
         {
-            if (shuckle_resp_len != TERNFS_BLOCK_SERVICE_SIZE * block_services_len) {
+            if (registry_resp_len != TERNFS_BLOCK_SERVICE_SIZE * block_services_len) {
                 ternfs_debug("expected size of at least %d for %d BlockServices in BlockServicesWithFlagChangeResp, got %d",
-                    TERNFS_BLOCK_SERVICE_SIZE * block_services_len, block_services_len, shuckle_resp_len);
+                    TERNFS_BLOCK_SERVICE_SIZE * block_services_len, block_services_len, registry_resp_len);
                 err = -EINVAL;
                 goto out_sock;
             }
@@ -256,7 +256,7 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
                 for (read_so_far = 0; read_so_far < sizeof(block_service_buf);) {
                     iov.iov_base = block_service_buf + read_so_far;
                     iov.iov_len = sizeof(block_service_buf) - read_so_far;
-                    int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+                    int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
                     if (read == 0) { err = -ECONNRESET; goto out_sock; }
                     if (read < 0) { err = read; goto out_sock; }
                     read_so_far += read;
@@ -301,30 +301,30 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
     }
     {
         static_assert(TERNFS_INFO_REQ_SIZE == 0);
-        char info_req[TERNFS_SHUCKLE_REQ_HEADER_SIZE];
-        ternfs_write_shuckle_req_header(info_req, 0, TERNFS_SHUCKLE_INFO);
+        char info_req[TERNFS_REGISTRY_REQ_HEADER_SIZE];
+        ternfs_write_registry_req_header(info_req, 0, TERNFS_REGISTRY_INFO);
         int written_so_far;
         for (written_so_far = 0; written_so_far < sizeof(info_req);) {
             iov.iov_base = info_req + written_so_far;
             iov.iov_len = sizeof(info_req) - written_so_far;
-            int written = kernel_sendmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len);
+            int written = kernel_sendmsg(registry_sock, &msg, &iov, 1, iov.iov_len);
             if (written < 0) { err = written; goto out_sock; }
             written_so_far += written;
         }
 
-        char info_resp_header[TERNFS_SHUCKLE_RESP_HEADER_SIZE];
+        char info_resp_header[TERNFS_REGISTRY_RESP_HEADER_SIZE];
         int read_so_far;
         for (read_so_far = 0; read_so_far < sizeof(info_resp_header);) {
             iov.iov_base = info_resp_header + read_so_far;
             iov.iov_len = sizeof(info_resp_header) - read_so_far;
-            int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+            int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
             if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
         }
         u32 info_resp_len;
         u8 info_resp_kind;
-        err = ternfs_read_shuckle_resp_header(info_resp_header, &info_resp_len, &info_resp_kind);
+        err = ternfs_read_registry_resp_header(info_resp_header, &info_resp_len, &info_resp_kind);
         if (err < 0) {
             goto out_sock;
         }
@@ -336,7 +336,7 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
         for (read_so_far = 0; read_so_far < sizeof(info_resp);) {
             iov.iov_base = (char*)&info_resp + read_so_far;
             iov.iov_len = sizeof(info_resp) - read_so_far;
-            int read = kernel_recvmsg(shuckle_sock, &msg, &iov, 1, iov.iov_len, 0);
+            int read = kernel_recvmsg(registry_sock, &msg, &iov, 1, iov.iov_len, 0);
             if (read == 0) { err = -ECONNRESET; goto out_sock; }
             if (read < 0) { err = read; goto out_sock; }
             read_so_far += read;
@@ -363,22 +363,22 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
         atomic64_set(&(info->capacity), capacity.x);
     }
 
-    sock_release(shuckle_sock);
+    sock_release(registry_sock);
     return 0;
 
 out_sock:
-    sock_release(shuckle_sock);
+    sock_release(registry_sock);
     return err;
 }
 
-static void ternfs_shuckle_refresh_work(struct work_struct* work) {
-    struct ternfs_fs_info* info = container_of(container_of(work, struct delayed_work, work), struct ternfs_fs_info, shuckle_refresh_work);
+static void ternfs_registry_refresh_work(struct work_struct* work) {
+    struct ternfs_fs_info* info = container_of(container_of(work, struct delayed_work, work), struct ternfs_fs_info, registry_refresh_work);
     int err = ternfs_refresh_fs_info(info);
     if (err != 0 && err != -EAGAIN) {
-        ternfs_warn("failed to refresh shuckle data: %d", err);
+        ternfs_warn("failed to refresh registry data: %d", err);
     }
-    ternfs_debug("scheduling shuckle data refresh after %dms", jiffies_to_msecs(ternfs_shuckle_refresh_time_jiffies));
-    queue_delayed_work(system_long_wq, &info->shuckle_refresh_work, ternfs_shuckle_refresh_time_jiffies);
+    ternfs_debug("scheduling registry data refresh after %dms", jiffies_to_msecs(ternfs_registry_refresh_time_jiffies));
+    queue_delayed_work(system_long_wq, &info->registry_refresh_work, ternfs_registry_refresh_time_jiffies);
 }
 
 enum {
@@ -459,13 +459,13 @@ static struct ternfs_fs_info* ternfs_init_fs_info(struct net* net, const char* d
     struct ternfs_fs_info* ternfs_info = kzalloc(sizeof(struct ternfs_fs_info), GFP_KERNEL);
     if (!ternfs_info) { err = -ENOMEM; goto out; }
 
-    ternfs_info->shuckle_addr.net = get_net(net);
-    ternfs_info->shuckle_addr.addr = kmalloc(strlen(dev_name)+1, GFP_KERNEL);
-    if (!ternfs_info->shuckle_addr.addr) {
+    ternfs_info->registry_addr.net = get_net(net);
+    ternfs_info->registry_addr.addr = kmalloc(strlen(dev_name)+1, GFP_KERNEL);
+    if (!ternfs_info->registry_addr.addr) {
         err = -ENOMEM;
         goto out_info;
     }
-    memcpy(ternfs_info->shuckle_addr.addr, dev_name, strlen(dev_name)+1);
+    memcpy(ternfs_info->registry_addr.addr, dev_name, strlen(dev_name)+1);
 
     err = ternfs_parse_options(options, ternfs_info);
     if (err) { goto out_addr; }
@@ -482,17 +482,17 @@ static struct ternfs_fs_info* ternfs_init_fs_info(struct net* net, const char* d
     err = ternfs_refresh_fs_info(ternfs_info);
     if (err != 0) { goto out_socket; }
 
-    INIT_DELAYED_WORK(&ternfs_info->shuckle_refresh_work, ternfs_shuckle_refresh_work);
-    queue_delayed_work(system_long_wq, &ternfs_info->shuckle_refresh_work, ternfs_shuckle_refresh_time_jiffies);
+    INIT_DELAYED_WORK(&ternfs_info->registry_refresh_work, ternfs_registry_refresh_work);
+    queue_delayed_work(system_long_wq, &ternfs_info->registry_refresh_work, ternfs_registry_refresh_time_jiffies);
 
     return ternfs_info;
 
 out_socket:
     ternfs_net_shard_free_socket(&ternfs_info->sock);
 out_addr:
-    kfree(ternfs_info->shuckle_addr.addr);
+    kfree(ternfs_info->registry_addr.addr);
 out_info:
-    put_net(ternfs_info->shuckle_addr.net);
+    put_net(ternfs_info->registry_addr.net);
     kfree(ternfs_info);
 out:
     return ERR_PTR(err);

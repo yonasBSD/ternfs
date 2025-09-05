@@ -1,6 +1,6 @@
 # Common TernFS alerts and what to do with them
 
-* **`ternshuckle`** `some decommissioned block services have to be replaced:`. This non-clearable alert is warning you that some drive which has been marked as DECOMMISSIONED has not been replaced. It's not urgent and therefore it's usually silenced, but it does require action eventually.
+* **`ternregistry`** `some decommissioned block services have to be replaced:`. This non-clearable alert is warning you that some drive which has been marked as DECOMMISSIONED has not been replaced. It's not urgent and therefore it's usually silenced, but it does require action eventually.
 
 * **`ternblocks`**, **`terngcscrub`**: Alerts warning you about `BLOCK_IO_ERROR_FILE` or `BLOCK_IO_ERROR_DEVICE`. Mostly due to two reasons:
 

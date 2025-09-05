@@ -22,11 +22,11 @@ We might notice that disks fail in a variety of ways (alerts in the block servic
 
 1. If you're still investigating (i.e. you're not sure that the disk is actually dead), you can set the block service as read-only in the meantime to stop clients from attempting to write to it:
 
-       % terncli -shuckle <shuckle-addr> -prod blockservice-flags -id 0xbadc0ffee0ddf00d -set NO_WRITE
+       % terncli -registry <registry-addr> -prod blockservice-flags -id 0xbadc0ffee0ddf00d -set NO_WRITE
 
     If you realize that the block service is actually fine, you can remove the `NO_WRITE` flag with
 
-       % terncli -shuckle <shuckle-addr> -prod blockservice-flags -id 0xbadc0ffee0ddf00d -unset NO_WRITE
+       % terncli -registry <registry-addr> -prod blockservice-flags -id 0xbadc0ffee0ddf00d -unset NO_WRITE
 
     The flags are visible in the web ui.
 
@@ -34,7 +34,7 @@ We might notice that disks fail in a variety of ways (alerts in the block servic
 
 1. Once you're sure that the disk is gone, you can mark it as such with
 
-       % terncli -shuckle <shuckle-addr> -prod blockservice-flags -id 0xbadc0ffee0ddf00d -set DECOMMISSIONED
+       % terncli -registry <registry-addr> -prod blockservice-flags -id 0xbadc0ffee0ddf00d -set DECOMMISSIONED
 
     Clients will stop reading/writing to the block service (again, with some delay). Note that setting a block service as decommissioned is a permanent action: from this point on, the block service is gone forever, and can only be migrated out of. Or in other words, the command above is not something to be put in automated scripts -- a human must vet it, at least for now.
 

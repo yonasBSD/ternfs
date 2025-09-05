@@ -578,7 +578,7 @@ type fileMigrationResult struct {
 }
 
 type migrator struct {
-	shuckleAddress            string
+	registryAddress            string
 	log                       *log.Logger
 	client                    *client.Client
 	numMigrators              uint64
@@ -599,9 +599,9 @@ type migrator struct {
 	failureDomainFilter string
 }
 
-func Migrator(shuckleAddress string, log *log.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int, logOnly bool, failureDomain string) *migrator {
+func Migrator(registryAddress string, log *log.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int, logOnly bool, failureDomain string) *migrator {
 	res := migrator{
-		shuckleAddress,
+		registryAddress,
 		log,
 		client,
 		numMigrators,
@@ -634,8 +634,8 @@ func (m *migrator) Run() {
 	m.runFileFetchers(&fetchersWaitGroup)
 	m.runFileAggregator(&aggregatorWaitGroup)
 	m.runFileMigrators(&migratorsWaitGroup)
-	shuckleResponseAlert := m.log.NewNCAlert(5 * time.Minute)
-	shuckleResponseAlert.SetAppType(log.XMON_DAYTIME)
+	registryResponseAlert := m.log.NewNCAlert(5 * time.Minute)
+	registryResponseAlert.SetAppType(log.XMON_DAYTIME)
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 OUT:
@@ -651,11 +651,11 @@ OUT:
 		}
 		m.cleanVisitedBlockService()
 		m.log.Debug("requesting block services")
-		blockServicesResp, err := client.ShuckleRequest(m.log, nil, m.shuckleAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		blockServicesResp, err := client.RegistryRequest(m.log, nil, m.registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
-			m.log.RaiseNC(shuckleResponseAlert, "error getting block services from shuckle: %v", err)
+			m.log.RaiseNC(registryResponseAlert, "error getting block services from registry: %v", err)
 		} else {
-			m.log.ClearNC(shuckleResponseAlert)
+			m.log.ClearNC(registryResponseAlert)
 			blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
 			for _, bs := range blockServices.BlockServices {
 

@@ -684,7 +684,7 @@ func main() {
 	trace := flag.Bool("trace", false, "")
 	logFile := flag.String("log-file", "", "Redirect logging output to given file.")
 	signalParent := flag.Bool("signal-parent", false, "If passed, will send USR1 to parent when ready -- useful for tests.")
-	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	registryAddress := flag.String("registry", "", "Registry address (host:port).")
 	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
@@ -698,8 +698,8 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if *shuckleAddress == "" {
-		fmt.Fprintf(os.Stderr, "You need to specify -shuckle\n")
+	if *registryAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -registry\n")
 		os.Exit(2)
 	}
 
@@ -765,7 +765,7 @@ func main() {
 	counters := client.NewClientCounters()
 
 	var err error
-	c, err = client.NewClient(logger, nil, *shuckleAddress, localAddresses)
+	c, err = client.NewClient(logger, nil, *registryAddress, localAddresses)
 	if err != nil {
 		panic(err)
 	}

@@ -83,10 +83,10 @@ func main() {
 	appInstance := flag.String("app-instance", "eggsgc", "")
 	trace := flag.Bool("trace", false, "Enables debug logging.")
 	logFile := flag.String("log-file", "", "File to log to, stdout if not provided.")
-	shuckleAddress := flag.String("shuckle", "", "Shuckle address (host:port).")
+	registryAddress := flag.String("registry", "", "Registry address (host:port).")
 	var addresses flags.StringArrayFlags
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
-	numShuckleHandlers := flag.Uint("num-shuckle-handlers", 10, "Number of parallel shuckle requests")
+	numRegistryHandlers := flag.Uint("num-registry-handlers", 10, "Number of parallel registry requests")
 	syslog := flag.Bool("syslog", false, "")
 	mtu := flag.Uint64("mtu", 0, "")
 	collectDirectories := flag.Bool("collect-directories", false, "")
@@ -118,8 +118,8 @@ func main() {
 	pprofHttpPort := flag.Int("pprof-http-port", -1, "Port on which to run the pprof HTTP server")
 	flag.Parse()
 
-	if *shuckleAddress == "" {
-		fmt.Fprintf(os.Stderr, "You need to specify -shuckle.\n")
+	if *registryAddress == "" {
+		fmt.Fprintf(os.Stderr, "You need to specify -registry.\n")
 		os.Exit(2)
 	}
 
@@ -220,8 +220,8 @@ func main() {
 	}
 
 	// Keep trying forever, we'll alert anyway and it's useful when we restart everything
-	shuckleTimeouts := client.DefaultShuckleTimeout
-	shuckleTimeouts.ReconnectTimeout.Overall = 0
+	registryTimeouts := client.DefaultRegistryTimeout
+	registryTimeouts.ReconnectTimeout.Overall = 0
 	shardTimeouts := &client.DefaultShardTimeout
 	shardTimeouts.Initial = 500 * time.Millisecond
 	shardTimeouts.Overall = 0
@@ -235,7 +235,7 @@ func main() {
 	blockTimeouts.Overall = 10 * time.Minute
 
 	dirInfoCache := client.NewDirInfoCache()
-	c, err := client.NewClient(l, &shuckleTimeouts, *shuckleAddress, localAddresses)
+	c, err := client.NewClient(l, &registryTimeouts, *registryAddress, localAddresses)
 	if err != nil {
 		panic(err)
 	}
@@ -243,7 +243,7 @@ func main() {
 	c.SetShardTimeouts(shardTimeouts)
 	c.SetCDCTimeouts(cdcTimeouts)
 	c.SetBlockTimeout(blockTimeouts)
-	c.IncreaseNumShuckleHandlersTo(*numShuckleHandlers)
+	c.IncreaseNumRegistryHandlersTo(*numRegistryHandlers)
 	counters := client.NewClientCounters()
 	c.SetCounters(counters)
 	terminateChan := make(chan any)
@@ -400,7 +400,7 @@ func main() {
 	if *migrate {
 		go func() {
 			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
-			migrator := cleanup.Migrator(*shuckleAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
+			migrator := cleanup.Migrator(*registryAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
 			migrator.Run()
 		}()
 	} else {

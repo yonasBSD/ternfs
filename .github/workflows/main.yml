@@ -1,0 +1,87 @@
+name: CI on EC2 Runner
+
+on: [push]
+
+jobs:
+  start-runner:
+    name: Start self-hosted EC2 runner
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: machulav/ec2-github-runner@v2
+        with:
+          mode: start
+          github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
+          ec2-image-id: ami-0360c520857e3138f # Ubuntu 24.04 LTS in us-east-1
+          ec2-instance-type: i4i.16xlarge
+          subnet-id: subnet-0c8c82178fa2827a8
+          security-group-id: sg-02e5d785a60f97a56
+          pre-runner-script: |
+            #!/usr/bin/env bash
+            set -euo pipefail
+            # Use the one SSD for the runner
+            mkfs.ext4 -F /dev/nvme1n1
+            mkdir -p /actions-runner/_work
+            mount /dev/nvme1n1 /actions-runner/_work
+            # Use the other SSD for docker
+            mkfs.ext4 -F /dev/nvme2n1
+            mkdir -p /docker-data
+            mount /dev/nvme2n1 /docker-data
+            mkdir -p /etc/docker
+            echo '{\"data-root\": \"/docker-data\"}' > /etc/docker/daemon.json
+            # Install docker
+            apt-get update
+            apt-get install -y ca-certificates curl gnupg
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            chmod a+r /etc/apt/keyrings/docker.gpg
+            echo \
+              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+              $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+              tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt-get update
+            apt-get install -y docker-ce docker-ce-cli containerd.io
+            # Install other packages
+            apt-get install -y build-essential
+
+  run-build:
+    name: Run tests on EC2
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.label }} # Runs on the newly created EC2 instance
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.REPO_GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Run tests
+        run: ./ci.py --build --short --integration --docker
+
+  stop-runner:
+    name: Stop self-hosted EC2 runner
+    needs: [start-runner, run-build]
+    runs-on: ubuntu-latest
+    if: always() # Always runs this job to ensure instance termination
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Stop EC2 runner
+        uses: machulav/ec2-github-runner@v2
+        with:
+          mode: stop
+          github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
+          label: ${{ needs.start-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}

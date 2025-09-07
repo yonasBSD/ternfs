@@ -1,11 +1,20 @@
 name: CI on EC2 Runner
 
-on: [push]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - labeled
 
 jobs:
   start-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event.label.name == 'ci'
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -70,7 +79,8 @@ jobs:
     name: Stop self-hosted EC2 runner
     needs: [start-runner, run-build]
     runs-on: ubuntu-latest
-    if: always() # Always runs this job to ensure instance termination
+    # Always run (i.e. no `needs`) to try to ensure that the worker is always terminated
+    if: github.ref == 'refs/heads/main' || github.event.label.name == 'ci'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

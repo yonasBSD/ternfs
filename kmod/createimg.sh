@@ -12,4 +12,6 @@ qemu-img create -f qcow2 -F qcow2 -b $base_img ubuntu.img 100G
 cloud-localds init.img image-init.yml
 
 # remove existing key if any
-ssh-keygen -R '[localhost]:2223' >/dev/null
+if [[ -f "~/.ssh/known_hosts" ]]; then
+    ssh-keygen -R '[localhost]:2223' >/dev/null
+fi

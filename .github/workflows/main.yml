@@ -14,7 +14,7 @@ jobs:
   start-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event.label.name == 'ci'
+    if: github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -27,60 +27,88 @@ jobs:
           aws-region: us-east-1
       - name: Start EC2 runner
         id: start-ec2-runner
-        uses: machulav/ec2-github-runner@v2
+        uses: bitonic/ec2-github-runner@8034bafdf19451028a886dd3279cfac6b703d52c
         with:
           mode: start
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
           ec2-image-id: ami-0360c520857e3138f # Ubuntu 24.04 LTS in us-east-1
-          ec2-instance-type: i4i.16xlarge
+          ec2-instance-type: m6id.metal
           subnet-id: subnet-0c8c82178fa2827a8
-          security-group-id: sg-02e5d785a60f97a56
+          security-group-id: sg-00ea50179403152ca
+          # Need a bit more space for root filesystem (to install apt packages, mostly)
+          block-device-mappings: >
+            [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 25, "VolumeType": "gp3"}}]
+          key-name: ternfs-ci
+          # We need to do this before everything else since we'll have to work in /actions-runner/_work
+          # afterwards. This is pretty annoying since if anything fails here we won't see any logs.
           pre-runner-script: |
-            #!/usr/bin/env bash
-            set -euo pipefail
-            # Use the one SSD for the runner
-            mkfs.ext4 -F /dev/nvme1n1
+            # Setup one SSD for the runner
+            for dev in $(lsblk --raw -pno NAME,MOUNTPOINT | grep -P '^\/dev\/nvme[0-9]n[0-9] *$' | xargs); do
+              if [[ $(lsblk --raw -pno NAME,MOUNTPOINT | grep -F $dev | wc -l) -eq 1 ]]; then
+                data_dev_work=$dev
+                break
+              fi
+            done
+            mkfs.ext4 -F $data_dev_work
             mkdir -p /actions-runner/_work
-            mount /dev/nvme1n1 /actions-runner/_work
-            # Use the other SSD for docker
-            mkfs.ext4 -F /dev/nvme2n1
-            mkdir -p /docker-data
-            mount /dev/nvme2n1 /docker-data
-            mkdir -p /etc/docker
-            echo '{\"data-root\": \"/docker-data\"}' > /etc/docker/daemon.json
-            # Install docker
-            apt-get update
-            apt-get install -y ca-certificates curl gnupg
-            install -m 0755 -d /etc/apt/keyrings
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-            chmod a+r /etc/apt/keyrings/docker.gpg
-            echo \
-              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-              $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-              tee /etc/apt/sources.list.d/docker.list > /dev/null
-            apt-get update
-            apt-get install -y docker-ce docker-ce-cli containerd.io
-            # Install other packages
-            apt-get install -y build-essential
+            mount $data_dev_work /actions-runner/_work
 
   run-build:
     name: Run tests on EC2
     needs: start-runner
     runs-on: ${{ needs.start-runner.outputs.label }} # Runs on the newly created EC2 instance
     steps:
+      - name: Install docker
+        run: |
+          # Use the other SSD for docker
+          for dev in $(lsblk --raw -pno NAME,MOUNTPOINT | grep -P '^\/dev\/nvme[0-9]n[0-9] *$' | xargs); do
+            if [[ $(lsblk --raw -pno NAME,MOUNTPOINT | grep -F $dev | wc -l) -eq 1 ]]; then
+              docker_dev=$dev
+              break
+            fi
+          done
+          mkfs.ext4 -F $docker_dev
+          mkdir -p /docker-data
+          mount $docker_dev /docker-data
+          mkdir -p /etc/docker
+          echo '{"data-root": "/docker-data"}' > /etc/docker/daemon.json
+          # Install docker
+          apt-get update
+          apt-get install -y ca-certificates curl gnupg
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            tee /etc/apt/sources.list.d/docker.list > /dev/null
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Log in to GitHub Container Registry
         run: echo "${{ secrets.REPO_GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Install packages for CI
+        run: apt-get install -y build-essential
       - name: Run tests
         run: ./ci.py --build --short --integration --docker
+      - name: Install packages for kmod CI
+        run: |
+          sudo sed -Ei 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          apt-get update
+          apt-get install -y qemu-system-x86 cloud-image-utils
+          apt-get build-dep -y linux linux-image-unsigned-$(uname -r)
+          apt-get install -y fakeroot llvm libncurses-dev dwarves
+      - name: Download base qemu image
+        run: curl -O https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img
+      - name: Run kmod tests
+        run: ./ci.py --short --prepare-image ${{ github.workspace }}/focal-server-cloudimg-amd64.img --kmod --leader-only
 
   stop-runner:
     name: Stop self-hosted EC2 runner
     needs: [start-runner, run-build]
+    if: always()
     runs-on: ubuntu-latest
-    # Always run (i.e. no `needs`) to try to ensure that the worker is always terminated
-    if: github.ref == 'refs/heads/main' || github.event.label.name == 'ci'
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -89,7 +117,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
       - name: Stop EC2 runner
-        uses: machulav/ec2-github-runner@v2
+        uses: bitonic/ec2-github-runner@8034bafdf19451028a886dd3279cfac6b703d52c
+        if: needs.start-runner.outputs.ec2-instance-id != ''
         with:
           mode: stop
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}

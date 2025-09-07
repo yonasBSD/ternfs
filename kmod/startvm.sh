@@ -12,6 +12,6 @@ qemu-system-x86_64 \
     -drive file="${SCRIPT_DIR}/ubuntu.img",index=0,media=disk,cache=unsafe \
     -drive file="${SCRIPT_DIR}/init.img",index=1,media=disk,cache=unsafe \
     -m 128G \
-    -smp 48,cores=48 \
+    -smp $(nproc),cores=$(nproc) \
     -nographic \
     -nic user,hostfwd=tcp::2223-:22

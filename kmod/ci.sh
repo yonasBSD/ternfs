@@ -88,7 +88,7 @@ echo 'Unmounting'
 timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
 
 echo 'Removing module'
-timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "sudo rmmod ternfs"
+timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "sudo rmmod ternfs-client"
 
 kill $trace_pid
 kill $dmesg_pid

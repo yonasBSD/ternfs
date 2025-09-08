@@ -122,7 +122,7 @@ func defragFileInternal(
 			atomic.AddUint64(&stats.DefraggedPhysicalBytesBefore, uint64(body.Parity.Blocks())*uint64(body.Stripes)*uint64(body.CellSize))
 			atomic.AddUint64(&stats.DefraggedPhysicalBytesAfter, uint64(desiredSpanParams.Parity.Blocks())*uint64(desiredSpanParams.Stripes)*uint64(desiredSpanParams.CellSize))
 			// read span
-			spanBuf, err := c.FetchSpan(log, bufPool, fileId, fileSpansResp.BlockServices, span)
+			spanBuf, err := c.FetchSpan(log, bufPool, fileId, &client.SpanWithBlockServices{BlockServices: fileSpansResp.BlockServices, Span: span})
 			if err != nil {
 				return err
 			}

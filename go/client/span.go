@@ -494,26 +494,25 @@ func (c *Client) fetchCell(
 func (c *Client) fetchMirroredStripe(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
-	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
+	span *SpanWithBlockServices,
 	body *msgs.FetchedBlocksSpan,
 	offset uint64,
 ) (start uint64, buf *bufpool.Buf, err error) {
-	spanOffset := uint32(offset - span.Header.ByteOffset)
+	spanOffset := uint32(offset - span.Span.Header.ByteOffset)
 	cell := spanOffset / body.CellSize
 	B := body.Parity.Blocks()
-	start = span.Header.ByteOffset + uint64(cell*body.CellSize)
+	start = span.Span.Header.ByteOffset + uint64(cell*body.CellSize)
 
-	log.Debug("getting cell %v -> %v", start, span.Header.ByteOffset+uint64((cell+1)*body.CellSize))
+	log.Debug("getting cell %v -> %v", start, span.Span.Header.ByteOffset+uint64((cell+1)*body.CellSize))
 
 	found := false
 	for i := 0; i < B && !found; i++ {
 		block := &body.Blocks[i]
-		blockService := &blockServices[block.BlockServiceIx]
+		blockService := &span.BlockServices[block.BlockServiceIx]
 		if !blockService.Flags.CanRead() {
 			continue
 		}
-		buf, err = c.fetchCell(log, bufPool, blockServices, body, uint8(i), uint8(cell))
+		buf, err = c.fetchCell(log, bufPool, span.BlockServices, body, uint8(i), uint8(cell))
 		if err != nil {
 			continue
 		}
@@ -536,14 +535,13 @@ func (c *Client) fetchRsStripe(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
-	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
+	span *SpanWithBlockServices,
 	body *msgs.FetchedBlocksSpan,
 	offset uint64,
 ) (start uint64, buf *bufpool.Buf, err error) {
 	D := body.Parity.DataBlocks()
 	B := body.Parity.Blocks()
-	spanOffset := uint32(offset - span.Header.ByteOffset)
+	spanOffset := uint32(offset - span.Span.Header.ByteOffset)
 	blocks := make([]*bufpool.Buf, B)
 	defer func() {
 		for i := range blocks {
@@ -553,16 +551,16 @@ func (c *Client) fetchRsStripe(
 	blocksFound := 0
 	stripe := spanOffset / (uint32(D) * body.CellSize)
 	if stripe >= uint32(body.Stripes) {
-		panic(fmt.Errorf("impossible: stripe %v >= stripes %v, file=%v spanOffset=%v, spanSize=%v, cellSize=%v, D=%v", stripe, body.Stripes, fileId, spanOffset, span.Header.Size, body.CellSize, D))
+		panic(fmt.Errorf("impossible: stripe %v >= stripes %v, file=%v spanOffset=%v, spanSize=%v, cellSize=%v, D=%v", stripe, body.Stripes, fileId, spanOffset, span.Span.Header.Size, body.CellSize, D))
 	}
 	log.Debug("fetching stripe %v, cell size %v", stripe, body.CellSize)
 	for i := 0; i < B; i++ {
 		block := &body.Blocks[i]
-		blockService := &blockServices[block.BlockServiceIx]
+		blockService := &span.BlockServices[block.BlockServiceIx]
 		if !blockService.Flags.CanRead() {
 			continue
 		}
-		buf, err = c.fetchCell(log, bufPool, blockServices, body, uint8(i), uint8(stripe))
+		buf, err = c.fetchCell(log, bufPool, span.BlockServices, body, uint8(i), uint8(stripe))
 		if err != nil {
 			continue
 		}
@@ -607,46 +605,45 @@ func (c *Client) fetchRsStripe(
 		return 0, nil, fmt.Errorf("bad crc, expected %v, got %v", msgs.Crc(stripeCrc), body.StripesCrc[stripe])
 	}
 
-	return span.Header.ByteOffset + uint64(stripe)*uint64(D)*uint64(body.CellSize), stripeBuf, nil
+	return span.Span.Header.ByteOffset + uint64(stripe)*uint64(D)*uint64(body.CellSize), stripeBuf, nil
 }
 
 func (c *Client) FetchStripeFromSpan(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
-	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
+	span *SpanWithBlockServices,
 	offset uint64,
 ) (*FetchedStripe, error) {
-	if offset < span.Header.ByteOffset || offset >= span.Header.ByteOffset+uint64(span.Header.Size) {
-		panic(fmt.Errorf("out of bounds offset %v for span going from %v to %v", offset, span.Header.ByteOffset, span.Header.ByteOffset+uint64(span.Header.Size)))
+	if offset < span.Span.Header.ByteOffset || offset >= span.Span.Header.ByteOffset+uint64(span.Span.Header.Size) {
+		panic(fmt.Errorf("out of bounds offset %v for span going from %v to %v", offset, span.Span.Header.ByteOffset, span.Span.Header.ByteOffset+uint64(span.Span.Header.Size)))
 	}
-	log.DebugStack(1, "will fetch span %v -> %v", span.Header.ByteOffset, span.Header.ByteOffset+uint64(span.Header.Size))
+	log.DebugStack(1, "will fetch span %v -> %v", span.Span.Header.ByteOffset, span.Span.Header.ByteOffset+uint64(span.Span.Header.Size))
 
 	// if inline, it's very easy
-	if span.Header.StorageClass == msgs.INLINE_STORAGE {
-		data := span.Body.(*msgs.FetchedInlineSpan).Body
+	if span.Span.Header.StorageClass == msgs.INLINE_STORAGE {
+		data := span.Span.Body.(*msgs.FetchedInlineSpan).Body
 		dataCrc := msgs.Crc(crc32c.Sum(0, data))
-		if dataCrc != span.Header.Crc {
-			panic(fmt.Errorf("header CRC for inline span is %v, but data is %v", span.Header.Crc, dataCrc))
+		if dataCrc != span.Span.Header.Crc {
+			panic(fmt.Errorf("header CRC for inline span is %v, but data is %v", span.Span.Header.Crc, dataCrc))
 		}
 		stripe := &FetchedStripe{
-			Buf:   bufpool.NewBuf(&span.Body.(*msgs.FetchedInlineSpan).Body),
-			Start: span.Header.ByteOffset,
+			Buf:   bufpool.NewBuf(&span.Span.Body.(*msgs.FetchedInlineSpan).Body),
+			Start: span.Span.Header.ByteOffset,
 		}
 		log.Debug("fetched inline span")
 		return stripe, nil
 	}
 
 	// otherwise we need to fetch
-	body := span.Body.(*msgs.FetchedBlocksSpan)
+	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	D := body.Parity.DataBlocks()
 
 	// if we're in trailing zeros, just return the trailing zeros part
 	// (this is a "synthetic" stripe of sorts, but it's helpful to callers)
-	spanDataEnd := span.Header.ByteOffset + uint64(body.Stripes)*uint64(D*int(body.CellSize))
+	spanDataEnd := span.Span.Header.ByteOffset + uint64(body.Stripes)*uint64(D*int(body.CellSize))
 	if offset >= spanDataEnd {
-		buf := bufPool.Get(int(uint64(span.Header.Size) - spanDataEnd))
+		buf := bufPool.Get(int(uint64(span.Span.Header.Size) - spanDataEnd))
 		bufSlice := buf.Bytes()
 		for i := range bufSlice {
 			bufSlice[i] = 0
@@ -664,12 +661,12 @@ func (c *Client) FetchStripeFromSpan(
 	var buf *bufpool.Buf
 	var err error
 	if D == 1 {
-		start, buf, err = c.fetchMirroredStripe(log, bufPool, blockServices, span, body, offset)
+		start, buf, err = c.fetchMirroredStripe(log, bufPool, span, body, offset)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		start, buf, err = c.fetchRsStripe(log, bufPool, fileId, blockServices, span, body, offset)
+		start, buf, err = c.fetchRsStripe(log, bufPool, fileId, span, body, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -677,7 +674,7 @@ func (c *Client) FetchStripeFromSpan(
 
 	// chop off trailing zeros in the span
 	stripeEnd := start + uint64(len(buf.Bytes()))
-	spanEnd := span.Header.ByteOffset + uint64(span.Header.Size)
+	spanEnd := span.Span.Header.ByteOffset + uint64(span.Span.Header.Size)
 	if stripeEnd > spanEnd {
 		*buf.BytesPtr() = (*buf.BytesPtr())[:uint64(len(*buf.BytesPtr()))-(stripeEnd-spanEnd)]
 	}
@@ -704,26 +701,25 @@ func (c *Client) fetchInlineSpan(
 
 func (c *Client) fetchMirroredSpan(log *log.Logger,
 	bufPool *bufpool.BufPool,
-	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
+	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
-	body := span.Body.(*msgs.FetchedBlocksSpan)
+	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	blockSize := uint32(body.Stripes) * uint32(body.CellSize)
 
-	buf := bufPool.Get(int(span.Header.Size))
-	for i := blockSize; i < span.Header.Size; i++ {
+	buf := bufPool.Get(int(span.Span.Header.Size))
+	for i := blockSize; i < span.Span.Header.Size; i++ {
 		buf.Bytes()[i] = 0
 	}
 
 	for _, block := range body.Blocks {
-		blockService := &blockServices[block.BlockServiceIx]
+		blockService := &span.BlockServices[block.BlockServiceIx]
 		if !blockService.Flags.CanRead() {
 			continue
 		}
 		data, err := c.FetchBlock(log, nil, blockService, block.BlockId, 0, blockSize, block.Crc)
 		if err == nil {
 			defer c.PutFetchedBlock(data)
-			if copy(buf.Bytes(), data.Bytes()) != int(span.Header.Size) {
+			if copy(buf.Bytes(), data.Bytes()) != int(span.Span.Header.Size) {
 				panic(fmt.Errorf("runt block"))
 			}
 			return buf, nil
@@ -734,10 +730,9 @@ func (c *Client) fetchMirroredSpan(log *log.Logger,
 
 func (c *Client) fetchRsSpan(log *log.Logger,
 	bufPool *bufpool.BufPool,
-	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
+	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
-	body := span.Body.(*msgs.FetchedBlocksSpan)
+	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	blockSize := uint32(body.Stripes) * uint32(body.CellSize)
 
 	dataSize := blockSize * uint32(body.Parity.DataBlocks())
@@ -760,7 +755,7 @@ func (c *Client) fetchRsSpan(log *log.Logger,
 scheduleMoreBlocks:
 	for succeedBlocks+inFlightBlocks < dataBlocks && blockIdx < body.Parity.Blocks() {
 		block := body.Blocks[blockIdx]
-		blockService := &blockServices[block.BlockServiceIx]
+		blockService := &span.BlockServices[block.BlockServiceIx]
 		if !blockService.Flags.CanRead() {
 			blockIdx++
 			continue
@@ -810,8 +805,8 @@ scheduleMoreBlocks:
 		rs.Get(body.Parity).RecoverInto(haveBlocksRecoverIxs, haveBlocksRecover, uint8(i), blockBufs[i].Bytes())
 	}
 
-	buf := bufPool.Get(int(span.Header.Size))
-	for i := dataSize; i < span.Header.Size; i++ {
+	buf := bufPool.Get(int(span.Span.Header.Size))
+	for i := dataSize; i < span.Span.Header.Size; i++ {
 		buf.Bytes()[i] = 0
 	}
 	spanOffset := 0
@@ -828,8 +823,8 @@ scheduleMoreBlocks:
 	}
 
 	dataCrc := msgs.Crc(crc32c.Sum(0, buf.Bytes()))
-	if dataCrc != span.Header.Crc {
-		return nil, fmt.Errorf("header CRC for span is %v, but data is %v", span.Header.Crc, dataCrc)
+	if dataCrc != span.Span.Header.Crc {
+		return nil, fmt.Errorf("header CRC for span is %v, but data is %v", span.Span.Header.Crc, dataCrc)
 	}
 
 	return buf, nil
@@ -840,19 +835,18 @@ func (c *Client) FetchSpan(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
-	blockServices []msgs.BlockService,
-	span *msgs.FetchedSpan,
+	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
 	switch {
 	// inline storage
-	case span.Header.StorageClass == msgs.INLINE_STORAGE:
-		return c.fetchInlineSpan(span.Body.(*msgs.FetchedInlineSpan), span.Header.Crc)
+	case span.Span.Header.StorageClass == msgs.INLINE_STORAGE:
+		return c.fetchInlineSpan(span.Span.Body.(*msgs.FetchedInlineSpan), span.Span.Header.Crc)
 	// Mirrored replication
-	case span.Body.(*msgs.FetchedBlocksSpan).Parity.DataBlocks() == 1:
-		return c.fetchMirroredSpan(log, bufPool, blockServices, span)
+	case span.Span.Body.(*msgs.FetchedBlocksSpan).Parity.DataBlocks() == 1:
+		return c.fetchMirroredSpan(log, bufPool, span)
 	// RS replication
 	default:
-		return c.fetchRsSpan(log, bufPool, blockServices, span)
+		return c.fetchRsSpan(log, bufPool, span)
 	}
 }
 
@@ -862,70 +856,51 @@ func (c *Client) FetchStripe(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
-	blockServices []msgs.BlockService,
-	spans []msgs.FetchedSpan,
+	spans []SpanWithBlockServices,
 	offset uint64,
 ) (*FetchedStripe, error) {
 	// find span
 	spanIx := sort.Search(len(spans), func(i int) bool {
-		return offset < spans[i].Header.ByteOffset+uint64(spans[i].Header.Size)
+		return offset < spans[i].Span.Header.ByteOffset+uint64(spans[i].Span.Header.Size)
 	})
 	if spanIx >= len(spans) {
 		log.Debug("empty file offset=%v spanIx=%v len(spans)=%v", offset, spanIx, len(spans))
 		return nil, nil // out of spans
 	}
 	span := &spans[spanIx]
-	if offset >= (span.Header.ByteOffset + uint64(span.Header.Size)) {
+	if offset >= (span.Span.Header.ByteOffset + uint64(span.Span.Header.Size)) {
 		log.Debug("could not find span")
 		return nil, nil // out of spans
 	}
 
-	return c.FetchStripeFromSpan(log, bufPool, fileId, blockServices, span, offset)
+	return c.FetchStripeFromSpan(log, bufPool, fileId, span, offset)
+}
+
+type SpanWithBlockServices struct {
+	BlockServices []msgs.BlockService
+	Span          *msgs.FetchedSpan
 }
 
 func (c *Client) FetchSpans(
 	log *log.Logger,
 	fileId msgs.InodeId,
-) (blockServices []msgs.BlockService, spans []msgs.FetchedSpan, err error) {
-	req := msgs.LocalFileSpansReq{FileId: fileId}
-	resp := msgs.LocalFileSpansResp{}
+) (spans []SpanWithBlockServices, err error) {
 	for {
+		req := msgs.LocalFileSpansReq{FileId: fileId}
+		resp := msgs.LocalFileSpansResp{}
 		if err := c.ShardRequest(log, fileId.Shard(), &req, &resp); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for s := range resp.Spans {
-			span := &resp.Spans[s]
-			body, hasBlock := span.Body.(*msgs.FetchedBlocksSpan)
-			// adjust indices
-			if hasBlock {
-				for b := range body.Blocks {
-					block := &body.Blocks[b]
-					blockService := &resp.BlockServices[block.BlockServiceIx]
-					found := false
-					for bs := range blockServices {
-						if blockServices[bs].Id == blockService.Id {
-							block.BlockServiceIx = uint8(bs)
-							found = true
-						}
-					}
-					if !found {
-						blockServices = append(blockServices, *blockService)
-						if len(blockServices) > 256 {
-							panic(fmt.Errorf("too many block services"))
-						}
-						block.BlockServiceIx = uint8(len(blockServices) - 1)
-					}
-				}
-			}
-			spans = append(spans, *span)
+			spans = append(spans, SpanWithBlockServices{BlockServices: resp.BlockServices, Span: &resp.Spans[s]})
 		}
 		req.ByteOffset = resp.NextOffset
 		if req.ByteOffset == 0 {
 			break
 		}
 	}
-	log.Debug("fetched bss %+v spans %+v", blockServices, spans)
-	return blockServices, spans, err
+	log.Debug("fetched spans %+v", spans)
+	return spans, err
 }
 
 type fileReader struct {
@@ -934,8 +909,7 @@ type fileReader struct {
 	bufPool       *bufpool.BufPool
 	fileId        msgs.InodeId
 	fileSize      int64 // if -1, we haven't initialized this yet
-	blockServices []msgs.BlockService
-	spans         []msgs.FetchedSpan
+	spans         []SpanWithBlockServices
 	currentStripe *FetchedStripe
 	cursor        uint64
 }
@@ -950,7 +924,7 @@ func (f *fileReader) Close() error {
 func (f *fileReader) Read(p []byte) (int, error) {
 	if f.currentStripe == nil || f.cursor >= (f.currentStripe.Start+uint64(len(f.currentStripe.Buf.Bytes()))) {
 		var err error
-		f.currentStripe, err = f.client.FetchStripe(f.log, f.bufPool, f.fileId, f.blockServices, f.spans, f.cursor)
+		f.currentStripe, err = f.client.FetchStripe(f.log, f.bufPool, f.fileId, f.spans, f.cursor)
 		if err != nil {
 			return 0, err
 		}
@@ -990,18 +964,17 @@ func (c *Client) ReadFile(
 	bufPool *bufpool.BufPool,
 	id msgs.InodeId,
 ) (io.ReadSeekCloser, error) {
-	blockServices, spans, err := c.FetchSpans(log, id)
+	spans, err := c.FetchSpans(log, id)
 	if err != nil {
 		return nil, err
 	}
 	r := &fileReader{
-		client:        c,
-		log:           log,
-		bufPool:       bufPool,
-		fileId:        id,
-		fileSize:      -1,
-		blockServices: blockServices,
-		spans:         spans,
+		client:   c,
+		log:      log,
+		bufPool:  bufPool,
+		fileId:   id,
+		fileSize: -1,
+		spans:    spans,
 	}
 	return r, nil
 }
@@ -1011,7 +984,7 @@ func (c *Client) FetchFile(
 	bufPool *bufpool.BufPool,
 	id msgs.InodeId,
 ) (*bufpool.Buf, error) {
-	blockServices, spans, err := c.FetchSpans(log, id)
+	spans, err := c.FetchSpans(log, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,10 +999,10 @@ func (c *Client) FetchFile(
 	wg := sync.WaitGroup{}
 	totalSize := 0
 	for i := range len(spans) {
-		totalSize += int(spans[i].Header.Size)
+		totalSize += int(spans[i].Span.Header.Size)
 		wg.Add(1)
 		go func(idx int) {
-			buf, err := c.FetchSpan(log, bufPool, id, blockServices, &spans[idx])
+			buf, err := c.FetchSpan(log, bufPool, id, &spans[idx])
 			if err == nil {
 				bufs[idx] = buf
 			} else {
@@ -1045,11 +1018,11 @@ func (c *Client) FetchFile(
 			bufPool.Put(buf)
 			return nil, fmt.Errorf("failed to fetch file %v", id)
 		}
-		if len(bufs[i].Bytes()) != int(spans[i].Header.Size) {
+		if len(bufs[i].Bytes()) != int(spans[i].Span.Header.Size) {
 			bufPool.Put(buf)
 			return nil, fmt.Errorf("failed to fetch file %v, span size mismatch", id)
 		}
-		copy(buf.Bytes()[spans[i].Header.ByteOffset:], bufs[i].Bytes())
+		copy(buf.Bytes()[spans[i].Span.Header.ByteOffset:], bufs[i].Bytes())
 	}
 
 	return buf, nil

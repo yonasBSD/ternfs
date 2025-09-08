@@ -4,6 +4,7 @@
 # due to issues with compiling the go-sqlite3 lib on 3.20.
 # We intend to drop the alpine build entirely, see https://internal-repo/issues/336.
 FROM alpine:3.18
+LABEL org.opencontainers.image.source https://github.com/XTXMarkets/ternfs
 RUN set -eu
 RUN apk update
 RUN apk add ca-certificates

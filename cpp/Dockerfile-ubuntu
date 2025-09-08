@@ -1,4 +1,5 @@
 FROM ubuntu:22.04
+LABEL org.opencontainers.image.source https://github.com/XTXMarkets/ternfs
 RUN set -eu
 # See <https://stackoverflow.com/questions/71941032/why-i-cannot-run-apt-update-inside-a-fresh-ubuntu22-04>
 RUN rm -f /etc/apt/apt.conf.d/docker-clean

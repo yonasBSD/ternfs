@@ -910,7 +910,7 @@ func (c *Client) FetchSpans(
 					}
 					if !found {
 						blockServices = append(blockServices, *blockService)
-						if len(blockServices) > 266 {
+						if len(blockServices) > 256 {
 							panic(fmt.Errorf("too many block services"))
 						}
 						block.BlockServiceIx = uint8(len(blockServices) - 1)

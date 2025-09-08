@@ -25,6 +25,7 @@
 #include "MultiplexedChannel.hpp"
 #include "PeriodicLoop.hpp"
 #include "Protocol.hpp"
+#include "Random.hpp"
 #include "ShardDB.hpp"
 #include "ShardKey.hpp"
 #include "SharedRocksDB.hpp"
@@ -33,7 +34,6 @@
 #include "Time.hpp"
 #include "Timings.hpp"
 #include "UDPSocketPair.hpp"
-#include "wyhash.h"
 #include "Xmon.hpp"
 
 struct ShardReq {
@@ -740,7 +740,7 @@ private:
 
     // outgoing network
     UDPSender _sender;
-    uint64_t _packetDropRand;
+    RandomGenerator _packetDropRand;
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 
 
@@ -817,7 +817,7 @@ public:
         _knownLastReleased(_logsDB.getLastReleased()),
         _nextTimeout(0),
         _catchupWindowIndex(0),
-        _requestIdCounter(wyhash64_rand())
+        _requestIdCounter(RandomGenerator().generate64())
     {
         expandKey(ShardKey, _expandedShardKey);
         expandKey(CDCKey, _expandedCDCKey);
@@ -928,7 +928,7 @@ public:
             write.lastReleased  = lastReleased;
 
             for (const auto& receiver : *leadersAtOtherLocations) {
-                bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+                bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
                 if (unlikely(dropArtificially)) {
                     LOG_DEBUG(_env, "artificially dropping replication write %s to shard %s at location %s", write.idx, receiver.id, receiver.locationId);
                     return;
@@ -999,7 +999,7 @@ public:
                     }
 
                     // depending on protocol we need different kind of responses
-                    bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+                    bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
                     switch(request.protocol){
                         case SHARD_REQ_PROTOCOL_VERSION:
                             {
@@ -1263,7 +1263,7 @@ public:
                 _shardEntries.pop_back(); // back out the log entry
                 LOG_ERROR(_env, "error preparing log entry for request: %s from: %s err: %s", req.msg, req.clientAddr, err);
                 // depending on protocol we need different kind of responses
-                bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+                bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
                 switch(req.protocol){
                     case SHARD_REQ_PROTOCOL_VERSION:
                         {
@@ -1326,7 +1326,7 @@ public:
                 logSlowProxyReq(it->second);
 
                 // depending on protocol we need different kind of responses
-                bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+                bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
                 ALWAYS_ASSERT(req.protocol == SHARD_REQ_PROTOCOL_VERSION);
                 {
                     ShardRespMsg forwarded_resp;
@@ -1535,7 +1535,7 @@ public:
         }
         auto& addrInfo = *addrInfoPtr;
 
-        bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+        bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
         if (unlikely(dropArtificially)) {
             LOG_DEBUG(_env, "artificially dropping response %s", response.msg.id);
             return;
@@ -1560,7 +1560,7 @@ public:
         }
         auto& addrInfo = *addrInfoPtr;
 
-        bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+        bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
         if (unlikely(dropArtificially)) {
             LOG_DEBUG(_env, "artificially dropping request %s", request.msg.id);
             return;
@@ -1642,7 +1642,7 @@ private:
     std::vector<ShardReq> _requests;
 
     UDPSender _sender;
-    uint64_t _packetDropRand;
+    RandomGenerator _packetDropRand;
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 
     virtual void sendStop() override {
@@ -1688,7 +1688,7 @@ public:
 
         for(auto& req : _requests) {
             ALWAYS_ASSERT(readOnlyShardReq(req.msg.body.kind()));
-            bool dropArtificially = wyhash64(&_packetDropRand) % 10'000 < _outgoingPacketDropProbability;
+            bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
             switch(req.protocol){
                 case SHARD_REQ_PROTOCOL_VERSION:
                 {

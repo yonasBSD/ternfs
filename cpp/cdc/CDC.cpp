@@ -21,11 +21,11 @@
 #include "PeriodicLoop.hpp"
 #include "Protocol.hpp"
 #include "SharedRocksDB.hpp"
+#include "Random.hpp"
 #include "Registry.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
 #include "UDPSocketPair.hpp"
-#include "wyhash.h"
 #include "Xmon.hpp"
 #include "XmonAgent.hpp"
 
@@ -270,7 +270,7 @@ public:
         _seenShards(false),
         _currentLogIndex(_shared.db.lastAppliedLogEntry()),
         // important to not catch stray requests from previous executions
-        _shardRequestIdCounter(wyhash64_rand()),
+        _shardRequestIdCounter(RandomGenerator().generate64()),
         _shardTimeout(options.shardTimeout),
         _receiver({.perSockMaxRecvMsg = MAX_MSG_RECEIVE, .maxMsgSize = MAX_UDP_MTU}),
         _cdcSender({.maxMsgSize = MAX_UDP_MTU}),

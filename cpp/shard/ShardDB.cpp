@@ -28,11 +28,11 @@
 #include "Env.hpp"
 #include "Exception.hpp"
 #include "Protocol.hpp"
+#include "Random.hpp"
 #include "RocksDBUtils.hpp"
 #include "ShardDBData.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
-#include "wyhash.h"
 #include "XmonAgent.hpp"
 
 // TODO maybe revisit all those ALWAYS_ASSERTs
@@ -1584,9 +1584,9 @@ struct ShardDBImpl {
             // Fill in whatever remains. We don't need to be deterministic here (we would have to
             // if we were in log application), but we might as well.
             {
-                uint64_t rand = time.ns;
+                RandomGenerator rand(time.ns);
                 while (pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0) {
-                    uint64_t ix = wyhash64(&rand) % candidateBlockServices.size();
+                    uint64_t ix = rand.generate64() % candidateBlockServices.size();
                     LOG_DEBUG(_env, "(2) Picking block service candidate %s, failure domain %s", candidateBlockServices[ix], GoLangQuotedStringFmt((const char*)inMemoryBlockServicesData.blockServices.at(candidateBlockServices[ix].u64).failureDomain.data(), 16));
                     pickedBlockServices.emplace_back(candidateBlockServices[ix]);
                     std::iter_swap(candidateBlockServices.begin()+ix, candidateBlockServices.end()-1);

@@ -3,7 +3,7 @@
 #include <chrono>
 
 #include "rs.h"
-#include "wyhash.h"
+#include "Random.hpp"
 
 int main(int argc, const char** argv) {
     const auto usageAndDie = [argv]() {
@@ -30,9 +30,9 @@ int main(int argc, const char** argv) {
     uint64_t blockSize = std::stoull(argv[4]);
     uint64_t iterations = 100;
     fprintf(stderr, "Running with RS(%d,%d), block size %ld, %ld iterations.\n", D, P, blockSize, iterations);
-    uint64_t rand = 0;
+    RandomGenerator rand(0);
     std::vector<uint8_t> buf(blockSize*(D+P+1));
-    wyhash64_bytes(&rand, buf.data(), blockSize*D);
+    rand.generateBytes((char*)buf.data(), blockSize*D);
     std::vector<const uint8_t*> dataBlocks(D);
     for (int i = 0; i < D; i++) {
         dataBlocks[i] = &buf[i*blockSize];

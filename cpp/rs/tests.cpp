@@ -5,7 +5,7 @@
 #include <algorithm>
 
 #include "rs.h"
-#include "wyhash.h"
+#include "Random.hpp"
 
 #define ASSERT(expr) do { \
         if (!(expr)) { \
@@ -15,7 +15,7 @@
     } while (false)
 
 int main() {
-    uint64_t rand = 0;
+    RandomGenerator rand(0);
     constexpr int maxBlockSize = 1000;
     std::vector<uint8_t> buf(maxBlockSize*(16+16)); // all blocks
     std::vector<rs_cpu_level> cpuLevels = {RS_CPU_SCALAR, RS_CPU_AVX2, RS_CPU_GFNI};
@@ -25,17 +25,17 @@ int main() {
         }
         rs_set_cpu_level(level);
         for (int i = 0; i < 16*16*100; i++) {
-            int numData = 2 + wyhash64(&rand)%(16-2);
-            int numParity = 1 + wyhash64(&rand)%(16-1);
+            int numData = 2 + rand.generate64()%(16-2);
+            int numParity = 1 + rand.generate64()%(16-1);
             int blockSize;
             if (rs_get_cpu_level() == RS_CPU_SCALAR) {
                 static_assert(100 < maxBlockSize);
-                blockSize = 1 + wyhash64(&rand)%100;
+                blockSize = 1 + rand.generate64()%100;
             } else {
-                blockSize = 1 + wyhash64(&rand)%maxBlockSize;
+                blockSize = 1 + rand.generate64()%maxBlockSize;
             }
             std::vector<uint8_t> data(buf.begin(), buf.begin() + blockSize*(numData+numParity));
-            wyhash64_bytes(&rand, data.data(), numData*blockSize);
+            rand.generateBytes((char*)data.data(), numData*blockSize);
             auto rs = rs_get(rs_mk_parity(numData, numParity));
             std::vector<uint8_t*> blocksPtrs(numData+numParity);
             for (int i = 0; i < numData+numParity; i++) {
@@ -57,7 +57,7 @@ int main() {
                     allBlocks[i] = i;
                 }
                 for (int i = 0; i < std::min(numData+1, numData+numParity-1); i++) {
-                    std::swap(allBlocks[i], allBlocks[i+1+ wyhash64(&rand)%(numData+numParity-1-i)]);
+                    std::swap(allBlocks[i], allBlocks[i+1+ rand.generate64()%(numData+numParity-1-i)]);
                 }
                 std::sort(allBlocks.begin(), allBlocks.begin()+numData);
                 uint32_t allBlocksBits = 0;

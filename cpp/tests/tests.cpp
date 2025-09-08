@@ -16,7 +16,7 @@
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "CDCKey.hpp"
-#include "wyhash.h"
+#include "Random.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -51,13 +51,13 @@ TEST_CASE("BincodeBytes") {
     BincodeBytes bytes;
     CHECK(bytes.size() == 0);
     CHECK(strncmp(bytes.data(), "", bytes.size()) == 0);
-    uint8_t buf[255];
-    uint64_t rand = 0;
+    char buf[255];
+    RandomGenerator rand(0);
     for (int i = 0; i < 10; i++) {
-        wyhash64_bytes(&rand, &buf[0], i);
-        bytes = BincodeBytes((const char*)buf, i);
+        rand.generateBytes(buf, i);
+        bytes = BincodeBytes(buf, i);
         CHECK(bytes.size() == i);
-        CHECK(strncmp(bytes.data(), (const char*)buf, bytes.size()) == 0);
+        CHECK(strncmp(bytes.data(), buf, bytes.size()) == 0);
     }
 }
 

@@ -4,7 +4,7 @@
 #include "Time.hpp"
 #include "Env.hpp"
 #include "Loop.hpp"
-#include "wyhash.h"
+#include "Random.hpp"
 
 struct PeriodicLoopConfig {
     Duration failureInterval; // waiting between failures
@@ -21,7 +21,7 @@ struct PeriodicLoopConfig {
 struct PeriodicLoop : Loop {
 private:
     PeriodicLoopConfig _config;
-    uint64_t _rand;
+    RandomGenerator _rand;
     bool _lastSucceded;
 
 public:
@@ -40,10 +40,10 @@ public:
         auto t = ternNow();
         Duration pause;
         if (_lastSucceded) {
-            pause = _config.successInterval + Duration((double)_config.successInterval.ns * (_config.successIntervalJitter * wyhash64_double(&_rand)));
+            pause = _config.successInterval + Duration((double)_config.successInterval.ns * (_config.successIntervalJitter * _rand.generateDouble()));
             LOG_DEBUG(_env, "periodic step succeeded, next step at %s", t + pause);
         } else {
-            pause = _config.failureInterval + Duration((double)_config.failureInterval.ns * (_config.failureIntervalJitter * wyhash64_double(&_rand)));
+            pause = _config.failureInterval + Duration((double)_config.failureInterval.ns * (_config.failureIntervalJitter * _rand.generateDouble()));
             LOG_DEBUG(_env, "periodic step failed, next step at %s", t + pause);
         }
         if (Loop::sleep(pause) < 0) {

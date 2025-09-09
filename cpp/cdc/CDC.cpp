@@ -5,6 +5,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <fcntl.h>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"

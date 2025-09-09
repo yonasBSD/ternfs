@@ -4,6 +4,8 @@
 #include "FormatTuple.hpp"
 #include "Assert.hpp"
 
+#include <iostream>
+
 namespace detail {
 
 class BinaryLogDataBase {

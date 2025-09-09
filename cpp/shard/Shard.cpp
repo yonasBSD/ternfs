@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <fcntl.h>
 
 #include "Assert.hpp"
 #include "Bincode.hpp"

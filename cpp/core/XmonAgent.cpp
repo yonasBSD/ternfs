@@ -1,6 +1,7 @@
 #include "XmonAgent.hpp"
 #include "Assert.hpp"
 
+#include <iostream>
 #include <fcntl.h>
 
 struct XmonRequestHeader {

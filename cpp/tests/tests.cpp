@@ -596,12 +596,12 @@ TEST_CASE("test fmt") {
     {
         std::stringstream ss;
         ss << TernTime(0);
-        REQUIRE(ss.str() == "1970-01-01T00:00:00.000000000");
+        REQUIRE(ss.str() == "1970-01-01T00:00:00.000000000Z");
     }
     {
         std::stringstream ss;
         ss << TernTime(1234567891ull);
-        REQUIRE(ss.str() == "1970-01-01T00:00:01.234567891");
+        REQUIRE(ss.str() == "1970-01-01T00:00:01.234567891Z");
     }
 }
 

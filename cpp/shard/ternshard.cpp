@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Either all or none of the -influx-db flags must be provided\n");
         dieWithUsage();
     }
-    if (influxDBOrigin.empty()) {
+    if (!influxDBOrigin.empty()) {
         options.influxDB = InfluxDB{
             .origin = influxDBOrigin,
             .org = influxDBOrg,

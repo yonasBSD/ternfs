@@ -2038,6 +2038,31 @@ type AddrsInfo struct {
 type RegistryResp struct {
 	Addrs AddrsInfo
 }
+type RegisterRegistryReq struct {
+	ReplicaId ReplicaId
+	Location  Location
+	IsLeader  bool
+	Addrs     AddrsInfo
+	Bootstrap bool // indicating requestor still does not see enough replicas to form a quorum
+}
+
+type RegisterRegistryResp struct{}
+
+type FullRegistryInfo struct {
+	Id         ReplicaId
+	LocationId Location
+	IsLeader   bool
+	Addrs      AddrsInfo
+	LastSeen   TernTime
+}
+
+type AllRegistryReplicasReq struct {}
+
+type AllRegistryReplicasResp struct {
+	Replicas []FullRegistryInfo
+}
+
+type RegisterRegistryInstanceReplicaResp struct{}
 
 type DecommissionBlockServiceReq struct {
 	Id BlockServiceId
@@ -2090,6 +2115,24 @@ type RegisterBlockServiceInfo struct {
 	CapacityBytes  uint64
 	AvailableBytes uint64
 	Blocks         uint64 // how many blocks we have
+	Path           string
+}
+
+type FullBlockServiceInfo struct {
+	Id             BlockServiceId
+	LocationId     Location
+	Addrs          AddrsInfo
+	StorageClass   StorageClass
+	FailureDomain  FailureDomain
+	SecretKey      [16]byte
+	Flags          BlockServiceFlags
+	CapacityBytes  uint64
+	AvailableBytes uint64
+	Blocks         uint64 // how many blocks we have
+	FirstSeen	   TernTime
+	LastSeen	   TernTime
+	LastInfoChange TernTime // change to read/write status or addresses
+	HasFiles       bool
 	Path           string
 }
 

@@ -23,7 +23,7 @@
 #include "Protocol.hpp"
 #include "SharedRocksDB.hpp"
 #include "Random.hpp"
-#include "Registry.hpp"
+#include "RegistryClient.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
 #include "UDPSocketPair.hpp"
@@ -1236,6 +1236,7 @@ void runCDC(CDCOptions& options) {
 
     LoopThread::waitUntilStopped(threads);
 
+    logsDB.close();
     sharedDb.close();
 
     LOG_INFO(env, "CDC terminating gracefully, bye.");

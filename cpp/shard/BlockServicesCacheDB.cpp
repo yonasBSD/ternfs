@@ -131,7 +131,7 @@ struct BlockServiceBody {
         FBYTES, 16,   failureDomain,    setFailureDomain,
         FBYTES, 16,   secretKey,        setSecretKey,
         EMIT_OFFSET, V0_OFFSET,
-        LE, uint8_t, flagsV1, setFlagsV1,
+        LE, BlockServiceFlags, flagsV1, setFlagsV1,
         EMIT_OFFSET, V1_OFFSET,
         END
     )
@@ -148,12 +148,12 @@ struct BlockServiceBody {
 
     void checkSize(size_t s) { ALWAYS_ASSERT(s == size()); }
 
-    uint8_t flags() const {
-        if (unlikely(version() == 0)) { return 0; }
+    BlockServiceFlags flags() const {
+        if (unlikely(version() == 0)) { return BlockServiceFlags::EMPTY; }
         return flagsV1();
     }
 
-    void setFlags(uint8_t f) {
+    void setFlags(BlockServiceFlags f) {
         ALWAYS_ASSERT(version() > 0);
         setFlagsV1(f);
     }

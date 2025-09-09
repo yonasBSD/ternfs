@@ -37,6 +37,7 @@ public:
     // Polls forever with SIGINT/SIGTERM unmasked. If timeout < 0, waits forever.
     // If timeout == 0, returns immediately. If timeout > 0, it'll wait.
     static int poll(struct pollfd* fds, nfds_t nfds, Duration timeout);
+    static int epollWait(int epfd, struct epoll_event* events, int maxevents, Duration timeout);
 
     // Sleeps with SIGINT/SIGTERM unmasked.
     static int sleep(Duration d);
@@ -52,11 +53,12 @@ struct LoopThread {
     virtual ~LoopThread() = default;
     LoopThread(const LoopThread&) = delete;
 private:
-    LoopThread(std::unique_ptr<Loop>&& loop) : _loop(std::move(loop)) {}
+    LoopThread(std::unique_ptr<Loop>&& loop) : _loop(std::move(loop)), _stopLoop(nullptr) {}
     static void* runLoop(void* arg);
     void sendStop();
     std::unique_ptr<Loop> _loop;
     pthread_t _thread;
+    std::atomic<std::atomic<bool>*> _stopLoop;
 };
 
 

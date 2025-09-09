@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <sys/epoll.h>
 #include <utility>
 
 #include <netinet/in.h>
@@ -28,6 +29,15 @@ public:
     int getErrno() const { ALWAYS_ASSERT(_fd < 0); return -_fd; }
     int get() const { ALWAYS_ASSERT(_fd > 0); return _fd; }
     int release() { int fd = _fd; _fd = -1; return fd; }
+    int registerEpoll(int epollFd) {
+        epoll_event event{};
+        event.events = EPOLLIN;
+        event.data.fd = _fd;
+        return epoll_ctl(epollFd, EPOLL_CTL_ADD, _fd, &event);
+    }
+    int unregisterEpoll(int epollFd) {
+        return epoll_ctl(epollFd, EPOLL_CTL_DEL, _fd, nullptr);
+    }
 private:
     Sock(int fd) : _fd(fd) {}
     int _fd;

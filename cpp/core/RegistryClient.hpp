@@ -23,6 +23,24 @@ std::pair<int, std::string> fetchBlockServices(
     std::vector<BlockServiceInfoShort>& currentBlockServices
 );
 
+std::pair<int, std::string> registerRegistry(
+    const std::string& registryHost,
+    uint16_t registryPort,
+    Duration timeout,
+    ReplicaId replicaId,
+    uint8_t location,
+    bool isLeader,
+    const AddrsInfo& addrs,
+    bool bootstrap
+);
+
+std::pair<int, std::string> fetchRegistryReplicas(
+    const std::string& registryHost,
+    uint16_t registryPort,
+    Duration timeout,
+    std::vector<FullRegistryInfo>& replicas
+);
+
 std::pair<int, std::string> registerShard(
     const std::string& registryHost,
     uint16_t registryPort,

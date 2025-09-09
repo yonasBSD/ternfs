@@ -250,6 +250,8 @@ const (
 	ADD_SPAN_LOCATION_MISMATCHING_CRC       TernError = 99
 	ADD_SPAN_LOCATION_EXISTS                TernError = 100
 	SWAP_BLOCKS_MISMATCHING_LOCATION        TernError = 101
+	LOCATION_EXISTS                         TernError = 102
+	LOCATION_NOT_FOUND                      TernError = 103
 )
 
 func (err TernError) String() string {
@@ -438,6 +440,10 @@ func (err TernError) String() string {
 		return "ADD_SPAN_LOCATION_EXISTS"
 	case 101:
 		return "SWAP_BLOCKS_MISMATCHING_LOCATION"
+	case 102:
+		return "LOCATION_EXISTS"
+	case 103:
+		return "LOCATION_NOT_FOUND"
 	default:
 		return fmt.Sprintf("TernError(%d)", err)
 	}
@@ -809,10 +815,10 @@ func (k RegistryMessageKind) String() string {
 		return "CREATE_LOCATION"
 	case 2:
 		return "RENAME_LOCATION"
-	case 5:
-		return "LOCATIONS"
 	case 4:
 		return "REGISTER_SHARD"
+	case 5:
+		return "LOCATIONS"
 	case 6:
 		return "REGISTER_CDC"
 	case 9:
@@ -825,6 +831,10 @@ func (k RegistryMessageKind) String() string {
 		return "SHARDS_AT_LOCATION"
 	case 13:
 		return "CDC_AT_LOCATION"
+	case 14:
+		return "REGISTER_REGISTRY"
+	case 16:
+		return "ALL_REGISTRY_REPLICAS"
 	case 17:
 		return "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED"
 	case 19:
@@ -864,14 +874,16 @@ const (
 	LOCAL_CHANGED_BLOCK_SERVICES        RegistryMessageKind = 0x22
 	CREATE_LOCATION                     RegistryMessageKind = 0x1
 	RENAME_LOCATION                     RegistryMessageKind = 0x2
-	LOCATIONS                           RegistryMessageKind = 0x5
 	REGISTER_SHARD                      RegistryMessageKind = 0x4
+	LOCATIONS                           RegistryMessageKind = 0x5
 	REGISTER_CDC                        RegistryMessageKind = 0x6
 	SET_BLOCK_SERVICE_FLAGS             RegistryMessageKind = 0x9
 	REGISTER_BLOCK_SERVICES             RegistryMessageKind = 0xA
 	CHANGED_BLOCK_SERVICES_AT_LOCATION  RegistryMessageKind = 0xB
 	SHARDS_AT_LOCATION                  RegistryMessageKind = 0xC
 	CDC_AT_LOCATION                     RegistryMessageKind = 0xD
+	REGISTER_REGISTRY                   RegistryMessageKind = 0xE
+	ALL_REGISTRY_REPLICAS               RegistryMessageKind = 0x10
 	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED RegistryMessageKind = 0x11
 	CDC_REPLICAS_DE_PR_EC_AT_ED         RegistryMessageKind = 0x13
 	ALL_SHARDS                          RegistryMessageKind = 0x14
@@ -895,14 +907,16 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	LOCAL_CHANGED_BLOCK_SERVICES,
 	CREATE_LOCATION,
 	RENAME_LOCATION,
-	LOCATIONS,
 	REGISTER_SHARD,
+	LOCATIONS,
 	REGISTER_CDC,
 	SET_BLOCK_SERVICE_FLAGS,
 	REGISTER_BLOCK_SERVICES,
 	CHANGED_BLOCK_SERVICES_AT_LOCATION,
 	SHARDS_AT_LOCATION,
 	CDC_AT_LOCATION,
+	REGISTER_REGISTRY,
+	ALL_REGISTRY_REPLICAS,
 	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED,
 	CDC_REPLICAS_DE_PR_EC_AT_ED,
 	ALL_SHARDS,
@@ -936,10 +950,10 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &CreateLocationReq{}, &CreateLocationResp{}, nil
 	case k == "RENAME_LOCATION":
 		return &RenameLocationReq{}, &RenameLocationResp{}, nil
-	case k == "LOCATIONS":
-		return &LocationsReq{}, &LocationsResp{}, nil
 	case k == "REGISTER_SHARD":
 		return &RegisterShardReq{}, &RegisterShardResp{}, nil
+	case k == "LOCATIONS":
+		return &LocationsReq{}, &LocationsResp{}, nil
 	case k == "REGISTER_CDC":
 		return &RegisterCdcReq{}, &RegisterCdcResp{}, nil
 	case k == "SET_BLOCK_SERVICE_FLAGS":
@@ -952,6 +966,10 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &ShardsAtLocationReq{}, &ShardsAtLocationResp{}, nil
 	case k == "CDC_AT_LOCATION":
 		return &CdcAtLocationReq{}, &CdcAtLocationResp{}, nil
+	case k == "REGISTER_REGISTRY":
+		return &RegisterRegistryReq{}, &RegisterRegistryResp{}, nil
+	case k == "ALL_REGISTRY_REPLICAS":
+		return &AllRegistryReplicasReq{}, &AllRegistryReplicasResp{}, nil
 	case k == "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED":
 		return &ShardBlockServicesDEPRECATEDReq{}, &ShardBlockServicesDEPRECATEDResp{}, nil
 	case k == "CDC_REPLICAS_DE_PR_EC_AT_ED":
@@ -4564,6 +4582,44 @@ func (v *FullReadDirCursor) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *FullRegistryInfo) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastSeen)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FullRegistryInfo) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *TransientFile) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
 		return err
@@ -4912,6 +4968,104 @@ func (v *RegisterBlockServiceInfo) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.Path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FullBlockServiceInfo) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.StorageClass)); err != nil {
+		return err
+	}
+	if err := v.FailureDomain.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 16, v.SecretKey[:]); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Flags)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.CapacityBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Blocks)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.FirstSeen)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastSeen)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastInfoChange)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.HasFiles)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.Path)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *FullBlockServiceInfo) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.StorageClass)); err != nil {
+		return err
+	}
+	if err := v.FailureDomain.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 16, v.SecretKey[:]); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Flags)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.CapacityBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FirstSeen)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastInfoChange)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.HasFiles)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackString(r, &v.Path); err != nil {
@@ -5308,49 +5462,6 @@ func (v *RenameLocationResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *LocationsReq) RegistryRequestKind() RegistryMessageKind {
-	return LOCATIONS
-}
-
-func (v *LocationsReq) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *LocationsReq) Unpack(r io.Reader) error {
-	return nil
-}
-
-func (v *LocationsResp) RegistryResponseKind() RegistryMessageKind {
-	return LOCATIONS
-}
-
-func (v *LocationsResp) Pack(w io.Writer) error {
-	len1 := len(v.Locations)
-	if err := bincode.PackLength(w, len1); err != nil {
-		return err
-	}
-	for i := 0; i < len1; i++ {
-		if err := v.Locations[i].Pack(w); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (v *LocationsResp) Unpack(r io.Reader) error {
-	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
-		return err
-	}
-	bincode.EnsureLength(&v.Locations, len1)
-	for i := 0; i < len1; i++ {
-		if err := v.Locations[i].Unpack(r); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (v *RegisterShardReq) RegistryRequestKind() RegistryMessageKind {
 	return REGISTER_SHARD
 }
@@ -5396,6 +5507,49 @@ func (v *RegisterShardResp) Pack(w io.Writer) error {
 }
 
 func (v *RegisterShardResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *LocationsReq) RegistryRequestKind() RegistryMessageKind {
+	return LOCATIONS
+}
+
+func (v *LocationsReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *LocationsReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *LocationsResp) RegistryResponseKind() RegistryMessageKind {
+	return LOCATIONS
+}
+
+func (v *LocationsResp) Pack(w io.Writer) error {
+	len1 := len(v.Locations)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Locations[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *LocationsResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Locations, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Locations[i].Unpack(r); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -5680,6 +5834,103 @@ func (v *CdcAtLocationResp) Unpack(r io.Reader) error {
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastSeen)); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (v *RegisterRegistryReq) RegistryRequestKind() RegistryMessageKind {
+	return REGISTER_REGISTRY
+}
+
+func (v *RegisterRegistryReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.ReplicaId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.Bootstrap)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RegisterRegistryReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.ReplicaId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.Bootstrap)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *RegisterRegistryResp) RegistryResponseKind() RegistryMessageKind {
+	return REGISTER_REGISTRY
+}
+
+func (v *RegisterRegistryResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *RegisterRegistryResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *AllRegistryReplicasReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_REGISTRY_REPLICAS
+}
+
+func (v *AllRegistryReplicasReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *AllRegistryReplicasReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *AllRegistryReplicasResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_REGISTRY_REPLICAS
+}
+
+func (v *AllRegistryReplicasResp) Pack(w io.Writer) error {
+	len1 := len(v.Replicas)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllRegistryReplicasResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Replicas, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Unpack(r); err != nil {
+			return err
+		}
 	}
 	return nil
 }

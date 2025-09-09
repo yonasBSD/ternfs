@@ -17,7 +17,7 @@ struct BlockServiceCache {
     std::array<uint8_t, 16> failureDomain;
     AddrsInfo addrs;
     uint8_t storageClass;
-    uint8_t flags;
+    BlockServiceFlags flags;
 };
 
 struct BlockServicesCache {

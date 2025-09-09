@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstdint>
-#include <limits>
 #include <netinet/in.h>
 #include <poll.h>
 #include <vector>
@@ -15,9 +14,25 @@
 
 struct UDPSocketPair {
     UDPSocketPair(Env& env, const AddrsInfo& addr, int32_t sockBufSize = 1 << 20);
+    UDPSocketPair(const UDPSocketPair&) = delete;
+    UDPSocketPair(UDPSocketPair&& s) : _addr(s._addr), _socks(std::move(s._socks)) {}
 
     const AddrsInfo& addr() const { return _addr; }
     const std::array<Sock, 2>& socks() const { return _socks; }
+
+    int registerEpoll(int epollFd);
+
+    bool containsFd(int fd) const {
+        for (const auto& sock : _socks) {
+            if (sock.error()) {
+                continue;
+            }
+            if (sock.get() == fd) {
+                return true;
+            }
+        }
+        return false;
+    }
 
 private:
     void _initSock(uint8_t sockIdx, sockaddr_in& addr, int32_t sockBufSize);
@@ -62,7 +77,7 @@ struct UDPReceiver {
     //
     // If maxMsgCount<0, the maximum available is chosen based on perSockMaxRecvMsg.
     // If maxMsgCount==0, true is immediately returned.
-    bool receiveMessages(Env& env, const std::array<UDPSocketPair, N>& socks, ssize_t maxMsgCount = -1, Duration timeout = -1) {
+    bool receiveMessages(Env& env, const std::array<UDPSocketPair, N>& socks, ssize_t maxMsgCount = -1, Duration timeout = -1, bool noPoll = false) {
         for (auto& msg: _recvMsgs) {
             msg.clear();
         }
@@ -85,23 +100,29 @@ struct UDPReceiver {
                 numFds++;
             }
         }
-        // poll
-        int err = Loop::poll(fds.data(), numFds, timeout);
-        if (unlikely( err < 0)) {
-            if (errno == EINTR) { return false; }
-            throw SYSCALL_EXCEPTION("poll");
+        if (!noPoll) {
+            // poll
+            int err = Loop::poll(fds.data(), numFds, timeout);
+            if (unlikely( err < 0)) {
+                if (errno == EINTR) { return false; }
+                throw SYSCALL_EXCEPTION("poll");
+            }
+            LOG_TRACE(env, "Poll returned, reading messages");
         }
-        LOG_DEBUG(env, "Poll returned, reading messages");
         // read
         size_t messagesSoFar = 0;
         for (int i = 0; i < numFds; i++) {
             const pollfd& pfd = fds[i];
-            if (!(pfd.revents & POLLIN)) { continue; }
+            if ((!noPoll) && (!(pfd.revents & POLLIN))) { continue; }
             const auto [sockIx1, sockIx2] = fdToSockIx[i];
             size_t maxMsgs = std::min(maxMsgCount-messagesSoFar, _perSockMaxRecvMsg);
-            LOG_DEBUG(env, "data on address %s, reading up to %s messages", socks[sockIx1].addr()[sockIx2], maxMsgs);
+            LOG_TRACE(env, "data on address %s, reading up to %s messages", socks[sockIx1].addr()[sockIx2], maxMsgs);
             int ret = recvmmsg(pfd.fd, &_recvHdrs[messagesSoFar], maxMsgs, MSG_DONTWAIT, nullptr);
-            if (unlikely(ret < 0)) { // we know we have data from poll, we won't get EAGAIN
+            if (unlikely(ret < 0)) { 
+                if (noPoll) {
+                    continue;
+                }
+                // we know we have data from poll, we won't get EAGAIN
                 throw SYSCALL_EXCEPTION("recvmmsgs");
             }
             for (int j = 0; j < ret; j++) {
@@ -159,7 +180,7 @@ public:
         auto& vec = _sendVecs[srcSockIdx].emplace_back();
         vec.iov_base = (void*)sendBufBegin;
         vec.iov_len = respBbuf.len();
-        LOG_DEBUG(env, "Prepared message of length(%s) from %s to %s", respBbuf.len(), srcAddr[srcSockIdx], dstAddr);
+        LOG_TRACE(env, "Prepared message of length(%s) from %s to %s", respBbuf.len(), srcAddr[srcSockIdx], dstAddr);
     }
 
     template<typename Fill>

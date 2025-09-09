@@ -11,7 +11,7 @@
 #include "Exception.hpp"
 #include "Msgs.hpp"
 #include "Shard.hpp"
-#include "Registry.hpp"
+#include "RegistryClient.hpp"
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)
 

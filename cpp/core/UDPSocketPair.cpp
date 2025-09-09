@@ -1,11 +1,9 @@
 #include "UDPSocketPair.hpp"
 
 #include "Common.hpp"
-#include "Loop.hpp"
 
 #include <arpa/inet.h>
 #include <cstddef>
-#include <ostream>
 
 UDPSocketPair::UDPSocketPair(Env& env, const AddrsInfo& addr_, int32_t sockBufSize) : _addr(addr_) {
     sockaddr_in saddr;
@@ -48,7 +46,7 @@ void UDPSocketPair::_initSock(uint8_t sockIdx, sockaddr_in& addr, int32_t sockBu
 void UDPSender::sendMessages(Env& env, const UDPSocketPair& socks) {
     for (size_t i = 0; i < _sendAddrs.size(); ++i) {
         if (_sendAddrs[i].size() == 0) { continue; }
-        LOG_DEBUG(env, "sending %s messages to socket (%s)[%s]", _sendAddrs[i].size(), socks.addr(), i);
+        LOG_TRACE(env, "sending %s messages to socket (%s)[%s]", _sendAddrs[i].size(), socks.addr(), i);
         for (size_t j = 0; j < _sendAddrs[i].size(); ++j) {
             auto& vec = _sendVecs[i][j];
             vec.iov_base = &_sendBuf[(size_t)vec.iov_base];
@@ -90,4 +88,15 @@ void UDPSender::sendMessages(Env& env, const UDPSocketPair& socks) {
         _sendHdrs[i].clear();
         _sendVecs[i].clear();
     }
+}
+
+int UDPSocketPair::registerEpoll(int epollFd) {
+    for (auto& sock : _socks) {
+        if (sock.error()) continue;
+        int err = sock.registerEpoll(epollFd);
+        if (err) {
+            return err;
+        }
+    }
+    return 0;
 }

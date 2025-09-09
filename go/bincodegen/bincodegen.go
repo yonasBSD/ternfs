@@ -765,7 +765,8 @@ func cppType(t reflect.Type) string {
 		t.Name() == "TernTime" || t.Name() == "ShardId" || t.Name() == "CDCMessageKind" ||
 		t.Name() == "Crc" || t.Name() == "BlockServiceId" || t.Name() == "ReplicaId" ||
 		t.Name() == "ShardReplicaId" || t.Name() == "LogIdx" || t.Name() == "LeaderToken" ||
-		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" || t.Name() == "TernError" {
+		t.Name() == "Ip" || t.Name() == "IpPort" || t.Name() == "AddrsInfo" || t.Name() == "TernError" ||
+		t.Name() == "BlockServiceFlags" {
 		return t.Name()
 	}
 	if t.Name() == "Blob" {
@@ -1330,6 +1331,9 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintln(hppOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
 	fmt.Fprintln(hppOut, "#pragma once")
 	fmt.Fprintln(hppOut, "#include \"Msgs.hpp\"")
+	fmt.Fprintln(hppOut, "#include <algorithm>")
+	fmt.Fprintln(hppOut, "#include <variant>")
+	fmt.Fprintln(hppOut, "#include \"Time.hpp\"")
 	fmt.Fprintln(hppOut)
 
 	fmt.Fprintln(cppOut, "// Automatically generated with go run bincodegen.")
@@ -1547,6 +1551,8 @@ func main() {
 		"ADD_SPAN_LOCATION_MISMATCHING_CRC",
 		"ADD_SPAN_LOCATION_EXISTS",
 		"SWAP_BLOCKS_MISMATCHING_LOCATION",
+		"LOCATION_EXISTS",
+		"LOCATION_NOT_FOUND",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1866,14 +1872,14 @@ func main() {
 			reflect.TypeOf(msgs.RenameLocationResp{}),
 		},
 		{
-			0x05,
-			reflect.TypeOf(msgs.LocationsReq{}),
-			reflect.TypeOf(msgs.LocationsResp{}),
-		},
-		{
 			0x04,
 			reflect.TypeOf(msgs.RegisterShardReq{}),
 			reflect.TypeOf(msgs.RegisterShardResp{}),
+		},
+		{
+			0x05,
+			reflect.TypeOf(msgs.LocationsReq{}),
+			reflect.TypeOf(msgs.LocationsResp{}),
 		},
 		{
 			0x06,
@@ -1904,6 +1910,16 @@ func main() {
 			0x0D,
 			reflect.TypeOf(msgs.CdcAtLocationReq{}),
 			reflect.TypeOf(msgs.CdcAtLocationResp{}),
+		},
+		{
+			0x0E,
+			reflect.TypeOf(msgs.RegisterRegistryReq{}),
+			reflect.TypeOf(msgs.RegisterRegistryResp{}),
+		},
+		{
+			0x10,
+			reflect.TypeOf(msgs.AllRegistryReplicasReq{}),
+			reflect.TypeOf(msgs.AllRegistryReplicasResp{}),
 		},
 		{
 			0x11,
@@ -2071,6 +2087,7 @@ func main() {
 	}
 
 	extras := append([]reflect.Type{reflect.TypeOf(msgs.FailureDomain{})}, append(kernelExtras, []reflect.Type{
+		reflect.TypeOf(msgs.FullRegistryInfo{}),
 		reflect.TypeOf(msgs.TransientFile{}),
 		reflect.TypeOf(msgs.EntryNewBlockInfo{}),
 		reflect.TypeOf(msgs.BlockServiceDeprecatedInfo{}),
@@ -2081,6 +2098,7 @@ func main() {
 		reflect.TypeOf(msgs.SnapshotPolicy{}),
 		reflect.TypeOf(msgs.FullShardInfo{}),
 		reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
+		reflect.TypeOf(msgs.FullBlockServiceInfo{}),
 		reflect.TypeOf(msgs.CdcInfo{}),
 		reflect.TypeOf(msgs.LocationInfo{}),
 	}...)...)

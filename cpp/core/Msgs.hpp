@@ -1,14 +1,11 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <ostream>
-#include <variant>
 
 #include "Assert.hpp"
 #include "Common.hpp"
 #include "Bincode.hpp"
-#include "Time.hpp"
 
 enum class InodeType : uint8_t {
     RESERVED = 0,
@@ -116,6 +113,7 @@ struct ShardId {
     void unpack(BincodeBuf& buf) {
         u8 = buf.unpackScalar<uint8_t>();
     }
+    static constexpr size_t SHARD_COUNT = 256;
 };
 
 std::ostream& operator<<(std::ostream& out, ShardId shard);
@@ -184,6 +182,52 @@ struct ShardReplicaId {
 };
 
 std::ostream& operator<<(std::ostream& out, ShardReplicaId shrid);
+
+using LocationId = uint8_t;
+
+struct ShardReplicaLocationKey {
+    uint32_t u32;
+    
+    ShardReplicaLocationKey(): u32(0) {}
+    explicit ShardReplicaLocationKey(uint32_t u32_) : u32(u32_) {}
+    ShardReplicaLocationKey(ShardReplicaId shrid, LocationId locationId_) {
+        shardReplicaId(shrid);
+        locationId(locationId_);
+    }
+
+    bool operator==(const ShardReplicaLocationKey&) const = default;
+
+    void shardReplicaId(ShardReplicaId shrid) {
+        u32 = (u32 & ~SHRID_MASK) | (static_cast<uint32_t>(shrid.u16));
+    }
+
+    void locationId(LocationId locationId_) {
+        u32 = (u32 & SHRID_MASK) | (static_cast<uint32_t>(locationId_) << LOCATION_SHIFT);
+    }
+
+    ShardReplicaId shardReplicaId() const {
+        ShardReplicaId shrid;
+        shrid.u16 = static_cast<uint16_t>(u32 & SHRID_MASK);
+        return shrid;
+    }
+
+    LocationId locationId() const {
+        return static_cast<LocationId>((u32 >> LOCATION_SHIFT));
+    }
+private:    
+    static constexpr uint32_t LOCATION_SHIFT = sizeof(ShardReplicaId) * 8;
+    static constexpr uint32_t SHRID_MASK = ~0 >> (sizeof(uint32_t)*8 - LOCATION_SHIFT);
+};
+
+std::ostream& operator<<(std::ostream& out, ShardReplicaLocationKey shardReplicaLocation);
+
+template <>
+struct std::hash<ShardReplicaLocationKey> {
+    std::size_t operator()(const ShardReplicaLocationKey& k) const {
+        return hash<uint32_t>()(k.u32);
+    }
+};
+
 
 // 63-bit:
 // TTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIISSSSSSSS
@@ -405,7 +449,46 @@ struct BlockServiceId {
     }
 };
 
+template <>
+struct std::hash<BlockServiceId> {
+    std::size_t operator()(const BlockServiceId& k) const {
+        return hash<uint64_t>()(k.u64);
+    }
+};
+
 std::ostream& operator<<(std::ostream& out, BlockServiceId crc);
+
+enum class BlockServiceFlags : uint8_t {
+    EMPTY          = 0x0,
+	STALE          = 0x1,
+	NO_READ        = 0x2,
+	NO_WRITE       = 0x4,
+	DECOMMISSIONED = 0x8,
+};
+
+static inline BlockServiceFlags operator&(BlockServiceFlags l, BlockServiceFlags r) {
+    return (BlockServiceFlags) ((uint8_t)l & (uint8_t) r);
+}
+static inline BlockServiceFlags operator|(BlockServiceFlags l, BlockServiceFlags r) {
+    return (BlockServiceFlags) ((uint8_t)l | (uint8_t) r);
+}
+static inline BlockServiceFlags operator^(BlockServiceFlags l, BlockServiceFlags r) {
+    return (BlockServiceFlags) ((uint8_t)l ^ (uint8_t) r);
+}
+static inline BlockServiceFlags operator~(BlockServiceFlags b) {
+    return (BlockServiceFlags) (~(uint8_t)b);
+}
+
+static inline bool isWritable(BlockServiceFlags flags) {
+    return (flags & (BlockServiceFlags::STALE | BlockServiceFlags::NO_WRITE | BlockServiceFlags::DECOMMISSIONED)) == BlockServiceFlags::EMPTY;
+}
+
+static inline bool isReadable(BlockServiceFlags flags) {
+    return (flags & (BlockServiceFlags::STALE | BlockServiceFlags::NO_READ | BlockServiceFlags::DECOMMISSIONED)) == BlockServiceFlags::EMPTY;
+}
+
+std::ostream& operator<<(std::ostream& out, BlockServiceFlags flags);
+
 
 // we reserve 3 bits so that we can fit ReplicaId in LeaderToken
 struct LogIdx {

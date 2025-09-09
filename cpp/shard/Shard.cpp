@@ -30,7 +30,7 @@
 #include "ShardDB.hpp"
 #include "ShardKey.hpp"
 #include "SharedRocksDB.hpp"
-#include "Registry.hpp"
+#include "RegistryClient.hpp"
 #include "SPSC.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
@@ -2209,6 +2209,7 @@ void runShard(ShardOptions& options) {
     threads.clear();
 
     shardDB.close();
+    logsDB.close();
     sharedDB.close();
 
     LOG_INFO(env, "shard terminating gracefully, bye.");

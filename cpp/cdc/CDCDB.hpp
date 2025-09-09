@@ -9,7 +9,7 @@
 #include "Env.hpp"
 #include "MsgsGen.hpp"
 #include "SharedRocksDB.hpp"
-#include "Registry.hpp"
+#include "RegistryClient.hpp"
 
 // This exists purely for type safety
 struct CDCTxnId {

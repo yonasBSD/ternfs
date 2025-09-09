@@ -38,6 +38,10 @@ std::ostream& operator<<(std::ostream& out, ShardReplicaId shrid) {
     return out << std::setw(3) << std::setfill('0') << shrid.shardId() << ":" << shrid.replicaId();
 }
 
+std::ostream& operator<<(std::ostream& out, ShardReplicaLocationKey shardReplicaLocation) {
+    return out << shardReplicaLocation.shardReplicaId() << '@' << shardReplicaLocation.locationId();
+}
+
 std::ostream& operator<<(std::ostream& out, InodeId id) {
     const char cfill = out.fill();
     out << "0x" << std::setfill('0') << std::setw(16) << std::hex << id.u64;
@@ -77,6 +81,40 @@ std::ostream& operator<<(std::ostream& out, BlockServiceId id) {
     char buf[19];
     sprintf(buf, "0x%016lx", id.u64);
     return out << buf;
+}
+
+static const std::array<BlockServiceFlags, 4> ALL_BLOCK_SERVICE_FLAGS = {
+    BlockServiceFlags::STALE,
+    BlockServiceFlags::NO_READ,
+    BlockServiceFlags::NO_WRITE,
+    BlockServiceFlags::DECOMMISSIONED,
+};
+
+static const std::unordered_map<BlockServiceFlags, std::string> FLAG_TO_NAME = {
+    {BlockServiceFlags::STALE, "STALE"},
+    {BlockServiceFlags::NO_READ, "NO_READ"},
+    {BlockServiceFlags::NO_WRITE, "NO_WRITE"},
+    {BlockServiceFlags::DECOMMISSIONED, "DECOMMISSIONED"},
+};
+
+std::ostream& operator<<(std::ostream& out, BlockServiceFlags flags){
+    bool first = true;
+    out << '[';
+    for(auto flag : ALL_BLOCK_SERVICE_FLAGS) {
+        if ((flags & flag) == BlockServiceFlags::EMPTY) {
+            continue;
+        }
+        if (first) {
+            first = false;
+        } else {
+            out << '|';
+        }
+        out << FLAG_TO_NAME.at(flag);
+    }
+    if (!first) {
+        out << "EMPTY";
+    }
+    return out << ']';
 }
 
 std::ostream& operator<<(std::ostream& out, LogIdx idx) {

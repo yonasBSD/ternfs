@@ -2,6 +2,9 @@
 // Run `go generate ./...` from the go/ directory to regenerate it.
 #pragma once
 #include "Msgs.hpp"
+#include <algorithm>
+#include <variant>
+#include "Time.hpp"
 
 enum class TernError : uint16_t {
     NO_ERROR = 0,
@@ -97,6 +100,8 @@ enum class TernError : uint16_t {
     ADD_SPAN_LOCATION_MISMATCHING_CRC = 99,
     ADD_SPAN_LOCATION_EXISTS = 100,
     SWAP_BLOCKS_MISMATCHING_LOCATION = 101,
+    LOCATION_EXISTS = 102,
+    LOCATION_NOT_FOUND = 103,
 };
 
 std::ostream& operator<<(std::ostream& out, TernError err);
@@ -194,9 +199,11 @@ const std::vector<TernError> allTernErrors {
     TernError::ADD_SPAN_LOCATION_MISMATCHING_CRC,
     TernError::ADD_SPAN_LOCATION_EXISTS,
     TernError::SWAP_BLOCKS_MISMATCHING_LOCATION,
+    TernError::LOCATION_EXISTS,
+    TernError::LOCATION_NOT_FOUND,
 };
 
-constexpr int maxTernError = 102;
+constexpr int maxTernError = 104;
 
 enum class ShardMessageKind : uint8_t {
     ERROR = 0,
@@ -333,14 +340,16 @@ enum class RegistryMessageKind : uint8_t {
     LOCAL_CHANGED_BLOCK_SERVICES = 34,
     CREATE_LOCATION = 1,
     RENAME_LOCATION = 2,
-    LOCATIONS = 5,
     REGISTER_SHARD = 4,
+    LOCATIONS = 5,
     REGISTER_CDC = 6,
     SET_BLOCK_SERVICE_FLAGS = 9,
     REGISTER_BLOCK_SERVICES = 10,
     CHANGED_BLOCK_SERVICES_AT_LOCATION = 11,
     SHARDS_AT_LOCATION = 12,
     CDC_AT_LOCATION = 13,
+    REGISTER_REGISTRY = 14,
+    ALL_REGISTRY_REPLICAS = 16,
     SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED = 17,
     CDC_REPLICAS_DE_PR_EC_AT_ED = 19,
     ALL_SHARDS = 20,
@@ -365,14 +374,16 @@ const std::vector<RegistryMessageKind> allRegistryMessageKind {
     RegistryMessageKind::LOCAL_CHANGED_BLOCK_SERVICES,
     RegistryMessageKind::CREATE_LOCATION,
     RegistryMessageKind::RENAME_LOCATION,
-    RegistryMessageKind::LOCATIONS,
     RegistryMessageKind::REGISTER_SHARD,
+    RegistryMessageKind::LOCATIONS,
     RegistryMessageKind::REGISTER_CDC,
     RegistryMessageKind::SET_BLOCK_SERVICE_FLAGS,
     RegistryMessageKind::REGISTER_BLOCK_SERVICES,
     RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION,
     RegistryMessageKind::SHARDS_AT_LOCATION,
     RegistryMessageKind::CDC_AT_LOCATION,
+    RegistryMessageKind::REGISTER_REGISTRY,
+    RegistryMessageKind::ALL_REGISTRY_REPLICAS,
     RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED,
     RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED,
     RegistryMessageKind::ALL_SHARDS,
@@ -557,7 +568,7 @@ struct RemoveSpanInitiateBlockInfo {
     AddrsInfo blockServiceAddrs;
     BlockServiceId blockServiceId;
     FailureDomain blockServiceFailureDomain;
-    uint8_t blockServiceFlags;
+    BlockServiceFlags blockServiceFlags;
     uint64_t blockId;
     BincodeFixedBytes<8> certificate;
 
@@ -606,7 +617,7 @@ std::ostream& operator<<(std::ostream& out, const BlockProof& x);
 struct BlockService {
     AddrsInfo addrs;
     BlockServiceId id;
-    uint8_t flags;
+    BlockServiceFlags flags;
 
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + 1; // addrs + id + flags
 
@@ -1132,6 +1143,33 @@ struct FullReadDirCursor {
 
 std::ostream& operator<<(std::ostream& out, const FullReadDirCursor& x);
 
+struct FullRegistryInfo {
+    ReplicaId id;
+    uint8_t locationId;
+    bool isLeader;
+    AddrsInfo addrs;
+    TernTime lastSeen;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 8; // id + locationId + isLeader + addrs + lastSeen
+
+    FullRegistryInfo() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // id
+        _size += 1; // locationId
+        _size += 1; // isLeader
+        _size += addrs.packedSize(); // addrs
+        _size += 8; // lastSeen
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FullRegistryInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FullRegistryInfo& x);
+
 struct TransientFile {
     InodeId id;
     BincodeFixedBytes<8> cookie;
@@ -1182,7 +1220,7 @@ struct BlockServiceDeprecatedInfo {
     uint8_t storageClass;
     FailureDomain failureDomain;
     BincodeFixedBytes<16> secretKey;
-    uint8_t flags;
+    BlockServiceFlags flags;
     uint64_t capacityBytes;
     uint64_t availableBytes;
     uint64_t blocks;
@@ -1337,7 +1375,7 @@ struct RegisterBlockServiceInfo {
     uint8_t storageClass;
     FailureDomain failureDomain;
     BincodeFixedBytes<16> secretKey;
-    uint8_t flags;
+    BlockServiceFlags flags;
     uint8_t flagsMask;
     uint64_t capacityBytes;
     uint64_t availableBytes;
@@ -1370,6 +1408,53 @@ struct RegisterBlockServiceInfo {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServiceInfo& x);
+
+struct FullBlockServiceInfo {
+    BlockServiceId id;
+    uint8_t locationId;
+    AddrsInfo addrs;
+    uint8_t storageClass;
+    FailureDomain failureDomain;
+    BincodeFixedBytes<16> secretKey;
+    BlockServiceFlags flags;
+    uint64_t capacityBytes;
+    uint64_t availableBytes;
+    uint64_t blocks;
+    TernTime firstSeen;
+    TernTime lastSeen;
+    TernTime lastInfoChange;
+    bool hasFiles;
+    BincodeBytes path;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + 1 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + BincodeBytes::STATIC_SIZE; // id + locationId + addrs + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + firstSeen + lastSeen + lastInfoChange + hasFiles + path
+
+    FullBlockServiceInfo() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // id
+        _size += 1; // locationId
+        _size += addrs.packedSize(); // addrs
+        _size += 1; // storageClass
+        _size += failureDomain.packedSize(); // failureDomain
+        _size += BincodeFixedBytes<16>::STATIC_SIZE; // secretKey
+        _size += 1; // flags
+        _size += 8; // capacityBytes
+        _size += 8; // availableBytes
+        _size += 8; // blocks
+        _size += 8; // firstSeen
+        _size += 8; // lastSeen
+        _size += 8; // lastInfoChange
+        _size += 1; // hasFiles
+        _size += path.packedSize(); // path
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const FullBlockServiceInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const FullBlockServiceInfo& x);
 
 struct CdcInfo {
     ReplicaId replicaId;
@@ -3869,42 +3954,6 @@ struct RenameLocationResp {
 
 std::ostream& operator<<(std::ostream& out, const RenameLocationResp& x);
 
-struct LocationsReq {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    LocationsReq() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const LocationsReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const LocationsReq& x);
-
-struct LocationsResp {
-    BincodeList<LocationInfo> locations;
-
-    static constexpr uint16_t STATIC_SIZE = BincodeList<LocationInfo>::STATIC_SIZE; // locations
-
-    LocationsResp() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += locations.packedSize(); // locations
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const LocationsResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const LocationsResp& x);
-
 struct RegisterShardReq {
     ShardReplicaId shrid;
     bool isLeader;
@@ -3946,6 +3995,42 @@ struct RegisterShardResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterShardResp& x);
+
+struct LocationsReq {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    LocationsReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LocationsReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LocationsReq& x);
+
+struct LocationsResp {
+    BincodeList<LocationInfo> locations;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<LocationInfo>::STATIC_SIZE; // locations
+
+    LocationsResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += locations.packedSize(); // locations
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const LocationsResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const LocationsResp& x);
 
 struct RegisterCdcReq {
     ReplicaId replica;
@@ -3991,7 +4076,7 @@ std::ostream& operator<<(std::ostream& out, const RegisterCdcResp& x);
 
 struct SetBlockServiceFlagsReq {
     BlockServiceId id;
-    uint8_t flags;
+    BlockServiceFlags flags;
     uint8_t flagsMask;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + 1; // id + flags + flagsMask
@@ -4184,6 +4269,86 @@ struct CdcAtLocationResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const CdcAtLocationResp& x);
+
+struct RegisterRegistryReq {
+    ReplicaId replicaId;
+    uint8_t location;
+    bool isLeader;
+    AddrsInfo addrs;
+    bool bootstrap;
+
+    static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 1; // replicaId + location + isLeader + addrs + bootstrap
+
+    RegisterRegistryReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // replicaId
+        _size += 1; // location
+        _size += 1; // isLeader
+        _size += addrs.packedSize(); // addrs
+        _size += 1; // bootstrap
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RegisterRegistryReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RegisterRegistryReq& x);
+
+struct RegisterRegistryResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    RegisterRegistryResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const RegisterRegistryResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const RegisterRegistryResp& x);
+
+struct AllRegistryReplicasReq {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    AllRegistryReplicasReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const AllRegistryReplicasReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const AllRegistryReplicasReq& x);
+
+struct AllRegistryReplicasResp {
+    BincodeList<FullRegistryInfo> replicas;
+
+    static constexpr uint16_t STATIC_SIZE = BincodeList<FullRegistryInfo>::STATIC_SIZE; // replicas
+
+    AllRegistryReplicasResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += replicas.packedSize(); // replicas
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const AllRegistryReplicasResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const AllRegistryReplicasResp& x);
 
 struct ShardBlockServicesDEPRECATEDReq {
     ShardId shardId;
@@ -5519,9 +5684,9 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x);
 
 struct RegistryReqContainer {
 private:
-    static constexpr std::array<size_t,28> _staticSizes = {LocalShardsReq::STATIC_SIZE, LocalCdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, RegistryReq::STATIC_SIZE, LocalChangedBlockServicesReq::STATIC_SIZE, CreateLocationReq::STATIC_SIZE, RenameLocationReq::STATIC_SIZE, LocationsReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, ChangedBlockServicesAtLocationReq::STATIC_SIZE, ShardsAtLocationReq::STATIC_SIZE, CdcAtLocationReq::STATIC_SIZE, ShardBlockServicesDEPRECATEDReq::STATIC_SIZE, CdcReplicasDEPRECATEDReq::STATIC_SIZE, AllShardsReq::STATIC_SIZE, DecommissionBlockServiceReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, AllCdcReq::STATIC_SIZE, EraseDecommissionedBlockReq::STATIC_SIZE, AllBlockServicesDeprecatedReq::STATIC_SIZE, MoveCdcLeaderReq::STATIC_SIZE, ClearCdcInfoReq::STATIC_SIZE, UpdateBlockServicePathReq::STATIC_SIZE};
+    static constexpr std::array<size_t,30> _staticSizes = {LocalShardsReq::STATIC_SIZE, LocalCdcReq::STATIC_SIZE, InfoReq::STATIC_SIZE, RegistryReq::STATIC_SIZE, LocalChangedBlockServicesReq::STATIC_SIZE, CreateLocationReq::STATIC_SIZE, RenameLocationReq::STATIC_SIZE, RegisterShardReq::STATIC_SIZE, LocationsReq::STATIC_SIZE, RegisterCdcReq::STATIC_SIZE, SetBlockServiceFlagsReq::STATIC_SIZE, RegisterBlockServicesReq::STATIC_SIZE, ChangedBlockServicesAtLocationReq::STATIC_SIZE, ShardsAtLocationReq::STATIC_SIZE, CdcAtLocationReq::STATIC_SIZE, RegisterRegistryReq::STATIC_SIZE, AllRegistryReplicasReq::STATIC_SIZE, ShardBlockServicesDEPRECATEDReq::STATIC_SIZE, CdcReplicasDEPRECATEDReq::STATIC_SIZE, AllShardsReq::STATIC_SIZE, DecommissionBlockServiceReq::STATIC_SIZE, MoveShardLeaderReq::STATIC_SIZE, ClearShardInfoReq::STATIC_SIZE, ShardBlockServicesReq::STATIC_SIZE, AllCdcReq::STATIC_SIZE, EraseDecommissionedBlockReq::STATIC_SIZE, AllBlockServicesDeprecatedReq::STATIC_SIZE, MoveCdcLeaderReq::STATIC_SIZE, ClearCdcInfoReq::STATIC_SIZE, UpdateBlockServicePathReq::STATIC_SIZE};
     RegistryMessageKind _kind = RegistryMessageKind::EMPTY;
-    std::variant<LocalShardsReq, LocalCdcReq, InfoReq, RegistryReq, LocalChangedBlockServicesReq, CreateLocationReq, RenameLocationReq, LocationsReq, RegisterShardReq, RegisterCdcReq, SetBlockServiceFlagsReq, RegisterBlockServicesReq, ChangedBlockServicesAtLocationReq, ShardsAtLocationReq, CdcAtLocationReq, ShardBlockServicesDEPRECATEDReq, CdcReplicasDEPRECATEDReq, AllShardsReq, DecommissionBlockServiceReq, MoveShardLeaderReq, ClearShardInfoReq, ShardBlockServicesReq, AllCdcReq, EraseDecommissionedBlockReq, AllBlockServicesDeprecatedReq, MoveCdcLeaderReq, ClearCdcInfoReq, UpdateBlockServicePathReq> _data;
+    std::variant<LocalShardsReq, LocalCdcReq, InfoReq, RegistryReq, LocalChangedBlockServicesReq, CreateLocationReq, RenameLocationReq, RegisterShardReq, LocationsReq, RegisterCdcReq, SetBlockServiceFlagsReq, RegisterBlockServicesReq, ChangedBlockServicesAtLocationReq, ShardsAtLocationReq, CdcAtLocationReq, RegisterRegistryReq, AllRegistryReplicasReq, ShardBlockServicesDEPRECATEDReq, CdcReplicasDEPRECATEDReq, AllShardsReq, DecommissionBlockServiceReq, MoveShardLeaderReq, ClearShardInfoReq, ShardBlockServicesReq, AllCdcReq, EraseDecommissionedBlockReq, AllBlockServicesDeprecatedReq, MoveCdcLeaderReq, ClearCdcInfoReq, UpdateBlockServicePathReq> _data;
 public:
     RegistryReqContainer();
     RegistryReqContainer(const RegistryReqContainer& other);
@@ -5545,10 +5710,10 @@ public:
     CreateLocationReq& setCreateLocation();
     const RenameLocationReq& getRenameLocation() const;
     RenameLocationReq& setRenameLocation();
-    const LocationsReq& getLocations() const;
-    LocationsReq& setLocations();
     const RegisterShardReq& getRegisterShard() const;
     RegisterShardReq& setRegisterShard();
+    const LocationsReq& getLocations() const;
+    LocationsReq& setLocations();
     const RegisterCdcReq& getRegisterCdc() const;
     RegisterCdcReq& setRegisterCdc();
     const SetBlockServiceFlagsReq& getSetBlockServiceFlags() const;
@@ -5561,6 +5726,10 @@ public:
     ShardsAtLocationReq& setShardsAtLocation();
     const CdcAtLocationReq& getCdcAtLocation() const;
     CdcAtLocationReq& setCdcAtLocation();
+    const RegisterRegistryReq& getRegisterRegistry() const;
+    RegisterRegistryReq& setRegisterRegistry();
+    const AllRegistryReplicasReq& getAllRegistryReplicas() const;
+    AllRegistryReplicasReq& setAllRegistryReplicas();
     const ShardBlockServicesDEPRECATEDReq& getShardBlockServicesDEPRECATED() const;
     ShardBlockServicesDEPRECATEDReq& setShardBlockServicesDEPRECATED();
     const CdcReplicasDEPRECATEDReq& getCdcReplicasDEPRECATED() const;
@@ -5601,9 +5770,9 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x);
 
 struct RegistryRespContainer {
 private:
-    static constexpr std::array<size_t,29> _staticSizes = {sizeof(TernError), LocalShardsResp::STATIC_SIZE, LocalCdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, RegistryResp::STATIC_SIZE, LocalChangedBlockServicesResp::STATIC_SIZE, CreateLocationResp::STATIC_SIZE, RenameLocationResp::STATIC_SIZE, LocationsResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, ChangedBlockServicesAtLocationResp::STATIC_SIZE, ShardsAtLocationResp::STATIC_SIZE, CdcAtLocationResp::STATIC_SIZE, ShardBlockServicesDEPRECATEDResp::STATIC_SIZE, CdcReplicasDEPRECATEDResp::STATIC_SIZE, AllShardsResp::STATIC_SIZE, DecommissionBlockServiceResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, AllCdcResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesDeprecatedResp::STATIC_SIZE, MoveCdcLeaderResp::STATIC_SIZE, ClearCdcInfoResp::STATIC_SIZE, UpdateBlockServicePathResp::STATIC_SIZE};
+    static constexpr std::array<size_t,31> _staticSizes = {sizeof(TernError), LocalShardsResp::STATIC_SIZE, LocalCdcResp::STATIC_SIZE, InfoResp::STATIC_SIZE, RegistryResp::STATIC_SIZE, LocalChangedBlockServicesResp::STATIC_SIZE, CreateLocationResp::STATIC_SIZE, RenameLocationResp::STATIC_SIZE, RegisterShardResp::STATIC_SIZE, LocationsResp::STATIC_SIZE, RegisterCdcResp::STATIC_SIZE, SetBlockServiceFlagsResp::STATIC_SIZE, RegisterBlockServicesResp::STATIC_SIZE, ChangedBlockServicesAtLocationResp::STATIC_SIZE, ShardsAtLocationResp::STATIC_SIZE, CdcAtLocationResp::STATIC_SIZE, RegisterRegistryResp::STATIC_SIZE, AllRegistryReplicasResp::STATIC_SIZE, ShardBlockServicesDEPRECATEDResp::STATIC_SIZE, CdcReplicasDEPRECATEDResp::STATIC_SIZE, AllShardsResp::STATIC_SIZE, DecommissionBlockServiceResp::STATIC_SIZE, MoveShardLeaderResp::STATIC_SIZE, ClearShardInfoResp::STATIC_SIZE, ShardBlockServicesResp::STATIC_SIZE, AllCdcResp::STATIC_SIZE, EraseDecommissionedBlockResp::STATIC_SIZE, AllBlockServicesDeprecatedResp::STATIC_SIZE, MoveCdcLeaderResp::STATIC_SIZE, ClearCdcInfoResp::STATIC_SIZE, UpdateBlockServicePathResp::STATIC_SIZE};
     RegistryMessageKind _kind = RegistryMessageKind::EMPTY;
-    std::variant<TernError, LocalShardsResp, LocalCdcResp, InfoResp, RegistryResp, LocalChangedBlockServicesResp, CreateLocationResp, RenameLocationResp, LocationsResp, RegisterShardResp, RegisterCdcResp, SetBlockServiceFlagsResp, RegisterBlockServicesResp, ChangedBlockServicesAtLocationResp, ShardsAtLocationResp, CdcAtLocationResp, ShardBlockServicesDEPRECATEDResp, CdcReplicasDEPRECATEDResp, AllShardsResp, DecommissionBlockServiceResp, MoveShardLeaderResp, ClearShardInfoResp, ShardBlockServicesResp, AllCdcResp, EraseDecommissionedBlockResp, AllBlockServicesDeprecatedResp, MoveCdcLeaderResp, ClearCdcInfoResp, UpdateBlockServicePathResp> _data;
+    std::variant<TernError, LocalShardsResp, LocalCdcResp, InfoResp, RegistryResp, LocalChangedBlockServicesResp, CreateLocationResp, RenameLocationResp, RegisterShardResp, LocationsResp, RegisterCdcResp, SetBlockServiceFlagsResp, RegisterBlockServicesResp, ChangedBlockServicesAtLocationResp, ShardsAtLocationResp, CdcAtLocationResp, RegisterRegistryResp, AllRegistryReplicasResp, ShardBlockServicesDEPRECATEDResp, CdcReplicasDEPRECATEDResp, AllShardsResp, DecommissionBlockServiceResp, MoveShardLeaderResp, ClearShardInfoResp, ShardBlockServicesResp, AllCdcResp, EraseDecommissionedBlockResp, AllBlockServicesDeprecatedResp, MoveCdcLeaderResp, ClearCdcInfoResp, UpdateBlockServicePathResp> _data;
 public:
     RegistryRespContainer();
     RegistryRespContainer(const RegistryRespContainer& other);
@@ -5629,10 +5798,10 @@ public:
     CreateLocationResp& setCreateLocation();
     const RenameLocationResp& getRenameLocation() const;
     RenameLocationResp& setRenameLocation();
-    const LocationsResp& getLocations() const;
-    LocationsResp& setLocations();
     const RegisterShardResp& getRegisterShard() const;
     RegisterShardResp& setRegisterShard();
+    const LocationsResp& getLocations() const;
+    LocationsResp& setLocations();
     const RegisterCdcResp& getRegisterCdc() const;
     RegisterCdcResp& setRegisterCdc();
     const SetBlockServiceFlagsResp& getSetBlockServiceFlags() const;
@@ -5645,6 +5814,10 @@ public:
     ShardsAtLocationResp& setShardsAtLocation();
     const CdcAtLocationResp& getCdcAtLocation() const;
     CdcAtLocationResp& setCdcAtLocation();
+    const RegisterRegistryResp& getRegisterRegistry() const;
+    RegisterRegistryResp& setRegisterRegistry();
+    const AllRegistryReplicasResp& getAllRegistryReplicas() const;
+    AllRegistryReplicasResp& setAllRegistryReplicas();
     const ShardBlockServicesDEPRECATEDResp& getShardBlockServicesDEPRECATED() const;
     ShardBlockServicesDEPRECATEDResp& setShardBlockServicesDEPRECATED();
     const CdcReplicasDEPRECATEDResp& getCdcReplicasDEPRECATED() const;

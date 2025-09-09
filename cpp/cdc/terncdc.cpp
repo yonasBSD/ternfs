@@ -3,7 +3,7 @@
 #include <arpa/inet.h>
 
 #include "Msgs.hpp"
-#include "Registry.hpp"
+#include "RegistryClient.hpp"
 #include "CDC.hpp"
 
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(false)

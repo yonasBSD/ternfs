@@ -1605,11 +1605,6 @@ public:
         auto initSuccess = _metadata.init(initialStart);
         initSuccess = _partitions.init(initialStart) && initSuccess;
 
-        auto now = ternNow();
-        if ((now - _metadata.getLastReleasedTime()) * 2 > (LogsDB::PARTITION_TIME_SPAN * 3)) {
-            initSuccess = false;
-            LOG_ERROR(_env,"Time when we last released record (%s) is far in the past. There is a high risk we will not be able to catch up!", _metadata.getLastReleasedTime());
-        }
         ALWAYS_ASSERT(initSuccess, "Failed to init LogsDB, check if you need to run with \"initialStart\" flag!");
         ALWAYS_ASSERT(lastRead <= _metadata.getLastReleased());
         flush(true);
@@ -1667,7 +1662,7 @@ public:
                 LOG_ERROR(_env, "Expected response of type %s, got type %s. Response: %s", request->msg.body.kind(), resp.msg.body.kind(), resp);
                 continue;
             }
-            LOG_DEBUG(_env, "processing %s", resp);
+            LOG_TRACE(_env, "processing %s", resp);
 
             switch(resp.msg.body.kind()) {
             case LogMessageKind::RELEASE:

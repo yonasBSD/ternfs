@@ -20,7 +20,7 @@
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "Protocol.hpp"
-#include "Registry.hpp"
+#include "RegistryClient.hpp"
 #include "Exception.hpp"
 #include "Connect.hpp"
 #include "Loop.hpp"
@@ -211,6 +211,72 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
     return {};
 
 #undef FAIL
+}
+
+std::pair<int, std::string> registerRegistry(
+    const std::string& registryHost,
+    uint16_t registryPort,
+    Duration timeout,
+    ReplicaId replicaId,
+    uint8_t location,
+    bool isLeader,
+    const AddrsInfo& addrs,
+    bool bootstrap
+) {
+    const auto [sock, errStr] = registrySock(registryHost, registryPort, timeout);
+    if (sock.error()) {
+        return {sock.getErrno(), errStr};
+    }
+
+    RegistryReqContainer reqContainer;
+    auto& req = reqContainer.setRegisterRegistry();
+    req.replicaId = replicaId;
+    req.location = location;
+    req.isLeader = isLeader;
+    req.addrs = addrs;
+    req.bootstrap = bootstrap;
+    {
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
+        if (err) { return {err, errStr}; }
+    }
+
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        if (err) { return {err, errStr}; }
+    }
+    respContainer.getRegisterRegistry(); // check that the response is of the right type
+
+    return {};
+}
+
+std::pair<int, std::string> fetchRegistryReplicas(
+    const std::string& registryHost,
+    uint16_t registryPort,
+    Duration timeout,
+    std::vector<FullRegistryInfo>& replicas
+) {
+    const auto [sock, errStr] = registrySock(registryHost, registryPort, timeout);
+    if (sock.error()) {
+        return {sock.getErrno(), errStr};
+    }
+
+    RegistryReqContainer reqContainer;
+    auto& req = reqContainer.setAllRegistryReplicas();
+    {
+        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
+        if (err) { return {err, errStr}; }
+    }
+
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        if (err) { return {err, errStr}; }
+    }
+
+    replicas = respContainer.getAllRegistryReplicas().replicas.els;
+
+    return {};
 }
 
 std::pair<int, std::string> registerShard(

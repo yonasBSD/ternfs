@@ -15,11 +15,11 @@ class MultiplexedChannel {
 public:
     // Returns false on signal interrupt
     template<size_t N>
-    bool receiveMessages(Env& env, std::array<UDPSocketPair, N>& socks, UDPReceiver<N>& receiver, ssize_t maxMsgCount = -1, Duration timeout = -1) {
+    bool receiveMessages(Env& env, std::array<UDPSocketPair, N>& socks, UDPReceiver<N>& receiver, ssize_t maxMsgCount = -1, Duration timeout = -1, bool noPoll = false) {
         for (auto& v : _messages) {
             v.clear();
         }
-        if (unlikely(!receiver.receiveMessages(env, socks, maxMsgCount, timeout))) {
+        if (unlikely(!receiver.receiveMessages(env, socks, maxMsgCount, timeout, noPoll))) {
             return false;
         }
         for (int i = 0; i < N; i++) {

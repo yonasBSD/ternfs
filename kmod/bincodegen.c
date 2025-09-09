@@ -92,6 +92,8 @@ const char* ternfs_err_str(int err) {
     case 99: return "ADD_SPAN_LOCATION_MISMATCHING_CRC";
     case 100: return "ADD_SPAN_LOCATION_EXISTS";
     case 101: return "SWAP_BLOCKS_MISMATCHING_LOCATION";
+    case 102: return "LOCATION_EXISTS";
+    case 103: return "LOCATION_NOT_FOUND";
     default: return "UNKNOWN";
     }
 }

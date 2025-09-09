@@ -1,6 +1,7 @@
 #include <atomic>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/epoll.h>
 #include <unistd.h>
 
 #include "Assert.hpp"
@@ -28,11 +29,15 @@ static void stopLoopHandler(int signum) {
     if (pthread_self() != mainThread.load(std::memory_order_acquire)) {
         pthread_kill(mainThread, SIGTERM);
     }
-    stopLoop.store(true, std::memory_order_release);
+    stopLoop.store(true, std::memory_order_relaxed);
 }
 
 void LoopThread::sendStop() {
     _loop->sendStop();
+    auto stopLoopPtr = _stopLoop.load(std::memory_order_relaxed);
+    if (stopLoopPtr) {
+        stopLoopPtr->store(true, std::memory_order_relaxed);
+    }
     pthread_kill(_thread, SIGTERM);
 }
 
@@ -40,6 +45,7 @@ Loop::Loop(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& 
 
 void* LoopThread::runLoop(void* arg) {
     LoopThread* loopThread = (LoopThread*) arg;
+    loopThread->_stopLoop.store(&stopLoop, std::memory_order_relaxed);
 
 
     // there's a race between starting the thread and getting the
@@ -83,6 +89,10 @@ void Loop::run() {
 int Loop::poll(struct pollfd* fds, nfds_t nfds, Duration timeout) {
     struct timespec spec = timeout.timespec();
     return ppoll(fds, nfds, timeout < 0 ? nullptr : &spec, &blockingSigset);
+}
+
+int Loop::epollWait(int epfd, struct epoll_event* events, int maxevents, Duration timeout) {
+    return epoll_pwait(epfd, events, maxevents, static_cast<int>(timeout.ns / 1000000), &blockingSigset);
 }
 
 void Loop::stop() {

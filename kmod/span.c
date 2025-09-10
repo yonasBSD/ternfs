@@ -826,7 +826,8 @@ static bool insert_span(struct rb_root* spans, struct ternfs_span* span) {
     return true;
 }
 
-static void put_span(struct ternfs_span* span) {
+void ternfs_put_span(struct ternfs_span* span) {
+    if (atomic_dec_return(&span->refcount) > 0) { return; }
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
         kmem_cache_free(ternfs_inline_span_cachep, TERNFS_INLINE_SPAN(span));
     } else {
@@ -858,11 +859,12 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
 
     struct ternfs_block_span* span = kmem_cache_alloc(ternfs_block_span_cachep, GFP_KERNEL);
     if (!span) { ctx->err = -ENOMEM; return; }
+    atomic_set(&span->span.refcount, 1);
 
     if (ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY) {
         ternfs_warn("D=%d > %d || P=%d > %d", ternfs_data_blocks(parity), TERNFS_MAX_DATA, ternfs_data_blocks(parity), TERNFS_MAX_PARITY);
         ctx->err = -EIO;
-        put_span(&span->span);
+        ternfs_put_span(&span->span);
         return;
     }
 
@@ -922,6 +924,7 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
 
     struct ternfs_inline_span* span = kmem_cache_alloc(ternfs_inline_span_cachep, GFP_KERNEL);
     if (!span) { ctx->err = -ENOMEM; return; }
+    atomic_set(&span->span.refcount, 1);
 
     span->span.ino = ctx->ino;
 
@@ -948,18 +951,21 @@ struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternf
         return s; \
     } while(0)
 
-    bool fetched = false;
-
 retry:
     // Check if we already have the span
     {
         down_read(&spans->__lock);
         struct ternfs_span* span = lookup_span(&spans->__spans, offset);
+        // we need to grab refcount while holding the lock
+        if (likely(span != NULL)) {
+            atomic_inc(&span->refcount);
+        }
         up_read(&spans->__lock);
         if (likely(span != NULL)) {
             return span;
         }
-        BUG_ON(fetched); // If we've just fetched it must be here.
+        // While it looks it must be there it could be again removed already
+        // BUG_ON(fetched); // If we've just fetched it must be here.
     }
 
     // We need to fetch the spans.
@@ -982,7 +988,7 @@ retry:
             struct rb_node* node = rb_first(&ctx.spans);
             if (node == NULL) { break; }
             rb_erase(node, &ctx.spans);
-            put_span(rb_entry(node, struct ternfs_span, node));
+            ternfs_put_span(rb_entry(node, struct ternfs_span, node));
         }
         up_write(&spans->__lock);
         GET_SPAN_EXIT(ERR_PTR(err));
@@ -995,12 +1001,11 @@ retry:
         struct ternfs_span* span = rb_entry(node, struct ternfs_span, node);
         if (!insert_span(&spans->__spans, span)) {
             // Span is already cached
-            put_span(span);
+            ternfs_put_span(span);
         }
     }
     up_write(&spans->__lock);
 
-    fetched = true;
     goto retry;
 
 #undef GET_SPAN_EXIT
@@ -1009,7 +1014,7 @@ retry:
 void ternfs_unlink_span(struct ternfs_file_spans* spans, struct ternfs_span* span) {
     down_write(&spans->__lock);
     rb_erase(&span->node, &spans->__spans);
-    put_span(span);
+    ternfs_put_span(span);
     up_write(&spans->__lock);
 }
 
@@ -1022,7 +1027,7 @@ void ternfs_free_file_spans(struct ternfs_file_spans* spans) {
 
         struct ternfs_span* span = rb_entry(node, struct ternfs_span, node);
         rb_erase(&span->node, &spans->__spans);
-        put_span(span);
+        ternfs_put_span(span);
     }
 
     up_write(&spans->__lock);

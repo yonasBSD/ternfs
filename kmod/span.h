@@ -31,6 +31,10 @@ struct ternfs_span {
     // To be in the inode tree. Note that we might _not_ be in the
     // tree once the inode releases us.
     struct rb_node node;
+    // The inode and in progress reads hold references to us.
+    // The reads can decide to unlink the span on error but other in 
+    // progress reads for same span need to finish before this can be freed.
+    atomic_t refcount;
     // Used to determine which type of span this is enclosed in.
     u8 storage_class;
 };
@@ -67,11 +71,14 @@ struct ternfs_block_span {
     })
 
 // Fetches and caches the span if necessary. `offset` need not be the actual
-// span offset, the span containing the offset will be returned.
+// span offset, the span containing the offset will be returned with incremented refcount
 //
 // If the offset is out of bounds, NULL will be returned. Errors might
 // be returned if we fail to fetch the span.
 struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternfs_file_spans* spans, u64 offset);
+
+// decrements refcount
+void ternfs_put_span(struct ternfs_span* span);
 
 // Remove the span from the inode tree and decrement the refcount.
 void ternfs_unlink_span(struct ternfs_file_spans* spans, struct ternfs_span* span);

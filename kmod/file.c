@@ -1056,11 +1056,12 @@ char* ternfs_read_link(struct ternfs_inode* enode) {
     buf[size] = '\0';
 
     ternfs_debug("link %*pE", (int)size, buf);
-
+    ternfs_put_span(span);
     return buf;
 
 out_err:
     ternfs_debug("get_link err=%d", err);
+    ternfs_put_span(span);
     return ERR_PTR(err);
 }
 
@@ -1180,6 +1181,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
     if (IS_ERR(span)) {
         ternfs_warn("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
+        span = NULL;
         goto out_err;
     }
 
@@ -1209,11 +1211,15 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         }
     }
 out:
+    ternfs_put_span(span);
     process_file_pages(mapping, pages, nr_pages);
     process_file_pages(mapping, &extra_pages, 0);
     return 0;
 
 out_err:
+    if (span != NULL) {
+        ternfs_put_span(span);
+    }
     put_pages_list(pages);
     return err;
 }
@@ -1235,10 +1241,14 @@ static int file_readpage(struct file* filp, struct page* page) {
     }
 
 retry:
+    if (span != NULL) {
+        ternfs_put_span(span);
+    }
     span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
     if (IS_ERR(span)) {
         ternfs_debug("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
+        span = NULL;
         goto out;
     }
 
@@ -1290,6 +1300,7 @@ retry:
             if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > ternfs_file_io_retry_refresh_span_interval_sec) {
                 ternfs_info("refreshing span %lld of file %016lx as the span structure or block service flags could have changed in the meantime", off, enode->inode.i_ino);
                 ternfs_unlink_span(&enode->file.spans, span);
+                span = NULL; // unlink already reduced refcount
                 last_span_refresh_ts = end_ts;
             }
             goto retry;
@@ -1312,7 +1323,9 @@ out:
     } else {
         SetPageUptodate(page);
     }
-
+    if (span != NULL) {
+        ternfs_put_span(span);
+    }
     unlock_page(page);
     return err;
 }
@@ -1369,6 +1382,7 @@ static void file_readahead(struct readahead_control *rac)
     if (IS_ERR(span)) {
         ternfs_warn("ternfs_get_span_failed at pos %llu", off);
         err = PTR_ERR(span);
+        span = NULL;
         goto out_err;
     }
 
@@ -1422,6 +1436,7 @@ static void file_readahead(struct readahead_control *rac)
             goto out_err;
         }
     }
+    ternfs_put_span(span);
 
 out_process:
     // Process the main pages
@@ -1442,6 +1457,9 @@ out_process:
     return;
 
 out_err:
+    if (span != NULL) {
+        ternfs_put_span(span);
+    }
     put_pages_list(&pages);
     return;
 }

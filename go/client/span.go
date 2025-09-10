@@ -885,8 +885,9 @@ func (c *Client) FetchSpans(
 	log *log.Logger,
 	fileId msgs.InodeId,
 ) (spans []SpanWithBlockServices, err error) {
+	var byteOffset uint64
 	for {
-		req := msgs.LocalFileSpansReq{FileId: fileId}
+		req := msgs.LocalFileSpansReq{FileId: fileId, ByteOffset: byteOffset}
 		resp := msgs.LocalFileSpansResp{}
 		if err := c.ShardRequest(log, fileId.Shard(), &req, &resp); err != nil {
 			return nil, err
@@ -894,8 +895,8 @@ func (c *Client) FetchSpans(
 		for s := range resp.Spans {
 			spans = append(spans, SpanWithBlockServices{BlockServices: resp.BlockServices, Span: &resp.Spans[s]})
 		}
-		req.ByteOffset = resp.NextOffset
-		if req.ByteOffset == 0 {
+		byteOffset = resp.NextOffset
+		if byteOffset == 0 {
 			break
 		}
 	}

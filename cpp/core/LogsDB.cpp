@@ -1493,6 +1493,9 @@ public:
             entries[i].idx = 0;
         }
         _entriesEnd += countToAppend;
+        if (unlikely(_noReplication)) {
+            maybeMoveRelease();
+        }
         return TernError::NO_ERROR;
     }
 

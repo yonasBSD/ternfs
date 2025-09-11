@@ -806,7 +806,7 @@ private:
 public:
     ShardWriter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
         Loop(logger, xmon, "writer"),
-        _basePath(shared.options.dbDir),
+        _basePath(shared.options.logsDBOptions.dbDir),
         _shared(shared),
         _sender(UDPSenderConfig{.maxMsgSize = MAX_UDP_MTU}),
         _packetDropRand(ternNow().ns),
@@ -830,7 +830,7 @@ public:
             }
         };
         memset(_catchupWindow.data(), 0, _catchupWindow.size()*sizeof(decltype(_catchupWindow)::value_type));
-        convertProb("outgoing", _shared.options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
+        convertProb("outgoing", _shared.options.serverOptions.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _workItems.reserve(_maxWorkItemsAtOnce);
         _shardEntries.reserve(LogsDB::IN_FLIGHT_APPEND_WINDOW);
     }
@@ -882,7 +882,7 @@ public:
                 case ShardMessageKind::ADD_SPAN_INITIATE:
                 {
                     auto& addSpanReq = reqMsg.body.setAddSpanAtLocationInitiate();
-                    addSpanReq.locationId = _shared.options.location;
+                    addSpanReq.locationId = _shared.options.logsDBOptions.location;
                     addSpanReq.req.reference = NULL_INODE_ID;
                     addSpanReq.req.req = req.second.req.msg.body.getAddSpanInitiate();
                     break;
@@ -890,7 +890,7 @@ public:
                 case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE:
                 {
                     auto& addSpanReq = reqMsg.body.setAddSpanAtLocationInitiate();
-                    addSpanReq.locationId = _shared.options.location;
+                    addSpanReq.locationId = _shared.options.logsDBOptions.location;
                     addSpanReq.req = req.second.req.msg.body.getAddSpanInitiateWithReference();
                     break;
                 }
@@ -1470,15 +1470,6 @@ public:
                 _inFlightEntries.emplace(_shardEntries[i].idx.u64, std::move(_shardEntries[i]));
             }
             _logsDBEntries.clear();
-            if (unlikely(_shared.options.noReplication)) {
-                // usually the state machine is moved by responses if we don't expect any we move it manually
-                // and consume everything we just wrote
-                _logsDBRequests.clear();
-                _logsDBResponses.clear();
-                _logsDB.processIncomingMessages(_logsDBRequests, _logsDBResponses);
-                _applyLogEntries();
-                ALWAYS_ASSERT(_inFlightEntries.empty());
-            }
         }
 
         // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
@@ -1667,7 +1658,7 @@ public:
                 ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
             }
         };
-        convertProb("outgoing", _shared.options.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
+        convertProb("outgoing", _shared.options.serverOptions.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _requests.reserve(MAX_RECV_MSGS * 2);
     }
 
@@ -1729,11 +1720,11 @@ public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
         PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 2_mins, 1}),
         _shared(shared),
-        _shrid(_shared.options.shrid),
-        _location(_shared.options.location),
-        _noReplication(_shared.options.noReplication),
-        _registryHost(_shared.options.registryHost),
-        _registryPort(_shared.options.registryPort)
+        _shrid(_shared.options.shrid()),
+        _location(_shared.options.logsDBOptions.location),
+        _noReplication(_shared.options.logsDBOptions.noReplication),
+        _registryHost(_shared.options.registryClientOptions.host),
+        _registryPort(_shared.options.registryClientOptions.port)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -1746,7 +1737,7 @@ public:
         {
             LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with registry", _shrid, (int)_location, _shared.sock().addr());
             // ToDO: once leader election is fully enabled report or leader status instead of value of flag passed on startup
-            const auto [err, errStr] = registerShard(_registryHost, _registryPort, 10_sec, _shrid, _location, !_shared.options.avoidBeingLeader, _shared.sock().addr());
+            const auto [err, errStr] = registerShard(_registryHost, _registryPort, 10_sec, _shrid, _location, _shared.options.isLeader(), _shared.sock().addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
@@ -1834,9 +1825,9 @@ public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
         PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.options.isLeader() ? 30_sec : 2_mins}),
         _shared(shared),
-        _shrid(_shared.options.shrid),
-        _registryHost(_shared.options.registryHost),
-        _registryPort(_shared.options.registryPort),
+        _shrid(_shared.options.shrid()),
+        _registryHost(_shared.options.registryClientOptions.host),
+        _registryPort(_shared.options.registryClientOptions.port),
         _updatedOnce(false)
     {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
@@ -2015,8 +2006,8 @@ public:
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
         _influxDB(influxDB),
         _shared(shared),
-        _shrid(_shared.options.shrid),
-        _location(_shared.options.location),
+        _shrid(_shared.options.shrid()),
+        _location(_shared.options.logsDBOptions.location),
         _sendMetricsAlert(XmonAppType::DAYTIME, 5_mins),
         _sockQueueAlerts({XmonAppType::NEVER, XmonAppType::NEVER}),
         _writeQueueAlert(XmonAppType::NEVER)
@@ -2121,49 +2112,47 @@ public:
 
 void runShard(ShardOptions& options) {
     int logOutFd = STDOUT_FILENO;
-    if (!options.logFile.empty()) {
-        logOutFd = open(options.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
+    if (!options.logOptions.logFile.empty()) {
+        logOutFd = open(options.logOptions.logFile.c_str(), O_WRONLY|O_CREAT|O_APPEND, 0644);
         if (logOutFd < 0) {
             throw SYSCALL_EXCEPTION("open");
         }
     }
-    Logger logger(options.logLevel, logOutFd, options.syslog, true);
+    Logger logger(options.logOptions.logLevel, logOutFd, options.logOptions.syslog, true);
 
     std::shared_ptr<XmonAgent> xmon;
-    if (!options.xmonAddr.empty()) {
+    if (!options.xmonOptions.addr.empty()) {
         xmon = std::make_shared<XmonAgent>();
     }
 
     Env env(logger, xmon, "startup");
 
     {
-        LOG_INFO(env, "Running shard %s at location %s, with options:", options.shrid, (int)options.location);
-        LOG_INFO(env, "  level = %s", options.logLevel);
-        LOG_INFO(env, "  logFile = '%s'", options.logFile);
-        LOG_INFO(env, "  registryHost = '%s'", options.registryHost);
-        LOG_INFO(env, "  registryPort = %s", options.registryPort);
-        LOG_INFO(env, "  ownAddres = %s", options.shardAddrs);
-        LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.simulateOutgoingPacketDrop);
-        LOG_INFO(env, "  syslog = %s", (int)options.syslog);
+        LOG_INFO(env, "Running shard %s at location %s, with options:", options.shrid(), (int)options.logsDBOptions.location);
+        LOG_INFO(env, "  level = %s", options.logOptions.logLevel);
+        LOG_INFO(env, "  logFile = '%s'", options.logOptions.logFile);
+        LOG_INFO(env, "  registryHost = '%s'", options.registryClientOptions.host);
+        LOG_INFO(env, "  registryPort = %s", options.registryClientOptions.port);
+        LOG_INFO(env, "  ownAddres = %s", options.serverOptions.addrs);
+        LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.serverOptions.simulateOutgoingPacketDrop);
+        LOG_INFO(env, "  syslog = %s", (int)options.logOptions.syslog);
         LOG_INFO(env, "Using LogsDB with options:");
-        LOG_INFO(env, "    noReplication = '%s'", (int)options.noReplication);
-        LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.avoidBeingLeader);
+        LOG_INFO(env, "    noReplication = '%s'", (int)options.logsDBOptions.noReplication);
+        LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.logsDBOptions.avoidBeingLeader);
     }
 
     // Immediately start xmon: we want the database initializing update to
     // be there.
-    std::vector<std::unique_ptr<LoopThread>> threads;
+    LoopThreads threads;
 
     if (xmon) {
-        XmonConfig config;
         {
             std::ostringstream ss;
-            ss << "eggsshard_" << std::setfill('0') << std::setw(3) << options.shrid.shardId() << "_" << options.shrid.replicaId();
-            config.appInstance =  ss.str();
+            ss << "eggsshard_" << std::setfill('0') << std::setw(3) << options.shrid().shardId() << "_" << options.shrid().replicaId();
+            options.xmonOptions.appInstance =  ss.str();
         }
-        config.addr = options.xmonAddr;
-        config.appType = XmonAppType::CRITICAL;
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, config)));
+        options.xmonOptions.appType = XmonAppType::CRITICAL;
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<Xmon>(logger, xmon, options.xmonOptions)));
     }
 
     // then everything else
@@ -2171,7 +2160,7 @@ void runShard(ShardOptions& options) {
     XmonNCAlert dbInitAlert;
     env.updateAlert(dbInitAlert, "initializing database");
 
-    SharedRocksDB sharedDB(logger, xmon, options.dbDir + "/db", options.dbDir + "/db-statistics.txt");
+    SharedRocksDB sharedDB(logger, xmon, options.logsDBOptions.dbDir + "/db", options.logsDBOptions.dbDir  + "/db-statistics.txt");
     sharedDB.registerCFDescriptors(ShardDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
     sharedDB.registerCFDescriptors(BlockServicesCacheDB::getColumnFamilyDescriptors());
@@ -2189,19 +2178,19 @@ void runShard(ShardOptions& options) {
 
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
 
-    ShardDB shardDB(logger, xmon, options.shrid.shardId(), options.location, options.transientDeadlineInterval, sharedDB, blockServicesCache);
-    LogsDB logsDB(logger, xmon, sharedDB, options.shrid.replicaId(), shardDB.lastAppliedLogEntry(), options.noReplication, options.avoidBeingLeader);
+    ShardDB shardDB(logger, xmon, options.shardId, options.logsDBOptions.location, options.transientDeadlineInterval, sharedDB, blockServicesCache);
+    LogsDB logsDB(logger, xmon, sharedDB, options.logsDBOptions.replicaId, shardDB.lastAppliedLogEntry(), options.logsDBOptions.noReplication, options.logsDBOptions.avoidBeingLeader);
     env.clearAlert(dbInitAlert);
 
-    ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.shardAddrs));
+    ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.serverOptions.addrs));
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardReader>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shared)));
-    if (options.influxDB) {
-        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, *options.influxDB, shared)));
+    if (!options.metricsOptions.origin.empty()) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, options.metricsOptions, shared)));
     }
 
     // from this point on termination on SIGINT/SIGTERM will be graceful

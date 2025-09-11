@@ -43,12 +43,14 @@ public:
     static int sleep(Duration d);
 };
 
+struct LoopThread;
+typedef std::vector<std::unique_ptr<LoopThread>> LoopThreads;
 struct LoopThread {
     // This will remember the sigmask that it's been called with, and use it
     // to unmask stuff in Loop::poll/Loop::sleep.
     static std::unique_ptr<LoopThread> Spawn(std::unique_ptr<Loop>&& loop);
 
-    static void waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops);
+    static void waitUntilStopped(LoopThreads& loops);
 
     virtual ~LoopThread() = default;
     LoopThread(const LoopThread&) = delete;
@@ -60,5 +62,3 @@ private:
     pthread_t _thread;
     std::atomic<std::atomic<bool>*> _stopLoop;
 };
-
-

@@ -530,6 +530,10 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 		"-outgoing-packet-drop", fmt.Sprintf("%g", opts.OutgoingPacketDrop),
 		"-registry", opts.RegistryAddress,
 		"-addr", opts.Addr1,
+		"-db-dir", opts.Dir,
+		"-shard", fmt.Sprintf("%d", int(opts.Shrid.Shard())),
+		"-replica", fmt.Sprintf("%d", int(opts.Shrid.Replica())),
+		"-location", fmt.Sprintf("%d", int(opts.Location)),
 	}
 	if opts.Addr2 != "" {
 		args = append(args, "-addr", opts.Addr2)
@@ -553,12 +557,7 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 	case log.ERROR:
 		args = append(args, "-log-level", "error")
 	}
-	args = append(args,
-		opts.Dir,
-		fmt.Sprintf("%d", int(opts.Shrid.Shard())),
-		fmt.Sprintf("%d", int(opts.Shrid.Replica())),
-		fmt.Sprintf("%d", int(opts.Location)),
-	)
+
 	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{
 		Name:            fmt.Sprintf("shard %v", opts.Shrid),
@@ -624,12 +623,14 @@ func (procs *ManagedProcesses) StartCDC(ll *log.Logger, repoDir string, opts *CD
 		"-log-file", path.Join(opts.Dir, "log"),
 		"-registry", opts.RegistryAddress,
 		"-addr", opts.Addr1,
+		"-db-dir", opts.Dir,
+		"-replica", fmt.Sprintf("%d", int(opts.ReplicaId)),
 	}
 	if opts.Addr2 != "" {
 		args = append(args, "-addr", opts.Addr2)
 	}
 	if opts.ShardTimeout != 0 {
-		args = append(args, "-shard-timeout-ms", fmt.Sprintf("%v", opts.ShardTimeout.Milliseconds()))
+		args = append(args, "-shard-timeout", fmt.Sprintf("%vms", opts.ShardTimeout.Milliseconds()))
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
@@ -647,7 +648,6 @@ func (procs *ManagedProcesses) StartCDC(ll *log.Logger, repoDir string, opts *CD
 	case log.ERROR:
 		args = append(args, "-log-level", "error")
 	}
-	args = append(args, opts.Dir, fmt.Sprintf("%d", int(opts.ReplicaId)))
 	cppDir := cppDir(repoDir)
 	mpArgs := ManagedProcessArgs{
 		Name:            fmt.Sprintf("cdc %v", opts.ReplicaId),

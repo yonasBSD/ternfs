@@ -104,7 +104,7 @@ int Loop::sleep(Duration d) {
     return ppoll(nullptr, 0, &tspec, &blockingSigset);
 }
 
-void LoopThread::waitUntilStopped(std::vector<std::unique_ptr<LoopThread>>& loops) {
+void LoopThread::waitUntilStopped(LoopThreads& loops) {
     ALWAYS_ASSERT(getpid() == gettid(), "You can only run this function from the main thread");
 
     // mask signals here too

@@ -104,6 +104,9 @@ private:
 public:
     Env(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const std::string& prefix): _logger(logger), _xmon(xmon), _prefix(prefix) {}
 
+    Logger& logger() { return _logger; }
+    std::shared_ptr<XmonAgent> xmon() { return _xmon; }
+
     template<typename ...Args>
     void _log(LogLevel level, const char* fmt, Args&&... args) {
         _logger._log(level, _prefix, fmt, std::forward<Args>(args)...);

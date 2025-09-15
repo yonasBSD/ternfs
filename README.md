@@ -1,4 +1,4 @@
-![TernFS Logo](https://github.com/user-attachments/assets/2e895b48-1a61-4b9d-aad0-2fc03777e817 "TernFS Logo")
+[![TernFS Logo](https://github.com/user-attachments/assets/2e895b48-1a61-4b9d-aad0-2fc03777e817 "TernFS Logo")](https://xtxmarkets.com/tech/2025-ternfs)
 
 
 A distributed file system. For a high-level description of TernFS, see [the TernFS blog post on the XTX Markets Tech Blog](https://xtxmarkets.com/tech/2025-ternfs). This document provides a more bare-bones overview and an introduction to the codebase.

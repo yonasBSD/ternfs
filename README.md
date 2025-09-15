@@ -1,8 +1,7 @@
-<p align="center">
-<img width="600" alt="TernFS" src="https://github.com/user-attachments/assets/dc047e5d-60d0-45a6-b395-24104c2dc329" />
-</p>
+![TernFS Logo](https://github.com/user-attachments/assets/2e895b48-1a61-4b9d-aad0-2fc03777e817 "TernFS Logo")
 
-A distributed file system. For a high-level description of TernFS, see its [blog post](TODO insert link). This document provides a more bare-bones overview and an introduction to the codebase.
+
+A distributed file system. For a high-level description of TernFS, see [the TernFS blog post on the XTX Markets Tech Blog](https://xtxmarkets.com/tech/2025-ternfs). This document provides a more bare-bones overview and an introduction to the codebase.
 
 ## Goals
 

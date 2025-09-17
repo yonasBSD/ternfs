@@ -90,9 +90,9 @@ jobs:
         run: echo "${{ secrets.REPO_GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
       - name: Install packages for CI
         run: apt-get install -y build-essential
-      - name: Run functional teststs
-        run: ./ci.py --functional --docker
-      - name: Run integration teststs
+      - name: Run functional tests
+        run: ./ci.py --functional --docker --build
+      - name: Run integration tests
         run: ./ci.py --build --short --integration --docker
       - name: Install packages for kmod CI
         run: |

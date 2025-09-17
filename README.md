@@ -30,8 +30,6 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
 
 ## Components
 
-TODO decorate list below with links drilling down on specific concepts.
-
 * **servers**
   * **web**
     * 1 logical instance
@@ -101,7 +99,7 @@ TODO decorate list below with links drilling down on specific concepts.
     * the most fun and pleasant part of the codebase
   * **FUSE**
     * `ternfuse`, Go FUSE implementation of a TernFS client
-    * much slower but should be almost fully functional (there are some limitations concerning when a file gets flushed)
+    * currently slower (especially when reading), and requires a BPF program to correctly detect file closes
   * **S3**
     * `terns3`, Go implementation of the S3 API
     * minimal example intended as a start point for a more serious implementation

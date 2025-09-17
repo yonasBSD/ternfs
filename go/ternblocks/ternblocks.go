@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	crand "crypto/rand"
@@ -1628,7 +1629,16 @@ func main() {
 		}
 	}
 
-	listener1, err := net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))
+	lc := net.ListenConfig{
+    	Control: func(network, address string, c syscall.RawConn) error {
+        	return c.Control(func(fd uintptr) {
+            	syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+        	})
+    	},
+	}
+
+	listener1, err := lc.Listen(context.Background(), "tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))
+
 	if err != nil {
 		panic(err)
 	}
@@ -1640,7 +1650,7 @@ func main() {
 	var listener2 net.Listener
 	var actualPort2 uint16
 	if len(addresses) == 2 {
-		listener2, err = net.Listen("tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), port2))
+		listener2, err = lc.Listen(context.Background(), "tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp2[:]), port2))
 		if err != nil {
 			panic(err)
 		}

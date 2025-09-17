@@ -983,6 +983,11 @@ func main() {
 		}
 	}()
 
+	replicaCount := uint8(5)
+	if *leaderOnly {
+		replicaCount = 1
+	}
+
 	// If we're running with kmod, set the timeout to be very high
 	// (in qemu things can be delayed massively). TODO it would be
 	// nice to understand the circumstances where the timeout
@@ -1008,8 +1013,8 @@ func main() {
 			sysctl("fs.eggsfs.overall_cdc_timeout_ms", "60000")
 		}
 		// low initial timeout for fast packet drop stuff
-		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", client.DefaultShardTimeout.Initial.Milliseconds()))
-		sysctl("fs.eggsfs.initial_cdc_timeout_ms", fmt.Sprintf("%v", client.DefaultCDCTimeout.Initial.Milliseconds()))
+		sysctl("fs.eggsfs.initial_shard_timeout_ms", fmt.Sprintf("%v", 5))
+		sysctl("fs.eggsfs.initial_cdc_timeout_ms", fmt.Sprintf("%v", 5))
 		// low getattr expiry which we rely on in some tests (most notably the utime ones)
 		sysctl("fs.eggsfs.file_getattr_refresh_time_ms", "100")
 	}
@@ -1038,7 +1043,7 @@ func main() {
 	registryAddress := fmt.Sprintf("127.0.0.1:%v", registryPort)
 
 	{
-		for r := uint8(0); r < uint8(5); r++ {
+		for r := uint8(0); r < replicaCount; r++ {
 			dir := path.Join(*dataDir, fmt.Sprintf("registry_%d", r))
 			if r == 0 {
 				dir = path.Join(*dataDir, "registry")
@@ -1057,7 +1062,12 @@ func main() {
 					opts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
-			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", registryPort+uint16(r))
+			if (r == 0) {
+				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", registryPort)
+			} else {
+				opts.Addr1 = "127.0.0.1:0"
+			}
+
 			if *blockServiceKiller {
 				opts.Stale = time.Hour * 1000 // never, so that we stimulate the clients ability to fallback
 			}
@@ -1124,7 +1134,7 @@ func main() {
 	}
 
 	// Start CDC
-	for r := uint8(0); r < 5; r++ {
+	for r := uint8(0); r < replicaCount; r++ {
 		cdcOpts := &managedprocess.CDCOpts{
 			ReplicaId:      msgs.ReplicaId(r),
 			Exe:            cppExes.CDCExe,
@@ -1135,9 +1145,6 @@ func main() {
 			RegistryAddress: registryAddress,
 			Addr1:          "127.0.0.1:0",
 			Addr2:          "127.0.0.1:0",
-		}
-		if *leaderOnly && r > 0 {
-			continue
 		}
 		if r == 0 {
 			if *leaderOnly {
@@ -1156,7 +1163,7 @@ func main() {
 	// Start shards
 	numShards := 256
 	for i := 0; i < numShards; i++ {
-		for r := uint8(0); r < 5; r++ {
+		for r := uint8(0); r < replicaCount; r++ {
 			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
 			shopts := managedprocess.ShardOpts{
 				Exe:                       cppExes.ShardExe,
@@ -1171,9 +1178,6 @@ func main() {
 				Addr2:                     "127.0.0.1:0",
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
 				LogsDBFlags:               nil,
-			}
-			if *leaderOnly && r > 0 {
-				continue
 			}
 			if r == 0 {
 				if *leaderOnly {

@@ -56,7 +56,13 @@ func cleanupAfterTest(
 	if err != nil {
 		panic(err)
 	}
+	shardTimeout := client.DefaultShardTimeout
+	shardTimeout.Initial = 5 * time.Millisecond
+	cdcTimeout := client.DefaultCDCTimeout
+	cdcTimeout.Initial = 5 *time.Millisecond
 	c.SetCounters(counters)
+	c.SetCDCTimeouts(&cdcTimeout)
+	c.SetShardTimeouts(&shardTimeout)
 	defer c.Close()
 	// Delete all current things
 	deleteDir(log, c, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)

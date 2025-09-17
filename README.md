@@ -5,7 +5,7 @@ A distributed file system. For a high-level description of TernFS, see [the Tern
 
 ## Goals
 
-The target use case for TernFS is the kind of machine learning we do at XTX: reading and writing large immutable files. With "immutable" we mean files that do not need modifying after they are first created. With "large" we mean that most of the storage space will be taken up by files bigger than a few MBs.
+The target use case for TernFS is the kind of machine learning we do at XTX: reading and writing large immutable files. By "immutable" we mean files that do not need modifying after they are first created. By "large" we mean that most of the storage space will be taken up by files bigger than a few MBs.
 
 We don't expect new directories to be created often, and files (or directories) to be moved between directories often. In terms of numbers, we expect the upper bound for TernFS to roughly be the upper bound for the data we're planning for a single data center:
 
@@ -19,14 +19,14 @@ We want to drive the filesystem with commodity hardware and Ethernet networking.
 We want the system to be robust in various ways:
 
 * Witnessing half-written files should be impossible -- a file is fully written by the writer or not readable by other clients
-* Power loss or similar failure of storage or metadata nodes should not result in a corrupted filesystems (be it metadata or filesystem corruption)
+* Power loss or similar failure of storage or metadata nodes should not result in a corrupted filesystem (be it metadata or filesystem corruption)
 * Corrupted reads due to hard drives bitrot should be exceedingly unlikely
-* Data loss should be exceedingly unlikely, unless we suffer a datacenter-wide catastrophic event (fire, flooding, datacenter-wide vibration, etc)
+* Data loss should be exceedingly unlikely, unless we suffer a datacenter-wide catastrophic event (fire, flooding, datacenter-wide vibration, etc.)
 * The filesystem should keep working through maintenance or failure of metadata or storage nodes
 
 We also want to be able to restore deleted files or directories, using a configurable "permanent deletion" policy.
 
-Finally, we want to have the option to replicate TernFS to multiple regions, to remove the any single data centre as a point of failure.
+Finally, we want to have the option to replicate TernFS to multiple regions, to remove any single data centre as a point of failure.
 
 ## Components
 

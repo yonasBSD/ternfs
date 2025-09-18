@@ -481,14 +481,110 @@ func (procs *ManagedProcesses) StartRegistryProxy(ll *log.Logger, opts *Registry
 	})
 }
 
+type GcOptions struct {
+	Exe                string
+	Dir                string
+	LogLevel           log.LogLevel
+	Xmon               string
+	Addr1              string
+	Addr2              string
+	Migrate            bool
+	CollectDirectories bool
+	DestructFiles      bool
+	Scrub              bool
+	RegistryAddress    string
+}
+
+func (procs *ManagedProcesses) StartGc(ll *log.Logger, opts *GcOptions) {
+	createDataDir(opts.Dir)
+	args := []string{
+		"-log-file", path.Join(opts.Dir, "log"),
+		"-data-dir", opts.Dir,
+		"-registry", opts.RegistryAddress,
+		"-addr", opts.Addr1,
+	}
+	if opts.LogLevel == log.DEBUG {
+		args = append(args, "-verbose")
+	}
+	if opts.LogLevel == log.TRACE {
+		args = append(args, "-trace")
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
+	}
+	if opts.Addr2 != "" {
+		args = append(args, "-addr", opts.Addr2)
+	}
+	if opts.CollectDirectories {
+		args = append(args, "-collect-directories")
+	}
+	if opts.Migrate {
+		args = append(args, "-migrate")
+	}
+	if opts.DestructFiles {
+		args = append(args, "-destruct-files")
+	}
+	if opts.Scrub {
+		args = append(args, "-scrub")
+	}
+
+	procs.Start(ll, &ManagedProcessArgs{
+		Name:            "gc",
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Dir, "stdout"),
+		StderrFile:      path.Join(opts.Dir, "stderr"),
+		TerminateOnExit: true,
+	})
+}
+
+type WebOptions struct {
+	Exe             string
+	Dir             string
+	LogLevel        log.LogLevel
+	Xmon            string
+	HttpPort        string
+	RegistryAddress string
+}
+
+func (procs *ManagedProcesses) StartWeb(ll *log.Logger, opts *WebOptions) {
+	createDataDir(opts.Dir)
+	args := []string{
+		"-log-file", path.Join(opts.Dir, "log"),
+		"-registry", opts.RegistryAddress,
+	}
+	if opts.LogLevel == log.DEBUG {
+		args = append(args, "-verbose")
+	}
+	if opts.LogLevel == log.TRACE {
+		args = append(args, "-trace")
+	}
+	if opts.Xmon != "" {
+		args = append(args, "-xmon", opts.Xmon)
+	}
+	if opts.HttpPort != "" {
+		args = append(args, "-http-port", opts.HttpPort)
+	}
+	procs.Start(ll, &ManagedProcessArgs{
+		Name:            "web",
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Dir, "stdout"),
+		StderrFile:      path.Join(opts.Dir, "stderr"),
+		TerminateOnExit: true,
+	})
+}
+
 type GoExes struct {
 	BlocksExe        string
 	FuseExe          string
+	GcExe            string
 	RegistryProxyExe string
+	WebExe           string
 }
 
 func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
-	args := []string{"ternblocks", "ternfuse"}
+	args := []string{"ternblocks", "terngc", "ternfuse", "ternregistryproxy", "ternweb"}
 	if race {
 		args = append(args, "--race")
 	}
@@ -503,7 +599,9 @@ func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
 	return &GoExes{
 		BlocksExe:        path.Join(goDir(repoDir), "ternblocks", "ternblocks"),
 		FuseExe:          path.Join(goDir(repoDir), "ternfuse", "ternfuse"),
+		GcExe:            path.Join(goDir(repoDir), "terngc", "terngc"),
 		RegistryProxyExe: path.Join(goDir(repoDir), "ternregistryproxy", "ternregistryproxy"),
+		WebExe:           path.Join(goDir(repoDir), "ternweb", "ternweb"),
 	}
 }
 

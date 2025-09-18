@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"time"
 	"xtx/ternfs/client"
 	"xtx/ternfs/core/log"
@@ -36,14 +37,13 @@ func main() {
 	flashBlockServices := flag.Uint("flash-block-services", 2, "Number of HDD block services per failure domain.")
 	profile := flag.Bool("profile", false, "Whether to run code (both Go and C++) with profiling.")
 	registryBincodePort := flag.Uint("registry-bincode-port", 10001, "")
-	registryHttpPort := flag.Uint("registry-http-port", 10000, "")
-	startingPort := flag.Uint("start-port", 10010, "The services will be assigned port in this order, CDC, shard_000, ..., shard_255, bs_0, ..., bs_n. If 0, ports will be chosen randomly.")
+	webHttpPort := flag.Uint("registry-http-port", 10000, "")
 	repoDir := flag.String("repo-dir", "", "Used to build C++/Go binaries. If not provided, the path will be derived form the filename at build time (so will only work locally).")
 	binariesDir := flag.String("binaries-dir", "", "If provided, nothing will be built, instead it'll be assumed that the binaries will be in the specified directory.")
 	xmon := flag.String("xmon", "", "")
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
-	multiLocation := flag.Bool("multi-location", false, "Run 2 sets of shards/registry/cdc/storages to simulate multi data centre setup")
+	locations := flag.String("locations", "loc1", "Comma separated list of locations to simulate multi datacenter. Default `loc1`")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -58,8 +58,7 @@ func main() {
 		os.Exit(2)
 	}
 	validPort(*registryBincodePort)
-	validPort(*registryHttpPort)
-	validPort(*startingPort)
+	validPort(*webHttpPort)
 
 	if *repoDir == "" {
 		_, filename, _, ok := runtime.Caller(0)
@@ -80,6 +79,13 @@ func main() {
 		if err := os.Mkdir(*dataDir, 0777); err != nil && !os.IsExist(err) {
 			panic(fmt.Errorf("could not create data dir: %w", err))
 		}
+	}
+
+	locationNames := strings.Split(*locations, ",")
+
+	if len(locationNames) == 0 {
+		fmt.Fprintf(os.Stderr, "-locations needs to contain at least 1 location")
+		os.Exit(2)
 	}
 
 	logFile := path.Join(*dataDir, "go-log")
@@ -132,9 +138,15 @@ func main() {
 	if *leaderOnly {
 		replicaCount = 1
 	}
+	lastUsedPort := *registryBincodePort - 1
+
+	getNextAddress := func() string {
+		lastUsedPort++
+		return fmt.Sprintf("127.0.0.1:%v", lastUsedPort)
+	}
 
 	// Start registry
-	registryAddress := fmt.Sprintf("127.0.0.1:%v", *registryBincodePort)
+	registryAddress := getNextAddress()
 	{
 		for r := uint8(0); r < uint8(replicaCount); r++ {
 			dir := path.Join(*dataDir, fmt.Sprintf("registry_%d", r))
@@ -148,6 +160,7 @@ func main() {
 				RegistryAddress: registryAddress,
 				Replica:         msgs.ReplicaId(r),
 				Xmon:            *xmon,
+				Addr1:           "127.0.0.1:0",
 			}
 			if r == 0 {
 				if *leaderOnly {
@@ -156,7 +169,9 @@ func main() {
 					opts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
-			opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*registryBincodePort)+uint16(r))
+			if r == 0 {
+				opts.Addr1 = registryAddress
+			}
 			procs.StartRegistry(l, &opts)
 		}
 	}
@@ -164,22 +179,25 @@ func main() {
 	// Waiting for registry
 	err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
 	if err != nil {
-		panic(fmt.Errorf("failed to connect to registry %v", err))
+		panic(fmt.Errorf("failed to connect to primary registry %v", err))
 	}
 
-	registryProxyPort := *registryBincodePort + replicaCount
-	registryProxyAddress := fmt.Sprintf("127.0.0.1:%v", registryProxyPort)
+	registryLocationAddresses := []string{registryAddress}
 
-	numLocations := 1
-	if *multiLocation {
-		_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.CreateLocationReq{1, "location1"})
+	for i, locName := range locationNames {
+		_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.CreateLocationReq{msgs.Location(i), locName})
 		if err != nil {
 			// it's possible location already exits, try renaming it
-			_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.RenameLocationReq{1, "location1"})
+			_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.RenameLocationReq{msgs.Location(i), locName})
 			if err != nil {
 				panic(fmt.Errorf("failed to create location %v", err))
 			}
 		}
+		if i == 0 {
+			// we already started main registry
+			continue
+		}
+		registryProxyAddress := getNextAddress()
 		procs.StartRegistryProxy(
 			l, &managedprocess.RegistryProxyOpts{
 				Exe:             goExes.RegistryProxyExe,
@@ -193,9 +211,9 @@ func main() {
 		)
 		err = client.WaitForRegistry(l, registryProxyAddress, 10*time.Second)
 		if err != nil {
-			panic(fmt.Errorf("failed to connect to registry %v", err))
+			panic(fmt.Errorf("failed to connect to registry proxy for location %d, err %v", i, err))
 		}
-		numLocations = 2
+		registryLocationAddresses = append(registryLocationAddresses, registryProxyAddress)
 	}
 
 	// Start block services
@@ -207,11 +225,10 @@ func main() {
 			storageClasses[i] = msgs.FLASH_STORAGE
 		}
 	}
-	for loc := uint(0); loc < uint(numLocations); loc++ {
-		registryAddressToUse := registryAddress
-		if loc == 1 {
-			registryAddressToUse = registryProxyAddress
-		}
+
+	numLocations := uint(len(locationNames))
+	for loc := uint(0); loc < numLocations; loc++ {
+		registryAddressToUse := registryLocationAddresses[loc]
 
 		for i := uint(0); i < *failureDomains; i++ {
 			dirName := fmt.Sprintf("bs_%d", i)
@@ -228,13 +245,8 @@ func main() {
 				RegistryAddress:  registryAddressToUse,
 				Profile:          *profile,
 				Xmon:             *xmon,
+				Addr1:            "127.0.0.1:0",
 				ReserverdStorage: 10 << 30, // 10GB
-			}
-			if *startingPort != 0 {
-				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+257*uint16(replicaCount)+uint16(loc**failureDomains)+uint16(i))
-			} else {
-				opts.Addr1 = "127.0.0.1:0"
-				opts.Addr2 = "127.0.0.1:0"
 			}
 			procs.StartBlockService(l, &opts)
 		}
@@ -245,7 +257,7 @@ func main() {
 		waitRegistryFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitRegistryFor)
-	client.WaitForBlockServices(l, registryAddress, int(*failureDomains**hddBlockServices**flashBlockServices*uint(numLocations)), true, waitRegistryFor)
+	client.WaitForBlockServices(l, registryAddress, int(*failureDomains**hddBlockServices**flashBlockServices*numLocations), true, waitRegistryFor)
 
 	// Start CDC
 	{
@@ -262,6 +274,7 @@ func main() {
 				Valgrind:        *buildType == "valgrind",
 				RegistryAddress: registryAddress,
 				Perf:            *profile,
+				Addr1:           "127.0.0.1:0",
 				Xmon:            *xmon,
 			}
 			if r == 0 {
@@ -271,21 +284,14 @@ func main() {
 					opts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
-			if *startingPort != 0 {
-				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+uint16(r))
-			} else {
-				opts.Addr1 = "127.0.0.1:0"
-			}
+
 			procs.StartCDC(l, *repoDir, &opts)
 		}
 	}
 
 	// Start shards
-	for loc := 0; loc < numLocations; loc++ {
-		registryAddressToUse := registryAddress
-		if loc == 1 {
-			registryAddressToUse = registryProxyAddress
-		}
+	for loc := uint(0); loc < numLocations; loc++ {
+		registryAddressToUse := registryLocationAddresses[loc]
 		for i := 0; i < 256; i++ {
 			for r := uint8(0); r < uint8(replicaCount); r++ {
 				shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
@@ -304,6 +310,7 @@ func main() {
 					Xmon:            *xmon,
 					Location:        msgs.Location(loc),
 					LogsDBFlags:     nil,
+					Addr1:           "127.0.0.1:0",
 				}
 				if r == 0 {
 					if *leaderOnly {
@@ -311,11 +318,6 @@ func main() {
 					} else {
 						opts.LogsDBFlags = []string{"-logsdb-leader"}
 					}
-				}
-				if *startingPort != 0 {
-					opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", uint16(*startingPort)+5+uint16(replicaCount)*256*uint16(loc)+uint16(r)*256+uint16(i))
-				} else {
-					opts.Addr1 = "127.0.0.1:0"
 				}
 				procs.StartShard(l, *repoDir, &opts)
 			}
@@ -326,26 +328,49 @@ func main() {
 	client.WaitForClient(l, registryAddress, waitRegistryFor)
 
 	if !*noFuse {
-		for loc := 0; loc < numLocations; loc++ {
-			registryAddressToUse := registryAddress
-			fuseDir := "fuse"
-			if loc == 1 {
-				registryAddressToUse = registryProxyAddress
-				fuseDir = "fuse1"
-			}
+		for loc := uint(0); loc < numLocations; loc++ {
+			registryAddressToUse := registryLocationAddresses[loc]
+			fuseDir := "fuse_" + locationNames[loc]
 			fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
 				Exe:             goExes.FuseExe,
 				Path:            path.Join(*dataDir, fuseDir),
 				LogLevel:        level,
 				Wait:            true,
 				RegistryAddress: registryAddressToUse,
-				Profile:         *profile,
 			})
 
 			fmt.Printf("operational, mounted at %v\n", fuseMountPoint)
 		}
 	} else {
 		fmt.Printf("operational\n")
+	}
+
+	procs.StartGc(l, &managedprocess.GcOptions{
+		Exe:             goExes.GcExe,
+		Dir:             path.Join(*dataDir, "gc"),
+		LogLevel:        level,
+		Xmon:            *xmon,
+		RegistryAddress: registryAddress,
+		Addr1:           "127.0.0.1:0",
+		Migrate: true,
+		CollectDirectories: true,
+		DestructFiles: true,
+		Scrub: true,
+	})
+
+	fmt.Printf("started scrub/collect directores/destruct files/migrate\n")
+
+	if *webHttpPort != 0 {
+		procs.StartWeb(l, &managedprocess.WebOptions{
+			Exe:             goExes.WebExe,
+			Dir:             path.Join(*dataDir, "web"),
+			LogLevel:        level,
+			Xmon:            *xmon,
+			HttpPort:        fmt.Sprintf("%d", *webHttpPort),
+			RegistryAddress: registryAddress,
+		})
+
+		fmt.Printf("web stared at http://127.0.0.1:%d\n", *webHttpPort)
 	}
 
 	errT := <-terminateChan

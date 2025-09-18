@@ -201,6 +201,8 @@ The above will run all the processes needed to run TernFS. This includes:
 * 1 cross directory coordinator (CDC)
 * A bunch of block services (this is tunable with the `-flash-block-services`, `-hdd-block-services`, and `-failure-domains` flags)
 * 1 registry instance
+* 1 web instace
+* 1 gc process responsible for scrubbing for corrupted blocks / migrating failed block services / collecting deleted empty directories and destructing files
 
 A multitude of directories to persist the whole thing will appear in `<data-dir>`. The filesystem will also be mounted using FUSE under `<data-dir>/fuse/mnt`.
 

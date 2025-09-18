@@ -407,9 +407,7 @@ func main() {
 			migrator := cleanup.Migrator(*registryAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
 			migrator.Run()
 		}()
-	} else {
-
-	}
+	} 
 
 	defragStats := &cleanup.DefragStats{}
 	if *defrag {

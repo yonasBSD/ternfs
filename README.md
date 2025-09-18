@@ -35,6 +35,30 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
 
 ## Components
 
+```                          
+ A ──► B means "A sends requests to B" 
+                          
+                          
+ ┌────────────────┐                 
+ │ Metadata Shard ◄───────┐         
+ └─▲────▲─────────┘       │         
+   │    │                 │         
+   │    │                 │         
+   │ ┌──┴──┐              │         
+   │ │ CDC ◄──────────┐   │         
+   │ └──▲──┘          │   │         
+   │    │             │ ┌─▼──────┐  
+   │    │             └─┤        │  
+ ┌─▼────▼────┐          │ Client │  
+ │ Registry  ├──────────►        │  
+ └──────▲────┘          └─▲──────┘  
+        │                 │         
+        │                 │         
+ ┌──────▼────────┐        │         
+ │ Block Service ◄────────┘         
+ └───────────────┘
+```
+
 * **servers**
   * **web**
     * 1 logical instance

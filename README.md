@@ -60,12 +60,6 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
 ```
 
 * **servers**
-  * **web**
-    * 1 logical instance
-    * `ternweb`, go binary
-    * TCP http server
-    * stateless
-    * serves web UI
   * **registry**
     * 1 logical instance
     * `ternregistry`, C++ binary
@@ -117,6 +111,12 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
     * its entire job is efficiently streaming blobs of data from disks into TCP connections
     * communicates with registry to register itself and to update information about free space, number of blocks, etc.
 * **clients**, these all talk to all of the servers
+  * **web**
+    * 1 logical instance
+    * `ternweb`, go binary
+    * TCP http server
+    * stateless
+    * serves web UI
   * **cli**
     * `terncli`, Go binary
     * toolkit to perform various tasks, most notably

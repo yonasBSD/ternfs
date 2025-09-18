@@ -191,8 +191,8 @@ However when merging code modifying TernFS internals it's very important for the
 ## Playing with a local TernFS instance
 
 ```
-% cd go/ternrun
-% go run . -data-dir <data-dir>
+% ./build.sh alpine
+% ./build/alpine/ternrun -binaries-dir build/alpine -data-dir /tmp/tern-test
 ```
 
 The above will run all the processes needed to run TernFS. This includes:

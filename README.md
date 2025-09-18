@@ -208,10 +208,6 @@ A multitude of directories to persist the whole thing will appear in `<data-dir>
 
 Inspecting [`ternrun.go`](https://github.com/XTXMarkets/ternfs/blob/main/go/ternrun/ternrun.go) is a decent way to get familiar with the services required to run a TernFS cluster.
 
-TODO add instruction on how to run a multi-datacenter setup.
-
-TODO add migrator, gc, and so on to the above.
-
 ## Building the Kernel module
 
 ```

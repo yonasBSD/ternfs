@@ -247,6 +247,6 @@ TernFS was originally called EggsFS internally. This name quickly proved to be v
 
 ## Licensing
 
-TernFS is [Free Software](https://www.gnu.org/philosophy/free-sw.en.html). The default license for TernFS is [GPL-2.0-or-later](LICENSE/GPL-2.0-or-later.txt).
+TernFS is [Free Software](https://www.gnu.org/philosophy/free-sw.en.html). The default license for TernFS is [GPL-2.0-or-later](LICENSES/GPL-2.0-or-later.txt).
 
-The protocol definitions (`go/msgs/`), protocol generator (`go/bincodegen/`) and client library (`go/client/`, `go/core/`) are licensed under [Apache-2.0](LICENSES/Apache-2.0.txt) with the [LLVM-exception](LICENSES/LLVM-exception.txt). This license combination is both permissive (similar to MIT or BSD licenses) as well as compatible with both GPL license. We have done this to allow people to build their own proprietary client libraries while ensuring we can also freely incorporate them into the GPL v2 licensed Linux kernel.
+The protocol definitions (`go/msgs/`), protocol generator (`go/bincodegen/`) and client library (`go/client/`, `go/core/`) are licensed under [Apache-2.0](LICENSES/Apache-2.0.txt) with the [LLVM-exception](LICENSES/LLVM-exception.txt). This license combination is both permissive (similar to MIT or BSD licenses) as well as compatible with all GPL licenses. We have done this to allow people to build their own proprietary client libraries while ensuring we can also freely incorporate them into the GPL v2 licensed Linux kernel.

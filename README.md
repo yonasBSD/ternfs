@@ -31,7 +31,7 @@ We want the system to be robust in various ways:
 
 We also want to be able to restore deleted files or directories, using a configurable "permanent deletion" policy.
 
-Finally, we want to have the option to replicate TernFS to multiple regions, to remove any single data centre as a point of failure.
+Finally, we want to have the option to replicate TernFS to multiple regions, to be able to scale up compute across multiple data centres, and to remove any single data centre as a point of failure.
 
 ## Components
 

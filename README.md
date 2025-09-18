@@ -218,6 +218,13 @@ Inspecting [`ternrun.go`](https://github.com/XTXMarkets/ternfs/blob/main/go/tern
 % make KDIR=linux -j kmod
 ```
 
+### Kernel module as dkms .deb package
+
+```
+% cd kmod
+% make deb-package
+```
+
 ## VS Code
 
 Most of the codebase is understandable by VS Code/LSP:

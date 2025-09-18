@@ -10,7 +10,6 @@
 #include <cxxabi.h>
 
 #include "Common.hpp"
-#include "BinaryFormatter.hpp"
 #include "Exception.hpp"
 
 const char *translateErrno(int _errno) {

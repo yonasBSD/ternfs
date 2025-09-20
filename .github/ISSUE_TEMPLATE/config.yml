@@ -1,0 +1,7 @@
+contact_links:
+  - name: Ask a question
+    url: https://github.com/XTXMarkets/ternfs/discussions/new?category=q-a
+    about: Please use our Discussions page for questions and help requests.
+  - name: Suggest a feature
+    url: https://github.com/XTXMarkets/ternfs/discussions/new?category=ideas
+    about: Propose new features and enhancements here.

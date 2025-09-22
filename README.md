@@ -215,7 +215,7 @@ Inspecting [`ternrun.go`](https://github.com/XTXMarkets/ternfs/blob/main/go/tern
 % cd kmod
 % ./fetchlinux.sh # fetch linux sources
 % (cd linux && make oldconfig && make prepare && make -j) # build Linux
-% make KDIR=linux -j kmod
+% make KDIR=linux -j ternfs-client
 ```
 
 ### Kernel module as dkms .deb package

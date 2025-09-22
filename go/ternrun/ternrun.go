@@ -120,6 +120,8 @@ func main() {
 			BlocksExe:        path.Join(*binariesDir, "ternblocks"),
 			FuseExe:          path.Join(*binariesDir, "ternfuse"),
 			RegistryProxyExe: path.Join(*binariesDir, "ternregistryproxy"),
+			GcExe:            path.Join(*binariesDir, "terngc"),
+			WebExe:           path.Join(*binariesDir, "ternweb"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/registry\n")
@@ -350,16 +352,16 @@ func main() {
 	}
 
 	procs.StartGc(l, &managedprocess.GcOptions{
-		Exe:             goExes.GcExe,
-		Dir:             path.Join(*dataDir, "gc"),
-		LogLevel:        level,
-		Xmon:            *xmon,
-		RegistryAddress: registryAddress,
-		Addr1:           "127.0.0.1:0",
-		Migrate: true,
+		Exe:                goExes.GcExe,
+		Dir:                path.Join(*dataDir, "gc"),
+		LogLevel:           level,
+		Xmon:               *xmon,
+		RegistryAddress:    registryAddress,
+		Addr1:              "127.0.0.1:0",
+		Migrate:            true,
 		CollectDirectories: true,
-		DestructFiles: true,
-		Scrub: true,
+		DestructFiles:      true,
+		Scrub:              true,
 	})
 
 	fmt.Printf("started scrub/collect directores/destruct files/migrate\n")

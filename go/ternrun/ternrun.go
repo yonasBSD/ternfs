@@ -376,7 +376,7 @@ func main() {
 			RegistryAddress: registryAddress,
 		})
 
-		fmt.Printf("web stared at http://127.0.0.1:%d\n", *webHttpPort)
+		fmt.Printf("web started at http://127.0.0.1:%d\n", *webHttpPort)
 	}
 
 	errT := <-terminateChan

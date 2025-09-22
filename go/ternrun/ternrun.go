@@ -155,6 +155,13 @@ func main() {
 			if r == 0 {
 				dir = path.Join(*dataDir, "registry")
 			}
+			if _, err := os.Stat(dir); !os.IsNotExist(err) {
+				fmt.Printf("Wiping registry replica %d to speed up bootstrap\n", r)
+				if err := os.RemoveAll(dir); err != nil {
+					panic(fmt.Errorf("failed to remove directory %s: %v", dir, err))
+				}
+			}
+			
 			opts := managedprocess.RegistryOpts{
 				Exe:             cppExes.RegistryExe,
 				LogLevel:        level,

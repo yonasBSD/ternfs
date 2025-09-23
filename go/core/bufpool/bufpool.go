@@ -24,6 +24,8 @@ func NewBufPool() *BufPool {
 	return &pool
 }
 
+// Use with caution, if you then put the resulting buf in a bufpool: the buffer
+// will be reused and therefore overwritten with stuff.
 func NewBuf(b *[]byte) *Buf {
 	res := &Buf{}
 	res.b.Store(b)

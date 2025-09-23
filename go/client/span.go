@@ -631,8 +631,9 @@ func (c *Client) FetchStripeFromSpan(
 		if dataCrc != span.Span.Header.Crc {
 			panic(fmt.Errorf("header CRC for inline span is %v, but data is %v", span.Span.Header.Crc, dataCrc))
 		}
+		buf := append([]byte{}, span.Span.Body.(*msgs.FetchedInlineSpan).Body...)
 		stripe := &FetchedStripe{
-			Buf:   bufpool.NewBuf(&span.Span.Body.(*msgs.FetchedInlineSpan).Body),
+			Buf:   bufpool.NewBuf(&buf),
 			Start: span.Span.Header.ByteOffset,
 		}
 		log.Debug("fetched inline span")
@@ -700,7 +701,8 @@ func (c *Client) fetchInlineSpan(
 	if dataCrc != crc {
 		return nil, fmt.Errorf("header CRC for inline span is %v, but data is %v", crc, dataCrc)
 	}
-	return bufpool.NewBuf(&inlineSpan.Body), nil
+	buf := append([]byte{}, inlineSpan.Body...)
+	return bufpool.NewBuf(&buf), nil
 }
 
 func (c *Client) fetchMirroredSpan(log *log.Logger,

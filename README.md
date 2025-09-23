@@ -193,7 +193,7 @@ However when merging code modifying TernFS internals it's very important for the
 
 ```
 % ./build.sh alpine
-% ./build/alpine/ternrun -binaries-dir build/alpine -data-dir /tmp/tern-test
+% ./build/alpine/ternrun -binaries-dir build/alpine -data-dir <data-dir>
 ```
 
 The above will run all the processes needed to run TernFS. This includes:

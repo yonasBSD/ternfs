@@ -160,7 +160,7 @@ We use the Ubuntu-built version in production, mostly due to jemalloc not playin
 ## Testing
 
 ```
-./ci.py --build --integration --short --docker
+./ci.py --build --functional --integration --short --docker
 ```
 
 Will run the integration tests as CI would (inside the Ubuntu docker image). You can also run the tests outside docker by removing the `--docker` flag, but you might have to install some dependencies of the build process. These tests take roughly 30 minutes on our [build server](https://instances.vantage.sh/aws/ec2/m6id.metal?currency=USD).

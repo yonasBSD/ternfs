@@ -70,10 +70,14 @@ bincode_tests-clean:
 deb-package: revision.c extra-files
 	dpkg-buildpackage -us -uc
 
-# Targets to build/clean the kmod when packaging it up
-# We'll generate revision.c separatedly, and we also don't want
-# sparse as a dependency.
-ternfs-client: revision.c extra-files
+# Targets to build kmod from dkms package,
+# revision.c and extra files are already included
+ternfs-client:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+# Targets to build/clean the kmod with local linux
+# We don't want sparse as a dependency.
+ternfs-client-local: revision.c extra-files
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 clean: ternfs-client-clean bincode_tests-clean

@@ -195,6 +195,7 @@ However when merging code modifying TernFS internals it's very important for the
 % ./build.sh alpine
 % ./build/alpine/ternrun -binaries-dir build/alpine -data-dir <data-dir>
 ```
+For less resource intensive local instance consider running with `-leader-only`. This will start only leader replica without replication for registry, cdc and shards.
 
 The above will run all the processes needed to run TernFS. This includes:
 

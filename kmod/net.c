@@ -149,7 +149,7 @@ static void sock_readable(struct sock* sk) {
                 // We try to cancel the timeout. If we succeed we immediately need to schedule completion.
                 // If we failed we timed out anyway. In this case skb will not leak as it's protected
                 // in completion function by removing the request from the rb_tree
-                bool was_pending = cancel_delayed_work_sync(&getattr_enode->getattr_async_work);
+                bool was_pending = cancel_delayed_work(&getattr_enode->getattr_async_work);
                 if (was_pending) {
                     schedule_work(&getattr_enode->getattr_async_work.work);
                 }

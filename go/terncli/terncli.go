@@ -243,7 +243,7 @@ func main() {
 		}
 		if *registryAddress == "" {
 			clientMu.Unlock()
-			panic("You need to specify -registry (or -prod).\n")
+			panic("You need to specify -registry.\n")
 		}
 		var err error
 		c, err := client.NewClient(l, nil, *registryAddress, localAddresses)

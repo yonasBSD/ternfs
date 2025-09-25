@@ -239,27 +239,25 @@ static int try_fill_from_page_cache(struct address_space *mapping, struct list_h
     struct page* cached_page;
     list_for_each_entry(page, pages, lru) {
         cached_page = find_get_page(mapping, page->index);
-        if (cached_page != NULL) {
-            // from kernel 5.19 pages are added to page cache before calling readahead
-            // since readahead does not need to read everything it's possible some pages
-            // are in page cache but were never filled. 
-            // we need to check if page is up to date before using it
-            // otherwise we could reconstruct other pages using incorrect data 
-            if (PageUptodate(cached_page)) {
-                char* to_ptr = kmap_atomic(page);
-                char* from_ptr = kmap_atomic(cached_page);
-                memcpy(to_ptr, from_ptr, PAGE_SIZE);
-                kunmap_atomic(to_ptr);
-                kunmap_atomic(from_ptr);
-                put_page(cached_page);
-                break;
-            }
-
-            // page cache page is returned with an increased refcount
-            put_page(cached_page);
-        } else {
+        if (cached_page == NULL) {
             break;
         }
+        
+        // from kernel 5.19 pages are added to page cache before calling readahead
+        // since readahead does not need to read everything it's possible some pages
+        // are in page cache but were never filled. 
+        // we need to check if page is up to date before using it
+        // otherwise we could reconstruct other pages using incorrect data 
+        if (!PageUptodate(cached_page)) {
+            put_page(cached_page);
+            break;
+        }
+        char* to_ptr = kmap_atomic(page);
+        char* from_ptr = kmap_atomic(cached_page);
+        memcpy(to_ptr, from_ptr, PAGE_SIZE);
+        kunmap_atomic(to_ptr);
+        kunmap_atomic(from_ptr);
+        put_page(cached_page);        
         have_pages++;
     }
     if (have_pages == nr_pages) { return 1; }

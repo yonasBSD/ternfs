@@ -129,7 +129,7 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
     * the most fun and pleasant part of the codebase
   * **FUSE**
     * `ternfuse`, Go FUSE implementation of a TernFS client
-    * currently slower (especially when reading), and requires a BPF program to correctly detect file closes
+    * slower than the kmod although still performant, requires a BPF program to correctly detect file closes (see `-close-tracker-object` flag)
   * **S3**
     * `terns3`, Go implementation of the S3 API
     * minimal example intended as a start point for a more serious implementation

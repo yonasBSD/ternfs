@@ -133,6 +133,9 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
   * **S3**
     * `terns3`, Go implementation of the S3 API
     * minimal example intended as a start point for a more serious implementation
+  * **`xtx/ternfs/client`**
+    * A Go library to implement TernFS clients
+    * Used by every client except the kmod
 * **daemons**, these also talk to all of the servers, and all live in `terngc`
   * **GC**
     * permanently deletes expired snapshots (i.e. deleted but not yet purged data)

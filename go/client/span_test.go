@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"xtx/ternfs/core/bufpool"
 	"xtx/ternfs/core/crc32c"
@@ -49,6 +50,7 @@ type blockFetcher struct {
 	parityBlocks [][]byte
 	bad          uint32
 	info         string
+	read         uint64
 }
 
 func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
@@ -81,6 +83,7 @@ func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.Bloc
 		} else {
 			block = bf.parityBlocks[blockIx-len(bf.dataBlocks)]
 		}
+		atomic.AddUint64(&bf.read, uint64(count))
 		actualOffset := (offset / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_WITH_CRC_SIZE
 		actualCount := (count / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_WITH_CRC_SIZE
 		if n, err := w.ReadFrom(bytes.NewReader(block[actualOffset : actualOffset+actualCount])); err != nil || n != int64(actualCount) {
@@ -260,6 +263,7 @@ func runRsReadTest(
 		pageCache = &flakyPageCache{r: *wyhash.New(seed), c: fetch}
 	}
 	check := func(from uint32, to uint32) {
+		fetch.read = 0
 		lastReadFrom = from
 		lastReadTo = to
 		{
@@ -280,6 +284,14 @@ func runRsReadTest(
 		}
 		if !bytes.Equal(contents[from:to], contentsOut) {
 			panic(fmt.Errorf("mismatching contents"))
+		}
+		// If there were not bad blocks, we should only read the strictly required pages
+		if fetch.bad == 0 {
+			alignedFrom := (from / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
+			alignedTo := ((to + msgs.TERN_PAGE_SIZE - 1) / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
+			if fetch.read != uint64(alignedTo-alignedFrom) {
+				panic(fmt.Errorf("expected read of %v got %v", alignedTo-alignedFrom, fetch.read))
+			}
 		}
 	}
 	// check the whole thing

@@ -828,6 +828,9 @@ func (rs *readRsState) cell(stripeIx uint32, blockIx uint32) (blockStart uint32,
 
 // Returns blockStart == blockFrom == blockTo == 0 if we shouldn't download anything from this block.
 func (rs *readRsState) blockToDownload(blockIx uint32) (blockStart uint32, blockFrom uint32, blockTo uint32) {
+	blockStart = ^uint32(0)
+	blockFrom = ^uint32(0)
+	blockTo = 0
 	for stripeIx := range uint32(rs.span.Stripes) {
 		thisStart, thisFrom, thisTo, _, _ := rs.cell(stripeIx, blockIx)
 		if thisFrom == thisTo {
@@ -836,6 +839,12 @@ func (rs *readRsState) blockToDownload(blockIx uint32) (blockStart uint32, block
 		blockStart = min(thisStart, blockStart)
 		blockFrom = min(thisFrom, blockFrom)
 		blockTo = max(blockTo, thisTo)
+	}
+	if blockStart == ^uint32(0) {
+		blockStart = 0
+	}
+	if blockFrom == ^uint32(0) {
+		blockFrom = 0
 	}
 	return blockStart, blockFrom, blockTo
 }

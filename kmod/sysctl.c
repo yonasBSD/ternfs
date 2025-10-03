@@ -35,12 +35,26 @@ int ternfs_debug_output = 0;
     return 0;
 
 static int drop_fetch_block_sockets;
-static int ternfs_drop_fetch_block_sockets_sysctl(const struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+static int ternfs_drop_fetch_block_sockets_sysctl(
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
+    struct ctl_table* table,
+#else
+    const struct ctl_table* table,
+#endif
+    int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos)
+{
     ternfs_do_sysctl(ternfs_drop_fetch_block_sockets);
 }
 
 static int drop_write_block_sockets;
-static int ternfs_drop_write_block_sockets_sysctl(const struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+static int ternfs_drop_write_block_sockets_sysctl(
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
+    struct ctl_table* table,
+#else
+    const struct ctl_table* table,
+#endif
+    int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos)
+{
     ternfs_do_sysctl(ternfs_drop_write_block_sockets);
 }
 

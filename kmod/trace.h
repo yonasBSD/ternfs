@@ -39,7 +39,6 @@ TRACE_DEFINE_ENUM(LOOKUP_JUMPED);
 TRACE_DEFINE_ENUM(LOOKUP_ROOT);
 
 #define show_lookup_flags(flags) \
-
 	__print_flags(flags, "|", \
 			{ LOOKUP_FOLLOW, "FOLLOW" }, \
 			{ LOOKUP_DIRECTORY, "DIRECTORY" }, \
@@ -55,7 +54,6 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
 			{ LOOKUP_ROOT, "ROOT" }, \
 			{ LOOKUP_EMPTY, "EMPTY" }, \
 			{ LOOKUP_DOWN, "DOWN" })
-
 #else
 
 #define show_lookup_flags(flags) \

@@ -764,6 +764,7 @@ func (proc *blocksProcessor) processRequests(log *log.Logger) {
 			// we did connect
 			conn = proc.storeConn(tcpConn)
 		}
+		conn.conn.SetDeadline(time.Now().Add((*proc.timeout).Overall))
 		log.Debug("writing block request %T %+v for addr1=%v addr2=%v", req.req, req.req, proc.addr1, proc.addr2)
 		if err := writeBlocksRequest(log, conn.conn, req.blockService, req.req); err != nil {
 			log.Info("got error when writing block request of kind %v in %v->%v: %v", req.req.BlocksRequestKind(), conn.conn.LocalAddr(), conn.conn.RemoteAddr(), err)

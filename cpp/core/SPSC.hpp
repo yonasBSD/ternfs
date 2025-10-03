@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cerrno>
+#include <cstdint>
 #include <ctime>
 #include <vector>
 #include <stdint.h>
@@ -31,8 +32,8 @@ public:
     MultiSPSCWaiter() {}
     ~MultiSPSCWaiter() = default;
     bool wait(Duration timeout) {
-        uint32_t queuesWithWork = _queuesWithWork.load(std::memory_order_acquire);
-        for (; unlikely(queuesWithWork == 0); queuesWithWork = _queuesWithWork.load(std::memory_order_acquire)) {
+        int32_t queuesWithWork = _queuesWithWork.load(std::memory_order_acquire);
+        for (; unlikely(queuesWithWork <= 0); queuesWithWork = _queuesWithWork.load(std::memory_order_acquire)) {
             if (timeout == 0) {
                 return false;
             }
@@ -50,9 +51,9 @@ public:
         return true;
     }
 private:
-    alignas(64) std::atomic<uint32_t> _queuesWithWork{0};
+    alignas(64) std::atomic<int32_t> _queuesWithWork{0};
     void addWork() {
-        uint32_t prev = _queuesWithWork.fetch_add(1, std::memory_order_relaxed);
+        int32_t prev = _queuesWithWork.fetch_add(1, std::memory_order_relaxed);
         if (unlikely(prev == 0)) {
             long ret = syscall(SYS_futex, &_queuesWithWork, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
             if (unlikely(ret < 0)) {
@@ -61,8 +62,7 @@ private:
         }
     }
     void removeWork() {
-        uint32_t prev = _queuesWithWork.fetch_sub(1, std::memory_order_relaxed);
-        ALWAYS_ASSERT(prev > 0);
+        _queuesWithWork.fetch_sub(1, std::memory_order_relaxed);
     }
     template<typename A, bool MultiWaiter>
     friend class SPSC;

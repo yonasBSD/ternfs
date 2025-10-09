@@ -107,6 +107,7 @@ jobs:
           apt-get install -y git build-essential libbpf-dev clang llvm
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
+          git checkout v7.6.0
           make -j install
           ln -s /usr/local/sbin/bpftool /usr/sbin/bpftool
       - name: Run integration tests

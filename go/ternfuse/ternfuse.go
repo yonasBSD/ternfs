@@ -1165,6 +1165,8 @@ func main() {
 	readdirBatchSizeFlag := flag.Int("readdir-batch-size", 1000, "How many readdir entries to fetch + stat at once. Useful since the stats will all be sent in parallel.")
 	mountOptions := flag.String("o", "", "Mount options")
 	printQuietAlerts := flag.Bool("print-quiet-alerts", false, "")
+	directMount := flag.Bool("direct-mount", false, "")
+	directMountStrict := flag.Bool("direct-mount-strict", false, "")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -1306,6 +1308,8 @@ func main() {
 			Debug:              *verbose,
 			DisableReadDirPlus: false,
 			Options:            strings.Split(*mountOptions, ","),
+			DirectMount:        *directMount,
+			DirectMountStrict:  *directMountStrict,
 		},
 	}
 	server, err = fs.Mount(mountPoint, &root, fuseOptions)

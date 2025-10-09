@@ -104,10 +104,10 @@ jobs:
         # the right bpftools packages, so build from source.
         run: |
           apt-get remove -y linux-tools-*
-          apt-get install -y git build-essential libbpf-dev clang llvm
+          apt-get install -y git build-essential libbpf-dev clang llvm libssl-dev
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
-          git checkout v7.6.0
+          git checkout ec50ed4fc49fc148a84b4bd234d89335cf35f4c0
           make -j install
           ln -s /usr/local/sbin/bpftool /usr/sbin/bpftool
       - name: Run integration tests

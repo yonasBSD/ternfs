@@ -1307,10 +1307,12 @@ func main() {
 			DisableXAttrs:      true,
 			Debug:              *verbose,
 			DisableReadDirPlus: false,
-			Options:            strings.Split(*mountOptions, ","),
 			DirectMount:        *directMount,
 			DirectMountStrict:  *directMountStrict,
 		},
+	}
+	if *mountOptions != "" {
+		fuseOptions.MountOptions.Options = strings.Split(*mountOptions, ",")
 	}
 	server, err = fs.Mount(mountPoint, &root, fuseOptions)
 	if err != nil {

@@ -10,7 +10,6 @@ on:
       - main
     paths-ignore:
       - '**/*.md'
-      - '.github/workflows/*.yml'
   pull_request:
     types:
       - opened

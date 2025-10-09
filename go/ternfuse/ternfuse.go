@@ -1164,6 +1164,7 @@ func main() {
 	setUid := flag.Bool("set-uid", false, "")
 	readdirBatchSizeFlag := flag.Int("readdir-batch-size", 1000, "How many readdir entries to fetch + stat at once. Useful since the stats will all be sent in parallel.")
 	mountOptions := flag.String("o", "", "Mount options")
+	printQuietAlerts := flag.Bool("print-quiet-alerts", false, "")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -1207,7 +1208,7 @@ func main() {
 	if *trace {
 		level = log.TRACE
 	}
-	logger = log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, PrintQuietAlerts: true})
+	logger = log.NewLogger(logOut, &log.LoggerOptions{Level: level, Syslog: *syslog, PrintQuietAlerts: *printQuietAlerts})
 
 	if *profileFile != "" {
 		f, err := os.Create(*profileFile)

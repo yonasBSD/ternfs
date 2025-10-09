@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"runtime/pprof"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -1147,7 +1148,6 @@ func main() {
 	flag.Var(&addresses, "addr", "Local addresses (up to two) to connect from.")
 	profileFile := flag.String("profile-file", "", "If set, will write CPU profile here.")
 	syslog := flag.Bool("syslog", false, "")
-	allowOther := flag.Bool("allow-other", false, "")
 	initialShardTimeout := flag.Duration("initial-shard-timeout", 0, "")
 	maxShardTimeout := flag.Duration("max-shard-timeout", 0, "")
 	overallShardTimeout := flag.Duration("overall-shard-timeout", 0, "")
@@ -1163,6 +1163,7 @@ func main() {
 	closeTrackerObject := flag.String("close-tracker-object", "", "Compiled BPF object to track explicitly closed files")
 	setUid := flag.Bool("set-uid", false, "")
 	readdirBatchSizeFlag := flag.Int("readdir-batch-size", 1000, "How many readdir entries to fetch + stat at once. Useful since the stats will all be sent in parallel.")
+	mountOptions := flag.String("o", "", "Mount options")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -1303,10 +1304,8 @@ func main() {
 			DisableXAttrs:      true,
 			Debug:              *verbose,
 			DisableReadDirPlus: false,
+			Options:            strings.Split(*mountOptions, ","),
 		},
-	}
-	if *allowOther {
-		fuseOptions.MountOptions.Options = append(fuseOptions.MountOptions.Options, "allow_other")
 	}
 	server, err = fs.Mount(mountPoint, &root, fuseOptions)
 	if err != nil {

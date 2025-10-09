@@ -1158,7 +1158,7 @@ func main() {
 	maxBlockTimeout := flag.Duration("max-block-timeout", 0, "")
 	overallBlockTimeout := flag.Duration("overall-block-timeout", 0, "")
 	mtu := flag.Uint64("mtu", msgs.DEFAULT_UDP_MTU, "mtu used talking to shards and cdc")
-	attrCacheTimeFlag := flag.Duration("attr-cache-time", time.Hour*24, "How long to cache inode (both file and directories) attributes for. Default: 1 day. Note that this is not very important to clients: the only ones that are relevant are times (which can be modified), and directory mtimes, but typically clients do not care about those very much.")
+	attrCacheTimeFlag := flag.Duration("attr-cache-time", time.Hour, "How long to cache inode (both file and directories) attributes for. Default: 1 hour. Note that this is not very important to clients: the only ones that are relevant are times (which can be modified), and directory mtimes, but typically clients do not care about those very much.")
 	dirEntryCacheTimeFlag := flag.Duration("dir-entry-cache-time", time.Millisecond*250, "How long to cache directory entries (negative _and_ positive) for. Set to 0 to disable caching. (default: 250ms)")
 	closeTrackerObject := flag.String("close-tracker-object", "", "Compiled BPF object to track explicitly closed files")
 	setUid := flag.Bool("set-uid", false, "")

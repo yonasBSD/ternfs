@@ -401,6 +401,61 @@ int ternfs_shard_soft_unlink_file(struct ternfs_fs_info* info, u64 dir, u64 file
     return 0;
 }
 
+int ternfs_shard_hard_unlink_file(struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time) {
+    ternfs_debug("hard unlink dir=%016llx file=%016llx name=%*s creation_time=%llu", dir, file, name_len, name, creation_time);
+    struct sk_buff* skb;
+    u32 attempts;
+    u64 req_id = alloc_request_id();
+    u8 kind = TERNFS_SHARD_SAME_SHARD_HARD_FILE_UNLINK;
+    {
+        PREPARE_SHARD_REQ_CTX(TERNFS_SAME_SHARD_HARD_FILE_UNLINK_REQ_MAX_SIZE);
+        ternfs_same_shard_hard_file_unlink_req_put_start(&ctx, start);
+        ternfs_same_shard_hard_file_unlink_req_put_owner_id(&ctx, start, owner_id, dir);
+        ternfs_same_shard_hard_file_unlink_req_put_target_id(&ctx, owner_id, file_id, file);
+        ternfs_same_shard_hard_file_unlink_req_put_name(&ctx, file_id, req_name, name, name_len);
+        ternfs_same_shard_hard_file_unlink_req_put_creation_time(&ctx, req_name, req_creation_time, creation_time);
+        ternfs_same_shard_hard_file_unlink_req_put_end(&ctx, req_creation_time, end);
+        skb = ternfs_send_shard_req(info, ternfs_inode_shard(dir), req_id, &ctx, &attempts);
+        if (IS_ERR(skb)) { return PTR_ERR(skb); }
+    }
+    {
+        PREPARE_SHARD_RESP_CTX();
+        ternfs_same_shard_hard_file_unlink_resp_get_start(&ctx, start);
+        ternfs_same_shard_hard_file_unlink_resp_get_end(&ctx, start, end);
+        ternfs_same_shard_hard_file_unlink_resp_get_finish(&ctx, end);
+        FINISH_RESP();
+    }
+    return 0;
+}
+
+int ternfs_cdc_cross_shard_hard_unlink_file(struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time) {
+    ternfs_debug("cross shard hard unlink dir=%016llx file=%016llx name=%*s creation_time=%llu", dir, file, name_len, name, creation_time);
+    struct sk_buff* skb;
+    u32 attempts;
+    u64 req_id = alloc_request_id();
+    u8 kind = TERNFS_CDC_CROSS_SHARD_HARD_UNLINK_FILE;
+    {
+        PREPARE_CDC_REQ_CTX(TERNFS_CROSS_SHARD_HARD_UNLINK_FILE_REQ_MAX_SIZE);
+        ternfs_cross_shard_hard_unlink_file_req_put_start(&ctx, start);
+        ternfs_cross_shard_hard_unlink_file_req_put_owner_id(&ctx, start, owner_id, dir);
+        ternfs_cross_shard_hard_unlink_file_req_put_target_id(&ctx, owner_id, file_id, file);
+        ternfs_cross_shard_hard_unlink_file_req_put_name(&ctx, file_id, req_name, name, name_len);
+        ternfs_cross_shard_hard_unlink_file_req_put_creation_time(&ctx, req_name, req_creation_time, creation_time);
+        ternfs_cross_shard_hard_unlink_file_req_put_end(&ctx, req_creation_time, end);
+        skb = ternfs_send_cdc_req(info, req_id, &ctx, &attempts);
+        if (IS_ERR(skb)) { return PTR_ERR(skb); }
+    }
+    {
+        PREPARE_CDC_RESP_CTX();
+        ternfs_cross_shard_hard_unlink_file_resp_get_start(&ctx, start);
+        ternfs_cross_shard_hard_unlink_file_resp_get_end(&ctx, start, end);
+        ternfs_cross_shard_hard_unlink_file_resp_get_finish(&ctx, end);
+        FINISH_RESP();
+    }
+    return 0;
+}
+
+
 int ternfs_shard_rename(
     struct ternfs_fs_info* info,
     u64 dir, u64 target, const char* old_name, int old_name_len, u64 old_creation_time, const char* new_name, int new_name_len, u64* new_creation_time
@@ -513,11 +568,13 @@ int ternfs_shard_parse_getattr_dir(
     u64* owner,
     struct ternfs_policy_body* block_policies,
     struct ternfs_policy_body* span_policies,
-    struct ternfs_policy_body* stripe_policy
+    struct ternfs_policy_body* stripe_policy,
+    struct ternfs_policy_body* snapshot_policy
 ) {
     block_policies->len = 0;
     span_policies->len = 0;
     stripe_policy->len = 0;
+    snapshot_policy->len = 0;
 
     u8 kind = TERNFS_SHARD_STAT_DIRECTORY;
     PREPARE_SHARD_RESP_CTX();
@@ -545,6 +602,10 @@ int ternfs_shard_parse_getattr_dir(
             stripe_policy->len = body.str.len;
             memcpy(stripe_policy->body, body.str.buf, body.str.len);
         }
+        if (tag.x == SNAPSHOT_POLICY_TAG) {
+            snapshot_policy->len = body.str.len;
+            memcpy(snapshot_policy->body, body.str.buf, body.str.len);
+        }
     }
     ternfs_directory_info_get_end(&ctx, entries, info_end);
     ternfs_stat_directory_resp_get_end(&ctx, info_end, end);
@@ -563,7 +624,8 @@ int ternfs_shard_getattr_dir(
     u64* owner,
     struct ternfs_policy_body* block_policies,
     struct ternfs_policy_body* span_policies,
-    struct ternfs_policy_body* stripe_policy
+    struct ternfs_policy_body* stripe_policy,
+    struct ternfs_policy_body* snapshot_policy
 ) {
     struct sk_buff* skb;
     u32 attempts;
@@ -579,7 +641,7 @@ int ternfs_shard_getattr_dir(
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 
-    return ternfs_shard_parse_getattr_dir(skb, mtime, owner, block_policies, span_policies, stripe_policy);
+    return ternfs_shard_parse_getattr_dir(skb, mtime, owner, block_policies, span_policies, stripe_policy, snapshot_policy);
 }
 
 int ternfs_shard_async_getattr_file(struct ternfs_fs_info* info, struct ternfs_metadata_request* metadata_req, u64 file) {

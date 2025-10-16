@@ -28,7 +28,7 @@ if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 
     if build_type.startswith('alpine'):
         container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-18-1'
     else:
-        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
+        container = os.getenv('TERN_UBUNTU_BUILD_CONTAINER', 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18')
     # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
     # for motivation for `--security-opt seccomp=unconfined`,
     # the `--pids-limit -1` is not something I hit but it seems

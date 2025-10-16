@@ -72,6 +72,11 @@ static inline bool parseLogOptions(CommandLineArgs& args, LogOptions& options) {
         args.next();
         return true;
     }
+    if (arg == "-syslog") {
+        options.syslog = true;
+        args.next();
+        return true;
+    }
     if (arg == "-log-level") {
         std::string logLevel = args.next().getArg();
         if (logLevel == "trace") {
@@ -103,6 +108,8 @@ static inline void printLogOptionsUsage() {
     fprintf(stderr, "    	Note that 'trace' will only work for debug builds.\n");
     fprintf(stderr, " -verbose\n");
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
+    fprintf(stderr, " -syslog\n");
+    fprintf(stderr, "    	Add syslog style log level.\n");
 }
 
 static inline bool validateLogOptions(const LogOptions& options) {
@@ -426,12 +433,12 @@ static inline uint32_t parseUint32(CommandLineArgs& args) {
     return static_cast<uint32_t>(x);
 }
 
-static inline uint32_t parseUint16(CommandLineArgs& args) {
+static inline uint16_t parseUint16(CommandLineArgs& args) {
     size_t processed;
     auto arg = args.getArg();
     uint64_t x = std::stoull(arg, &processed);
     if (processed != arg.size() || x > std::numeric_limits<uint16_t>::max()) {
         fprintf(stderr, "Invalid argument '%s', expecting an unsigned 16-bit integer\n", arg.c_str());
     }
-    return static_cast<uint32_t>(x);
+    return static_cast<uint16_t>(x);
 }

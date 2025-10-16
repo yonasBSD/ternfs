@@ -31,7 +31,7 @@ bool Registerer::periodicStep() {
         const auto [err, errStr] =
             registerRegistry(_clientOptions.host, _clientOptions.port, 10_sec,
                             _logsDBOptions.replicaId, _logsDBOptions.location,
-                            !_logsDBOptions.avoidBeingLeader, _boundAddresses, 
+                            !_logsDBOptions.avoidBeingLeader, _boundAddresses,
                             !_hasEnoughReplicas.load(std::memory_order_relaxed));
         if (err == EINTR) {
             return false;
@@ -68,7 +68,7 @@ bool Registerer::_updateReplicas(const std::vector<FullRegistryInfo> &allReplica
     std::array<AddrsInfo, LogsDB::REPLICA_COUNT> localReplicas;
     bool foundLeader = false;
     for (auto &replica : allReplicas) {
-        if (replica.locationId != _logsDBOptions.location) {            
+        if (replica.locationId != _logsDBOptions.location) {
             continue;
         }
         localReplicas[replica.id.u8] = replica.addrs;
@@ -81,9 +81,9 @@ bool Registerer::_updateReplicas(const std::vector<FullRegistryInfo> &allReplica
         return false;
 
     }
-    if (_boundAddresses != localReplicas[_logsDBOptions.replicaId]) {
+    if (_boundAddresses != localReplicas[_logsDBOptions.replicaId.u8]) {
         _env.updateAlert(_alert, "AddrsInfo in registry: %s , not matching local AddrsInfo: %s",
-            localReplicas[_logsDBOptions.replicaId], _boundAddresses);
+            localReplicas[_logsDBOptions.replicaId.u8], _boundAddresses);
         return false;
     }
 

@@ -609,6 +609,10 @@ public:
         _shared.proxyLogsDBResponseQueueSize = _shared.proxyLogsDBResponseQueueSize*0.95 + _shared.proxyLogsDBResponseQueue.size()*0.05;
         _shared.droppedProxyLogsDBResponses = _shared.droppedProxyLogsDBResponses*0.95 + (_proxyLogsDBResponses.size()-pushed)*0.05;
 
+        pushed = _shared.writerProxyShardRespQueue.push(_proxyResponses);
+        _shared.writerProxyRespQueueSize = _shared.writerProxyRespQueueSize*0.95 + _shared.writerProxyShardRespQueue.size()*0.05;
+        _shared.droppedProxyWriteResponses = _shared.droppedProxyWriteResponses*0.95 + (_proxyResponses.size()-pushed)*0.05;
+
         pushed = _shared.writerShardReqQueue.push(_writeReqs);
         _shared.writerRequestQueueSize = _shared.writerRequestQueueSize*0.95 + _shared.writerShardReqQueue.size()*0.05;
         _shared.droppedWriteRequests = _shared.droppedWriteRequests*0.95 + (_writeReqs.size()-pushed)*0.05;

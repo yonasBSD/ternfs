@@ -146,6 +146,12 @@ struct ReplicaId {
     constexpr bool valid() const {
         return u8 < 5;
     }
+
+    static constexpr ReplicaId invalid() {
+        ReplicaId res;
+        res.u8 = 5;
+        return res;
+    }
 };
 
 std::ostream& operator<<(std::ostream& out, ReplicaId replica);
@@ -191,7 +197,7 @@ using LocationId = uint8_t;
 
 struct ShardReplicaLocationKey {
     uint32_t u32;
-    
+
     ShardReplicaLocationKey(): u32(0) {}
     explicit ShardReplicaLocationKey(uint32_t u32_) : u32(u32_) {}
     ShardReplicaLocationKey(ShardReplicaId shrid, LocationId locationId_) {
@@ -218,7 +224,7 @@ struct ShardReplicaLocationKey {
     LocationId locationId() const {
         return static_cast<LocationId>((u32 >> LOCATION_SHIFT));
     }
-private:    
+private:
     static constexpr uint32_t LOCATION_SHIFT = sizeof(ShardReplicaId) * 8;
     static constexpr uint32_t SHRID_MASK = ~0 >> (sizeof(uint32_t)*8 - LOCATION_SHIFT);
 };

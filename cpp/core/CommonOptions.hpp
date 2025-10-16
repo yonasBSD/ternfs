@@ -245,7 +245,7 @@ struct LogsDBOptions {
     std::string dbDir;
     bool avoidBeingLeader = true;
     bool noReplication = false;
-    uint8_t replicaId = 5;
+    ReplicaId replicaId = ReplicaId::invalid();
     uint8_t location = 0;
 };
 
@@ -300,7 +300,7 @@ static inline bool validateLogsDBOptions(const LogsDBOptions& options) {
         fprintf(stderr, "-logsdb-leader needs to be set if -logsdb-no-replication is set\n");
         return false;
     }
-    if (options.replicaId > 4) {
+    if (!options.replicaId.valid()) {
         fprintf(stderr, "-replica needs to be set\n");
         return false;
     }

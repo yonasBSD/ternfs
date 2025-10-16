@@ -34,7 +34,7 @@
 #include "XmonAgent.hpp"
 
 struct RegistryState {
-    explicit RegistryState() :         
+    explicit RegistryState() :
         logEntriesQueueSize(0), readingRequests(0), writingRequests(0),
         activeConnections(0), requestsInProgress(0)
     {
@@ -51,7 +51,7 @@ struct RegistryState {
     // databases
     std::unique_ptr<SharedRocksDB> sharedDB;
     std::unique_ptr<LogsDB> logsDB;
-    std::unique_ptr<RegistryDB> registryDB;  
+    std::unique_ptr<RegistryDB> registryDB;
 
     // statistics
     std::array<Timings, maxRegistryMessageKind + 1> timings;
@@ -87,11 +87,11 @@ public:
         }
 
         auto now = ternNow();
-        
+
         _logsDB.processIncomingMessages(_server.receivedLogsDBRequests(), _server.receivedLogsDBResponses());
 
         auto& receivedRequests = _server.receivedRegistryRequests();
-    
+
         for (auto &req : receivedRequests) {
             if (unlikely(!_boostrapFinished)) {
                 _processBootstrapRequest(req);
@@ -102,7 +102,7 @@ public:
             if (unlikely(!_logsDB.isLeader())) {
                 LOG_DEBUG(_env, "not leader. dropping request from client %s", req.requestId);
                 continue;
-            }            
+            }
             switch (req.req.kind()) {
             case RegistryMessageKind::LOCAL_SHARDS: {
                 auto& registryResp = resp.resp.setLocalShards();
@@ -207,7 +207,7 @@ public:
                      registryResp.proof = proof;
                 } else {
                     resp.resp.setError() = TernError::INTERNAL_ERROR;
-                }    
+                }
                 break;
             }
             case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED: {
@@ -270,9 +270,9 @@ public:
                             _logEntries.pop_back();
                             break;
                         }
-                    }    
+                    }
                 }
-                
+
                 if (!failed) {
                     // we are not sending response yet. we can't leave empty response otherwise
                     // server will drop connection
@@ -314,7 +314,7 @@ public:
                     _logEntries.pop_back();
                 }
                 break;
-            } 
+            }
             case RegistryMessageKind::EMPTY:
             case RegistryMessageKind::ERROR:
                 break;
@@ -340,7 +340,7 @@ public:
         }
         ALWAYS_ASSERT(_logEntries.empty());
         ALWAYS_ASSERT(_entriesRequestIds.empty());
-             
+
         do {
             _logEntries.clear();
             _logsDB.readEntries(_logEntries);
@@ -352,7 +352,7 @@ public:
         _logsDB.getOutgoingMessages(_logsDBOutRequests, _logsDBOutResponses);
         LOG_TRACE(_env, "Sending %s log requests and %s log responses", _logsDBOutRequests.size(), _logsDBOutResponses.size());
         _server.sendLogsDBMessages(_logsDBOutRequests, _logsDBOutResponses);
-        
+
 
         for (auto &writeResult : _writeResults) {
             auto& regiResp = _registryResponses.emplace_back();
@@ -362,7 +362,7 @@ public:
                 continue;
             }
 
-            regiResp.requestId = requestIdIt->second;         
+            regiResp.requestId = requestIdIt->second;
             RegistryRespContainer& resp = regiResp.resp;
 
             if (writeResult.err != TernError::NO_ERROR) {
@@ -701,7 +701,7 @@ Registry::~Registry() {}
 
 void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
     {
-        LOG_INFO(_env, "Running registry %s at location %s, base directory %s:", (int)options.logsDBOptions.replicaId, (int)options.logsDBOptions.location, options.logsDBOptions.dbDir);
+        LOG_INFO(_env, "Running registry %s at location %s, base directory %s:", options.logsDBOptions.replicaId, (int)options.logsDBOptions.location, options.logsDBOptions.dbDir);
         LOG_INFO(_env, "  Logging options:");
         LOG_INFO(_env, "    logFile = '%s'", options.logOptions.logFile);
         LOG_INFO(_env, "    xmon = %s", options.xmonOptions.addr);
@@ -723,7 +723,7 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
         LOG_INFO(_env, "    maxWritableBlockServicePerShard = '%s'", options.maxFailureDomainsPerShard);
         LOG_INFO(_env, "    writableBlockServiceUpdateInterval = '%s'", options.writableBlockServiceUpdateInterval);
     }
-    
+
     _state = std::make_unique<RegistryState>();
     std::string dbDir = options.logsDBOptions.dbDir;
     XmonNCAlert dbInitAlert{1_mins};
@@ -757,7 +757,7 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
 
     auto registerer = std::make_unique<Registerer>(logger, xmon, options, _state->server->boundAddresses(), cachedRegistries);
     auto registryLoop = std::make_unique<RegistryLoop>(logger, xmon, options, *registerer, *_state->server, *_state->logsDB, *_state->registryDB);
-    
+
     threads.emplace_back(LoopThread::Spawn(std::move((registerer))));
     threads.emplace_back(LoopThread::Spawn(std::move((registryLoop))));
 }

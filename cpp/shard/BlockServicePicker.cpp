@@ -19,7 +19,7 @@ namespace {
     }
 
     inline bool blockServiceIsWritable(const BlockServiceCache& bs, Duration writableDelay) {
-        return bs.availableBytes > 0 && blockServiceFlagsWritable(bs.flags) && ternNow() - bs.firstSeen > writableDelay;
+        return bs.availableBytes > MAXIMUM_SPAN_SIZE && blockServiceFlagsWritable(bs.flags) && ternNow() - bs.firstSeen > writableDelay;
     }
 
     // Cluster-wide bytes/sec from a single shard's accumulated bytes over `elapsed`.
